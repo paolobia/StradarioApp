@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>StradarioApp</RootNamespace>
+    <AssemblyName>StradarioApp</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia"               Version="11.2.0" />
+    <PackageReference Include="Avalonia.Desktop"       Version="11.2.0" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.0" />
+    <PackageReference Include="Avalonia.Fonts.Inter"   Version="11.2.0" />
+    <PackageReference Include="Avalonia.Skia"          Version="11.2.0" />
+    <PackageReference Include="SkiaSharp"              Version="2.88.8" />
+    <PackageReference Include="BruTile"                Version="4.0.0"  />
+    <PackageReference Include="PdfSharpCore"           Version="1.3.65" />
+    <PackageReference Include="Newtonsoft.Json"        Version="13.0.3" />
+  </ItemGroup>
+</Project>
