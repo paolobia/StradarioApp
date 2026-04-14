@@ -85,7 +85,7 @@ namespace StradarioApp.UI
                 return btn;
             }
 
-            toolbar.Children.Add(MakeBtn("🗺️ Nuovo",         () => NewProject()));
+            toolbar.Children.Add(MakeBtn("🗺️ Nuovo",         OnNew));
             toolbar.Children.Add(MakeBtn("📂 Apri",           OnOpen));
             toolbar.Children.Add(MakeBtn("💾 Salva",          OnSave));
             toolbar.Children.Add(MakeBtn("💾 Salva come",     OnSaveAs));
@@ -443,9 +443,9 @@ namespace StradarioApp.UI
         // Toolbar actions
         // ====================================================================
 
-        private void NewProject()
+        private async void OnNew()
         {
-            if (_isDirty && !ConfirmDiscardSync()) return;
+            if (_isDirty && !await ConfirmDiscard()) return;
             _project       = new StradarioProject();
             _projectPath   = null;
             _selectedPageId = null;
@@ -459,11 +459,9 @@ namespace StradarioApp.UI
             _mapCanvas.InvalidateVisual();
         }
 
-        private void OnNew() => NewProject();
-
         private async void OnOpen()
         {
-            if (_isDirty && !ConfirmDiscardSync()) return;
+            if (_isDirty && !await ConfirmDiscard()) return;
 
             var files = await StorageProvider.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions
             {
@@ -692,11 +690,38 @@ namespace StradarioApp.UI
             Close();
         }
 
-        private bool ConfirmDiscardSync()
+        private async Task<bool> ConfirmDiscard()
         {
-            // Simplified sync check — in real use we'd show a dialog
-            // For now just return true (discard changes). Full dialog is async above.
-            return true;
+            bool? choice = null;
+            var dlg = new Window
+            {
+                Title  = "Modifiche non salvate",
+                Width  = 340,
+                Height = 130,
+                CanResize = false,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner
+            };
+            var discardBtn = new Button { Content = "🗑 Scarta modifiche", Margin = new Thickness(4) };
+            var cancelBtn  = new Button { Content = "Annulla",             Margin = new Thickness(4) };
+            discardBtn.Click += (_, _) => { choice = true;  dlg.Close(); };
+            cancelBtn.Click  += (_, _) => { choice = false; dlg.Close(); };
+            dlg.Content = new StackPanel
+            {
+                Margin  = new Thickness(16),
+                Spacing = 8,
+                Children =
+                {
+                    new TextBlock { Text = "Ci sono modifiche non salvate. Continuare e scartarle?", TextWrapping = TextWrapping.Wrap },
+                    new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        Children = { discardBtn, cancelBtn }
+                    }
+                }
+            };
+            await dlg.ShowDialog(this);
+            return choice == true;
         }
 
         private async Task ShowError(string message)

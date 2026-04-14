@@ -83,8 +83,7 @@ namespace StradarioApp.UI
                 return;
             }
 
-            if (CityDatabase.LoadStatus != $"Caricate {GetCitiesCount()} città" &&
-                !CityDatabase.LoadStatus.StartsWith("Caricate"))
+            if (!CityDatabase.LoadStatus.StartsWith("Caricate"))
             {
                 _descBox.Text = CityDatabase.LoadStatus;
                 return;
@@ -93,12 +92,6 @@ namespace StradarioApp.UI
             var bounds = GeoUtils.CalcPageBounds(lon, lat, _settings);
             string desc = CityDatabase.Describe(bounds, 3);
             _descBox.Text = string.IsNullOrEmpty(desc) ? CityDatabase.LoadStatus : desc;
-        }
-
-        private static int GetCitiesCount()
-        {
-            // We can't directly access count; just call Describe and check result
-            return 0;
         }
 
         private void OnOk()

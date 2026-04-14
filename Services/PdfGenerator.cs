@@ -199,7 +199,7 @@ namespace StradarioApp.Services
             double centerLat = (minLat + maxLat) / 2;
             double cosLat    = Math.Cos(centerLat * Math.PI / 180.0);
 
-            // Zoom formula with latExtent * cosLat (NOT divided)
+            // Zoom formula: latExtent * cosLat in denominator accounts for Mercator distortion
             double zLon  = Math.Log2(pixW * 360.0 / (256.0 * lonExtent));
             double zLat  = Math.Log2(pixH * 360.0 / (256.0 * latExtent * cosLat));
             int    zoom  = Math.Clamp((int)Math.Floor(Math.Min(zLon, zLat)), 1, 15);
