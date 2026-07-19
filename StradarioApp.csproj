@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>StradarioApp</AssemblyName>
+    <RootNamespace>StradarioApp</RootNamespace>
+    <UseWindowsForms>false</UseWindowsForms>
+    <!-- Avalonia per portabilità Linux/Windows -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- UI cross-platform Linux/Windows: versioni allineate 11.2.x -->
+    <PackageReference Include="Avalonia"                 Version="11.2.0" />
+    <PackageReference Include="Avalonia.Desktop"         Version="11.2.0" />
+    <PackageReference Include="Avalonia.Themes.Fluent"   Version="11.2.0" />
+    <PackageReference Include="Avalonia.Fonts.Inter"     Version="11.2.0" />
+
+    <!-- SkiaSharp per disegnare sulla mappa.
+         NON esiste "SkiaSharp.Views.Avalonia": il canvas custom
+         si implementa sovrascrivendo Render() su un Control Avalonia,
+         passando il DrawingContext a SkiaSharp via ISkiaDrawingContextImpl. -->
+    <PackageReference Include="SkiaSharp"                Version="2.88.8" />
+    <PackageReference Include="Avalonia.Skia"            Version="11.2.0" />
+
+    <!-- Tile OSM: schema URL e TileIndex -->
+    <PackageReference Include="BruTile"                  Version="4.0.0" />
+
+    <!-- Generazione PDF -->
+    <PackageReference Include="PdfSharpCore"             Version="1.3.65" />
+
+    <!-- Serializzazione progetto JSON -->
+    <PackageReference Include="Newtonsoft.Json"          Version="13.0.3" />
+  </ItemGroup>
+
+</Project>

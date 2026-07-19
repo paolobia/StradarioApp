@@ -1,0 +1,28 @@
+# Build output
+bin/
+obj/
+publish/
+
+# User-specific files
+*.user
+*.suo
+.vs/
+
+# NuGet
+*.nupkg
+*.snupkg
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local Claude Code settings
+.claude/settings.local.json
+
+# Large runtime data file (fetched separately, see CLAUDE.md)
+cities500.csv
+
+# Personal sample/test data
+*.kml
+*.gpx
+*.stradario

@@ -1,0 +1,348 @@
+// =============================================================================
+// UI/RouteEditWindow.cs
+//
+// SINOSSI: Dialog di creazione/modifica di un percorso.
+//   Campi: etichetta, descrizione, colore (palette di swatch, riuso di
+//   PoiIconRenderer.Palette) ed elenco punti (lon/lat modificabili, elimina,
+//   sposta su/giù, aggiungi punto dal centro vista mappa corrente).
+//   I punti si aggiungono già disegnandoli sulla mappa (modalità "disegna
+//   percorso" avviata da MainWindow); qui si rifiniscono etichetta/colore
+//   e si possono correggere/aggiungere singoli punti manualmente.
+// =============================================================================
+
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Layout;
+using Avalonia.Media;
+using StradarioApp.Models;
+using StradarioApp.Services;
+
+namespace StradarioApp.UI
+{
+    public class RouteEditWindow : Window
+    {
+        public bool     Confirmed   { get; private set; } = false;
+        public Percorso ResultRoute { get; private set; }
+
+        private readonly Percorso  _original;
+        private readonly double    _currentViewLon;
+        private readonly double    _currentViewLat;
+        private readonly List<GeoPoint> _workingPoints;
+        private string _selectedColor;
+
+        private TextBox?   _tbLabel;
+        private TextBox?   _tbDescription;
+        private WrapPanel?  _colorPanel;
+        private StackPanel? _pointsPanel;
+        private TextBlock?  _statusText;
+        private TextBlock?  _summaryText;
+
+        public RouteEditWindow(Percorso route, double currentViewLon, double currentViewLat)
+        {
+            _original       = route;
+            ResultRoute     = route;
+            _currentViewLon = currentViewLon;
+            _currentViewLat = currentViewLat;
+            _selectedColor  = string.IsNullOrWhiteSpace(route.ColorHex) ? PercorsoRenderer.DefaultColorHex : route.ColorHex;
+            _workingPoints  = route.Points.Select(p => new GeoPoint { Lon = p.Lon, Lat = p.Lat }).ToList();
+
+            Title  = route.Id == 0 ? "Nuovo percorso" : $"Modifica percorso  {route.Label}";
+            Width  = 460;
+            Height = 620;
+            MinWidth  = 400;
+            MinHeight = 440;
+            WindowStartupLocation = WindowStartupLocation.CenterOwner;
+
+            BuildUI(route);
+            RefreshPoints();
+        }
+
+        private void BuildUI(Percorso r)
+        {
+            var root = new DockPanel { LastChildFill = true, Margin = new Thickness(16) };
+
+            var top = new Grid
+            {
+                RowDefinitions    = new RowDefinitions("Auto,Auto,Auto,Auto"),
+                ColumnDefinitions = new ColumnDefinitions("100,*")
+            };
+
+            int row = 0;
+            AddLabel(top, "Etichetta:", row);
+            _tbLabel = new TextBox { Text = r.Label };
+            AddControl(top, _tbLabel, row++);
+
+            AddLabel(top, "Descrizione:", row);
+            _tbDescription = new TextBox
+            {
+                Text          = r.Description,
+                AcceptsReturn = true,
+                TextWrapping  = TextWrapping.Wrap,
+                MinHeight     = 44,
+                MaxHeight     = 54
+            };
+            AddControl(top, _tbDescription, row++);
+
+            AddLabel(top, "Colore:", row);
+            _colorPanel = new WrapPanel { Orientation = Orientation.Horizontal };
+            AddControl(top, _colorPanel, row++);
+            BuildColorSwatches();
+
+            _summaryText = new TextBlock { FontSize = 11, Foreground = Brushes.DimGray, Margin = new Thickness(0, 6, 0, 0) };
+            Grid.SetRow(_summaryText, row);
+            Grid.SetColumn(_summaryText, 0);
+            Grid.SetColumnSpan(_summaryText, 2);
+            top.Children.Add(_summaryText);
+
+            DockPanel.SetDock(top, Dock.Top);
+            root.Children.Add(top);
+
+            // ---- Bottoni OK/Annulla in basso ----
+            var btnRow = new StackPanel
+            {
+                Orientation         = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Spacing             = 10,
+                Margin              = new Thickness(0, 10, 0, 0)
+            };
+            var btnOk     = DialogUi.MakeDialogButton("OK", primary: true);
+            var btnCancel = DialogUi.MakeDialogButton("Annulla");
+            btnOk.Click     += OnOkClick;
+            btnCancel.Click += (_, _) => Close();
+            btnRow.Children.Add(btnOk);
+            btnRow.Children.Add(btnCancel);
+            DockPanel.SetDock(btnRow, Dock.Bottom);
+            root.Children.Add(btnRow);
+
+            _statusText = new TextBlock
+            {
+                FontSize     = 10,
+                Foreground   = Brushes.Crimson,
+                TextWrapping = TextWrapping.Wrap,
+                Margin       = new Thickness(0, 4, 0, 0)
+            };
+            DockPanel.SetDock(_statusText, Dock.Bottom);
+            root.Children.Add(_statusText);
+
+            // ---- Sezione punti ----
+            var pointsHeader = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing     = 8,
+                Margin      = new Thickness(0, 10, 0, 4)
+            };
+            pointsHeader.Children.Add(new TextBlock { Text = "Punti del percorso:", FontWeight = FontWeight.Bold, VerticalAlignment = VerticalAlignment.Center });
+            var btnAddPoint = new Button { Content = "📍 Aggiungi punto (centro vista mappa)", Padding = new Thickness(8, 4), FontSize = 11 };
+            btnAddPoint.Click += (_, _) =>
+            {
+                _workingPoints.Add(new GeoPoint { Lon = _currentViewLon, Lat = _currentViewLat });
+                RefreshPoints();
+            };
+            pointsHeader.Children.Add(btnAddPoint);
+            DockPanel.SetDock(pointsHeader, Dock.Top);
+            root.Children.Add(pointsHeader);
+
+            _pointsPanel = new StackPanel { Spacing = 3 };
+            var scroll = new ScrollViewer { Content = _pointsPanel };
+            root.Children.Add(scroll);
+
+            Content = root;
+        }
+
+        private void BuildColorSwatches()
+        {
+            if (_colorPanel == null) return;
+            _colorPanel.Children.Clear();
+
+            foreach (var hex in PoiIconRenderer.Palette)
+            {
+                bool isSelected = string.Equals(hex, _selectedColor, StringComparison.OrdinalIgnoreCase);
+                var swatch = new Border
+                {
+                    Width           = 26,
+                    Height          = 26,
+                    Margin          = new Thickness(3),
+                    CornerRadius    = new CornerRadius(4),
+                    Background      = new SolidColorBrush(Color.Parse(hex)),
+                    BorderBrush     = isSelected ? Brushes.Black : Brushes.Transparent,
+                    BorderThickness = new Thickness(2),
+                    Cursor          = new Cursor(StandardCursorType.Hand)
+                };
+                swatch.PointerPressed += (_, _) =>
+                {
+                    _selectedColor = hex;
+                    BuildColorSwatches();
+                };
+                _colorPanel.Children.Add(swatch);
+            }
+        }
+
+        private void RefreshPoints()
+        {
+            if (_pointsPanel == null) return;
+            _pointsPanel.Children.Clear();
+
+            if (_workingPoints.Count == 0)
+            {
+                _pointsPanel.Children.Add(new TextBlock
+                {
+                    Text         = "Nessun punto. Usa \"Aggiungi punto\" per iniziare (oppure disegna il percorso sulla mappa).",
+                    FontSize     = 11,
+                    Foreground   = Brushes.Gray,
+                    Margin       = new Thickness(2, 8),
+                    TextWrapping = TextWrapping.Wrap
+                });
+            }
+
+            for (int i = 0; i < _workingPoints.Count; i++)
+                _pointsPanel.Children.Add(BuildPointRow(i));
+
+            double lengthKm = 0;
+            for (int i = 1; i < _workingPoints.Count; i++)
+                lengthKm += GeoUtils.DistanceKm(
+                    _workingPoints[i - 1].Lon, _workingPoints[i - 1].Lat,
+                    _workingPoints[i].Lon,     _workingPoints[i].Lat);
+
+            if (_summaryText != null)
+                _summaryText.Text = $"{_workingPoints.Count} punti  ·  lunghezza {lengthKm:0.##} km";
+        }
+
+        private Control BuildPointRow(int index)
+        {
+            var p = _workingPoints[index];
+
+            var border = new Border
+            {
+                Background      = Brushes.White,
+                BorderBrush     = Brushes.Gainsboro,
+                BorderThickness = new Thickness(1),
+                CornerRadius    = new CornerRadius(3),
+                Margin          = new Thickness(0, 1),
+                Padding         = new Thickness(6, 3)
+            };
+
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,*,Auto,Auto,Auto") };
+
+            row.Children.Add(new TextBlock
+            {
+                Text = (index + 1).ToString(),
+                Width = 18,
+                FontSize = 11,
+                Foreground = Brushes.DimGray,
+                VerticalAlignment = VerticalAlignment.Center
+            });
+
+            var tbLon = new TextBox { Text = $"{p.Lon:F6}", FontSize = 11, Margin = new Thickness(2, 0) };
+            var tbLat = new TextBox { Text = $"{p.Lat:F6}", FontSize = 11, Margin = new Thickness(2, 0) };
+            tbLon.LostFocus += (_, _) => CommitPoint(index, tbLon, tbLat);
+            tbLat.LostFocus += (_, _) => CommitPoint(index, tbLon, tbLat);
+            Grid.SetColumn(tbLon, 1);
+            Grid.SetColumn(tbLat, 2);
+            row.Children.Add(tbLon);
+            row.Children.Add(tbLat);
+
+            var btnUp = DialogUi.MakeTreeIconButton(BootstrapIcons.ChevronUp, "Sposta su", Brushes.SteelBlue, () =>
+            {
+                if (index == 0) return;
+                (_workingPoints[index - 1], _workingPoints[index]) = (_workingPoints[index], _workingPoints[index - 1]);
+                RefreshPoints();
+            });
+            Grid.SetColumn(btnUp, 3);
+            row.Children.Add(btnUp);
+
+            var btnDown = DialogUi.MakeTreeIconButton(BootstrapIcons.ChevronDown, "Sposta giù", Brushes.SteelBlue, () =>
+            {
+                if (index == _workingPoints.Count - 1) return;
+                (_workingPoints[index + 1], _workingPoints[index]) = (_workingPoints[index], _workingPoints[index + 1]);
+                RefreshPoints();
+            });
+            Grid.SetColumn(btnDown, 4);
+            row.Children.Add(btnDown);
+
+            var btnDel = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, "Elimina punto", Brushes.Crimson, () =>
+            {
+                _workingPoints.RemoveAt(index);
+                RefreshPoints();
+            });
+            Grid.SetColumn(btnDel, 5);
+            row.Children.Add(btnDel);
+
+            border.Child = row;
+            return border;
+        }
+
+        private void CommitPoint(int index, TextBox tbLon, TextBox tbLat)
+        {
+            if (index < 0 || index >= _workingPoints.Count) return;
+            var inv = CultureInfo.InvariantCulture;
+            if (double.TryParse((tbLon.Text ?? "").Replace(',', '.'), NumberStyles.Float, inv, out double lon))
+                _workingPoints[index].Lon = Math.Clamp(lon, -180, 180);
+            if (double.TryParse((tbLat.Text ?? "").Replace(',', '.'), NumberStyles.Float, inv, out double lat))
+                _workingPoints[index].Lat = Math.Clamp(lat, -85, 85);
+
+            double lengthKm = 0;
+            for (int i = 1; i < _workingPoints.Count; i++)
+                lengthKm += GeoUtils.DistanceKm(
+                    _workingPoints[i - 1].Lon, _workingPoints[i - 1].Lat,
+                    _workingPoints[i].Lon,     _workingPoints[i].Lat);
+            if (_summaryText != null)
+                _summaryText.Text = $"{_workingPoints.Count} punti  ·  lunghezza {lengthKm:0.##} km";
+        }
+
+        private void AddLabel(Grid grid, string text, int row)
+        {
+            var lbl = new TextBlock
+            {
+                Text              = text,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin            = new Thickness(0, 8, 8, 0)
+            };
+            Grid.SetRow(lbl, row);
+            Grid.SetColumn(lbl, 0);
+            grid.Children.Add(lbl);
+        }
+
+        private void AddControl(Grid grid, Control ctrl, int row)
+        {
+            ctrl.Margin = new Thickness(0, 4, 0, 0);
+            Grid.SetRow(ctrl, row);
+            Grid.SetColumn(ctrl, 1);
+            grid.Children.Add(ctrl);
+        }
+
+        private void OnOkClick(object? sender, RoutedEventArgs e)
+        {
+            if (_workingPoints.Count < 2)
+            {
+                SetStatus("Il percorso deve avere almeno 2 punti.");
+                return;
+            }
+
+            string label = _tbLabel?.Text?.Trim() ?? "";
+            if (string.IsNullOrEmpty(label)) label = "Percorso";
+
+            ResultRoute = new Percorso
+            {
+                Id          = _original.Id,
+                Label       = label,
+                Description = _tbDescription?.Text?.Trim() ?? "",
+                ColorHex    = _selectedColor,
+                Points      = _workingPoints
+            };
+            Confirmed = true;
+            Close();
+        }
+
+        private void SetStatus(string msg)
+        {
+            if (_statusText == null) return;
+            _statusText.Text = msg;
+        }
+    }
+}
