@@ -32,14 +32,29 @@ namespace StradarioApp.Models
         Landscape
     }
 
-    // Scale supportate
+    // Scale supportate. Nuovi valori vanno sempre aggiunti in coda (mai
+    // inseriti/riordinati in mezzo): Newtonsoft serializza l'enum come intero,
+    // quindi l'ordine qui è l'ordine di persistenza nei file .stradario
+    // esistenti — riordinare cambierebbe silenziosamente la scala di progetti
+    // salvati in precedenza.
     public enum MapScale
     {
         Scale1K,     // 1:1.000
         Scale5K,     // 1:5.000
         Scale10K,    // 1:10.000
         Scale100K,   // 1:100.000
-        Scale200K    // 1:200.000
+        Scale200K,   // 1:200.000
+        Scale15K,    // 1:15.000
+        Scale20K,    // 1:20.000
+        Scale25K,    // 1:25.000
+        Scale50K,    // 1:50.000
+        Scale150K,   // 1:150.000
+        Scale250K,   // 1:250.000
+        Scale300K,   // 1:300.000
+        Scale400K,   // 1:400.000
+        Scale500K,   // 1:500.000
+        Scale800K,   // 1:800.000
+        Scale1M      // 1:1.000.000
     }
 
     // Livello di contrasto applicato alla mappa raster in fase di export PDF
@@ -160,6 +175,12 @@ namespace StradarioApp.Models
 
         // Chiave API personale per i tile server che la richiedono
         // (TileServers.Entry.RequiresApiKey). Ignorata dai server anonimi.
+        // [JsonIgnore]: è una credenziale dell'utente/account, non un
+        // parametro del documento — non va scritta nel file .stradario
+        // (che può essere condiviso/versionato), solo nelle preferenze
+        // applicative globali (vedi AppPreferencesService,
+        // MainWindow.ApplyGlobalPreferences).
+        [JsonIgnore]
         public string TileServerApiKey { get; set; } = "";
 
         // Sostituisce {apikey} nel template con la chiave impostata, lasciando
@@ -175,6 +196,9 @@ namespace StradarioApp.Models
         // descrizione risultati, vedi PoiSearchService.InterpretQueryAsync/
         // RankAndDescribeAsync). Se vuota, la ricerca POI resta quella storica
         // basata su parole chiave note + Nominatim.
+        // [JsonIgnore]: stesso motivo di TileServerApiKey sopra — credenziale
+        // dell'utente, non va salvata nel file .stradario.
+        [JsonIgnore]
         public string GroqApiKey { get; set; } = "";
 
         // Dopo quanti secondi di inattività un oggetto sbloccato (pagina,
@@ -205,12 +229,23 @@ namespace StradarioApp.Models
         {
             return Scale switch
             {
-                MapScale.Scale1K   =>   1000,
-                MapScale.Scale5K   =>   5000,
-                MapScale.Scale10K  =>  10000,
-                MapScale.Scale100K => 100000,
-                MapScale.Scale200K => 200000,
-                _                  => 100000
+                MapScale.Scale1K   =>    1000,
+                MapScale.Scale5K   =>    5000,
+                MapScale.Scale10K  =>   10000,
+                MapScale.Scale15K  =>   15000,
+                MapScale.Scale20K  =>   20000,
+                MapScale.Scale25K  =>   25000,
+                MapScale.Scale50K  =>   50000,
+                MapScale.Scale100K =>  100000,
+                MapScale.Scale150K =>  150000,
+                MapScale.Scale200K =>  200000,
+                MapScale.Scale250K =>  250000,
+                MapScale.Scale300K =>  300000,
+                MapScale.Scale400K =>  400000,
+                MapScale.Scale500K =>  500000,
+                MapScale.Scale800K =>  800000,
+                MapScale.Scale1M   => 1000000,
+                _                  =>  100000
             };
         }
 
@@ -220,8 +255,19 @@ namespace StradarioApp.Models
             MapScale.Scale1K   => "1:1.000",
             MapScale.Scale5K   => "1:5.000",
             MapScale.Scale10K  => "1:10.000",
+            MapScale.Scale15K  => "1:15.000",
+            MapScale.Scale20K  => "1:20.000",
+            MapScale.Scale25K  => "1:25.000",
+            MapScale.Scale50K  => "1:50.000",
             MapScale.Scale100K => "1:100.000",
+            MapScale.Scale150K => "1:150.000",
             MapScale.Scale200K => "1:200.000",
+            MapScale.Scale250K => "1:250.000",
+            MapScale.Scale300K => "1:300.000",
+            MapScale.Scale400K => "1:400.000",
+            MapScale.Scale500K => "1:500.000",
+            MapScale.Scale800K => "1:800.000",
+            MapScale.Scale1M   => "1:1.000.000",
             _                  => "1:100.000"
         };
 

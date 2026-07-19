@@ -103,31 +103,34 @@ namespace StradarioApp.Services
         }
 
         // Soglie tarate campionando i toni reali di OSM Carto (vedi analisi in
-        // testa al file). Punto delicato verificato empiricamente: un bordo
-        // grigio scuro tipico (#5F5F5E) ha luminosità ~37%, quindi un taglio
-        // "scuro = invariato" per sola luminosità (es. <35%) lo classifica
-        // erroneamente come riempimento chiaro e lo schiarisce. La luminosità
-        // da sola non separa nemmeno i riempimenti residenziali dalle strade:
-        // un riempimento residenziale giallastro reale (#EDEBD5) ha
-        // saturazione 40% e luminosità 88%, molto vicina a quella di una
-        // strada arancio reale (#EEA89B: satur. 71%, lum. 77%) — un taglio di
-        // saturazione troppo basso (es. 22%) confonde l'uno con l'altra.
-        // Per questo la distinzione "linea scura invariata" si basa sulla
-        // desaturazione (quasi-neutro) più una luminosità moderata, non su
-        // un taglio secco di luminosità; e la soglia di saturazione per
-        // riconoscere una strada è alzata ben sopra il massimo osservato nei
-        // riempimenti residenziali/edifici campionati.
-        private const float AchromaticSatMax     = 15f; // sotto: grigio/nero/bianco "puro"
-        private const float LineworkMaxLightness = 55f; // sopra, anche se quasi-neutro, è sfondo chiaro non bordo
-        private const float RoadMinSaturation    = 50f; // sopra il ~40% massimo dei riempimenti campionati
+        // testa al file). Punto delicato verificato empiricamente su un tile
+        // reale (zoom 16, area urbana): un riempimento residenziale/edifici
+        // reale (#D9D0C9) ha saturazione ~17%, un prato (#F7FABF) ~86%, un
+        // riempimento verde/acqua altrettanto saturi — TUTTI i riempimenti/
+        // aree campionati hanno saturazione ≥15%. Il casing di strade minori
+        // (residenziali/terziarie), invece, è grigio "puro" (saturazione 0%)
+        // ma a luminosità MOLTO varia — nello stesso tile compaiono grigi
+        // puri a luminosità 29%, 45%, 60%, 73%, 80%, tutti riferiti a
+        // strade/bordi di classi diverse, non a sfondi.
+        // In precedenza un taglio aggiuntivo "scuro = invariato" (luminosità
+        // <55) scartava proprio i grigi più chiari (es. #BBBBBB, lum. 73%,
+        // casing di strade residenziali/terziarie), che finivano quindi nel
+        // ramo "riempimento" e sbiadivano fino a sparire contro lo sfondo
+        // sbiancato — il bug segnalato ("alcune strade si perdono/sbiadiscono").
+        // Poiché la sola saturazione separa già in modo affidabile grigi
+        // (bordi/strade) da riempimenti (sempre colorati/pastello), il taglio
+        // di luminosità è stato rimosso: qualunque pixel quasi-neutro resta
+        // invariato, indipendentemente da quanto è chiaro o scuro.
+        private const float AchromaticSatMax  = 15f; // sotto: grigio/nero/bianco "puro" (bordi, casing strade, testo)
+        private const float RoadMinSaturation = 50f; // sopra il ~40% massimo dei riempimenti campionati
 
         private static SKColor RoadEmphasisPixel(SKColor c)
         {
             c.ToHsl(out float h, out float s, out float l);
 
             bool achromatic = s < AchromaticSatMax;
-            if (achromatic && l < LineworkMaxLightness)
-                return c; // bordi, testo, linee scure/grigie: invariati
+            if (achromatic)
+                return c; // bordi, testo, casing stradali (qualunque grigio "puro"): invariati
 
             bool warmHue = h < 70f || h >= 320f; // arancio/rosso/giallo: tonalità delle strade
             bool isRoad  = warmHue && s >= RoadMinSaturation;

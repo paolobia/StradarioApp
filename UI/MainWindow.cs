@@ -970,7 +970,7 @@ namespace StradarioApp.UI
         private Control BuildSettingsInfoBlock()
         {
             var s    = _project.Settings;
-            string scaleStr = s.Scale == MapScale.Scale100K ? "1:100.000" : "1:200.000";
+            string scaleStr = s.GetScaleLabel();
             string pageStr  = $"{s.PageSize} {s.Orientation} @ {s.Dpi} DPI";
 
             var info = new StackPanel { Spacing = 2 };

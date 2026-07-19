@@ -37,6 +37,23 @@ namespace StradarioApp.UI
         private TextBox?   _tbGroqApiKey;
         private TextBlock? _tbPreview;
 
+        // Scale in ordine crescente per il ComboBox (l'ordine dell'enum MapScale
+        // è invece fissato dalla persistenza in .stradario, vedi Models/StradarioModels.cs).
+        private static readonly MapScale[] ScaleComboValues =
+        {
+            MapScale.Scale1K, MapScale.Scale5K, MapScale.Scale10K, MapScale.Scale15K,
+            MapScale.Scale20K, MapScale.Scale25K, MapScale.Scale50K, MapScale.Scale100K,
+            MapScale.Scale150K, MapScale.Scale200K, MapScale.Scale250K, MapScale.Scale300K,
+            MapScale.Scale400K, MapScale.Scale500K, MapScale.Scale800K, MapScale.Scale1M
+        };
+        private static readonly string[] ScaleComboItems =
+        {
+            "1:1.000", "1:5.000", "1:10.000", "1:15.000",
+            "1:20.000", "1:25.000", "1:50.000", "1:100.000",
+            "1:150.000", "1:200.000", "1:250.000", "1:300.000",
+            "1:400.000", "1:500.000", "1:800.000", "1:1.000.000"
+        };
+
         public SettingsWindow(StradarioSettings current)
         {
             ResultSettings = current;
@@ -94,16 +111,8 @@ namespace StradarioApp.UI
             AddLabel(grid, "Scala:", 3);
             _cbScale = new ComboBox
             {
-                ItemsSource   = new[] { "1:1.000", "1:5.000", "1:10.000", "1:100.000", "1:200.000" },
-                SelectedIndex = s.Scale switch
-                {
-                    MapScale.Scale1K   => 0,
-                    MapScale.Scale5K   => 1,
-                    MapScale.Scale10K  => 2,
-                    MapScale.Scale100K => 3,
-                    MapScale.Scale200K => 4,
-                    _                  => 3
-                },
+                ItemsSource   = ScaleComboItems,
+                SelectedIndex = Array.IndexOf(ScaleComboValues, s.Scale) is var scaleSelIdx && scaleSelIdx >= 0 ? scaleSelIdx : 7,
                 HorizontalAlignment = HorizontalAlignment.Stretch
             };
             _cbScale.SelectionChanged += (_, _) => UpdatePreview();
@@ -296,11 +305,9 @@ namespace StradarioApp.UI
                             { 0 => PageSize.A5, 1 => PageSize.A4, 2 => PageSize.A3, _ => PageSize.A4 };
             s.Orientation = (_cbOrientation?.SelectedIndex ?? 0) == 0 ? PageOrientation.Portrait : PageOrientation.Landscape;
             s.Dpi         = (_cbDpi?.SelectedIndex ?? 2) switch { 0 => 72, 1 => 96, 2 => 150, 3 => 300, _ => 150 };
-            s.Scale       = (_cbScale?.SelectedIndex ?? 3) switch
-            {
-                0 => MapScale.Scale1K,  1 => MapScale.Scale5K,  2 => MapScale.Scale10K,
-                3 => MapScale.Scale100K, 4 => MapScale.Scale200K, _ => MapScale.Scale100K
-            };
+            int scaleIdx = _cbScale?.SelectedIndex ?? 7;
+            s.Scale       = (scaleIdx >= 0 && scaleIdx < ScaleComboValues.Length)
+                ? ScaleComboValues[scaleIdx] : MapScale.Scale100K;
 
             // Tile server: prende l'URL dal dizionario in base all'indice selezionato
             int idx = _cbTileServer?.SelectedIndex ?? (TileServers.All.Length - 1);
