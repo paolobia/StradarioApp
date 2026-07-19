@@ -1,33 +1,64 @@
 # StradarioApp
 
-Applicazione desktop C# per la creazione di stradari cartografici con dati OpenStreetMap.
-Portabile su **Linux** e **Windows** grazie a Avalonia UI.
+Applicazione desktop C# per la creazione di stradari cartografici (atlanti
+stradali a pagine) a partire da OpenStreetMap. Portabile su **Linux** e
+**Windows** grazie ad Avalonia UI.
 
 ---
 
 ## Funzionalità
 
-1. **Impostazioni** – Formato pagina (A4/A3, Portrait/Landscape), DPI, scala (1:100.000 / 1:200.000)
-2. **Mappa interattiva** – Visualizzazione OSM con pan (drag) e zoom (rotella)
-3. **Gestione pagine** – Click destro sulla mappa per aggiungere una pagina; lista con modifica/cancellazione
-4. **Generazione PDF** – Stradario completo con pagine ordinate e bordi con indicazione pagine adiacenti
-5. **Salvataggio progetto** – File `.stradario` (JSON) con tutte le impostazioni e pagine
+1. **Impostazioni** – Formato pagina (A5/A4/A3), orientamento, DPI
+   (72/96/150/300), scala cartografica (da 1:1.000 fino a 1:1.000.000, tutte
+   le scale tipiche degli stradari — vedi elenco sotto), tile server (con o
+   senza API key), blocco automatico oggetti inattivi, contrasto mappa nel PDF
+2. **Mappa interattiva** – Pan (drag), zoom (rotella) centrato sul cursore
+3. **Pagine** – Click destro per aggiungere una pagina; drag per spostarla;
+   etichette automatiche (A1, B2…); blocco/sblocco per evitare spostamenti
+   accidentali; bottone "📍 Città principali" nel dialog di modifica pagina
+   per compilare la descrizione con le città più popolose dell'area
+   (database GeoNames `cities500.csv`, opzionale)
+4. **Gruppi POI** – Marker con icona/colore personalizzabili, aggiunta diretta
+   sulla mappa, drag per riposizionare, ricerca POI in linguaggio naturale
+   (opzionale, richiede una chiave API Groq gratuita)
+5. **Percorsi** – Disegno di percorsi punto-per-punto direttamente sulla
+   mappa, estendibili in seguito, con drag dei singoli vertici
+6. **Import/Export KMZ/KML/GPX** – Importazione unificata (POI e percorsi
+   nello stesso file), esportazione separata per gruppi POI e percorsi
+7. **Generazione PDF** – Anteprima prima del salvataggio, stradario completo
+   con indice, mappa riassuntiva, eventuali pagine gazetteer POI, pagine
+   mappa con riferimenti alle pagine adiacenti (N/S/E/O) e scala grafica;
+   contrasto opzionale ottimizzato per la stampa in bianco e nero
+8. **Salvataggio progetto** – File `.stradario` (JSON), leggibile e
+   modificabile manualmente; le chiavi API (tile server, Groq) **non**
+   vengono mai salvate nel progetto, solo nelle preferenze dell'applicazione
+
+---
+
+## Scale disponibili
+
+1:1.000 · 1:5.000 · 1:10.000 · 1:15.000 · 1:20.000 · 1:25.000 · 1:50.000 ·
+1:100.000 · 1:150.000 · 1:200.000 · 1:250.000 · 1:300.000 · 1:400.000 ·
+1:500.000 · 1:800.000 · 1:1.000.000
+
+La scala della mappa stampata è calcolata esattamente per il DPI scelto
+(non è un'approssimazione legata allo zoom dei tile OSM).
 
 ---
 
 ## Dipendenze NuGet
 
 | Pacchetto               | Uso                                       |
-|-------------------------|-------------------------------------------|
-| Avalonia                | UI cross-platform (Windows/Linux/macOS)  |
-| Avalonia.Desktop        | Lifecycle desktop                         |
-| Avalonia.Themes.Fluent  | Tema visuale                              |
-| Avalonia.Fonts.Inter    | Font Inter                                |
-| Avalonia.Controls.Skia  | SKCanvasView per Avalonia 11              |
-| SkiaSharp               | Rendering 2D su canvas                    |
-| BruTile                 | Schema tile OSM (TileIndex)               |
-| PdfSharpCore            | Generazione PDF                           |
-| Newtonsoft.Json         | Serializzazione progetto                  |
+|--------------------------|-------------------------------------------|
+| Avalonia                | UI cross-platform (Windows/Linux/macOS)    |
+| Avalonia.Desktop        | Lifecycle desktop                          |
+| Avalonia.Themes.Fluent  | Tema visuale                                |
+| Avalonia.Fonts.Inter    | Font Inter                                  |
+| Avalonia.Skia           | Canvas Skia custom su Avalonia 11           |
+| SkiaSharp               | Rendering 2D (mappa, icone POI, percorsi)   |
+| BruTile                 | Schema tile OSM (TileIndex)                 |
+| PdfSharpCore            | Generazione PDF                             |
+| Newtonsoft.Json         | Serializzazione progetto                    |
 
 ---
 
@@ -35,29 +66,37 @@ Portabile su **Linux** e **Windows** grazie a Avalonia UI.
 
 ### Prerequisiti
 - [.NET 8 SDK](https://dotnet.microsoft.com/download)
+- `cities500.csv` (GeoNames, ~24 MB) nella stessa cartella dell'eseguibile
+  (o in `~`) per la ricerca città — vedi sotto
 
-### Linux
 ```bash
-cd StradarioApp
 dotnet restore
-dotnet run
+dotnet run          # build + avvio
+dotnet build        # solo compilazione
 ```
 
-### Windows
-```cmd
-cd StradarioApp
-dotnet restore
-dotnet run
-```
+### Pubblicazione
 
-### Pubblicazione self-contained
 ```bash
-# Linux x64
+# Self-contained (include il runtime .NET, nessuna dipendenza da installare)
 dotnet publish -c Release -r linux-x64 --self-contained true -o ./publish/linux
+dotnet publish -c Release -r win-x64   --self-contained true -o ./publish/win
 
-# Windows x64
-dotnet publish -c Release -r win-x64 --self-contained true -o ./publish/win
+# Eseguibile singolo framework-dependent (più leggero, richiede .NET 8
+# Runtime installato sulla macchina di destinazione)
+dotnet publish -c Release -r linux-x64 --self-contained false \
+  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish/linux
+dotnet publish -c Release -r win-x64   --self-contained false \
+  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish/win
 ```
+
+### Download eseguibile già compilato
+
+Le [Release](https://github.com/paolobia/StradarioApp/releases) del repo
+GitHub contengono eseguibili singoli framework-dependent già pronti per
+Linux e Windows (richiedono il [.NET 8 Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)
+installato). `cities500.csv` non è incluso per motivi di dimensione: va
+scaricato a parte da GeoNames (vedi sotto).
 
 ---
 
@@ -65,19 +104,33 @@ dotnet publish -c Release -r win-x64 --self-contained true -o ./publish/win
 
 ```
 StradarioApp/
-├── Program.cs                  # Entry point Avalonia
-├── StradarioApp.csproj         # Progetto .NET
+├── Program.cs                     # Entry point Avalonia
+├── StradarioApp.csproj
 ├── Models/
-│   └── StradarioModels.cs      # Modelli dati (pagine, impostazioni, progetto)
+│   └── StradarioModels.cs         # Progetto, impostazioni, pagine, POI, percorsi, tile server
 ├── Services/
-│   ├── GeoUtils.cs             # Conversioni geografiche e calcoli cartografici
-│   ├── MapRenderer.cs          # Rendering mappa con BruTile + SkiaSharp
-│   ├── PdfGenerator.cs         # Generazione PDF stradario
-│   └── ProjectService.cs       # Salvataggio/caricamento progetto JSON
+│   ├── GeoUtils.cs                 # Conversioni geografiche, zoom/scala esatta
+│   ├── MapRenderer.cs              # Rendering mappa interattiva (tile + POI + percorsi)
+│   ├── PdfGenerator.cs             # Generazione PDF (indice, overview, pagine, gazetteer)
+│   ├── MapContrastFilter.cs        # Filtri di contrasto mappa per la stampa
+│   ├── PercorsoRenderer.cs         # Disegno percorsi condiviso mappa/PDF
+│   ├── PoiIconRenderer.cs          # Icone POI vettoriali condivise mappa/PDF/KMZ
+│   ├── PoiService.cs / PercorsoService.cs   # Import/export KMZ/KML/GPX
+│   ├── PoiSearchService.cs         # Ricerca POI (parole chiave + AI/Groq opzionale)
+│   ├── KmlIo.cs                    # Caricamento XML KML/KMZ/GPX robusto a BOM/encoding
+│   ├── CityDatabase.cs             # Database città GeoNames
+│   ├── ProjectService.cs           # Salvataggio/caricamento progetto .stradario
+│   ├── AppPreferencesService.cs    # Preferenze globali (chiavi API), non nel progetto
+│   ├── FontResolver.cs             # Font per PdfSharpCore su Linux
+│   └── RecentFilesService.cs       # Elenco progetti recenti
 └── UI/
-    ├── MainWindow.cs           # Finestra principale
-    ├── SettingsWindow.cs       # Dialog impostazioni
-    └── ProgressWindow.cs       # Dialog avanzamento PDF
+    ├── MainWindow.cs                # Finestra principale (tutto a codice, no AXAML)
+    ├── MapCanvas.cs                 # Control Avalonia custom con canvas Skia
+    ├── SettingsWindow.cs            # Dialog impostazioni
+    ├── EditPageWindow.cs            # Dialog modifica pagina
+    ├── PoiGroupEditWindow.cs / PoiItemEditWindow.cs
+    ├── RouteEditWindow.cs
+    └── ProgressWindow.cs            # Dialog avanzamento generazione PDF
 ```
 
 ---
@@ -85,31 +138,37 @@ StradarioApp/
 ## Uso rapido
 
 1. Avvia l'app
-2. *(Opzionale)* Clicca **⚙️ Impostazioni** per scegliere formato, DPI e scala
+2. *(Opzionale)* Clicca **⚙️ Impostazioni** per scegliere formato, DPI, scala e tile server
 3. Naviga la mappa con **drag** (pan) e **rotella** (zoom)
-4. Clicca **➕ Aggiungi pagina**, poi clicca sulla mappa dove vuoi posizionare la pagina
-5. Ripeti per tutte le zone da includere
-6. Clicca **📄 Genera PDF** per produrre lo stradario
-7. Clicca **💾 Salva** per conservare il progetto
+4. **Click destro** sulla mappa per aggiungere una pagina
+5. Dal pannello laterale, crea gruppi POI e percorsi (o importali da KMZ/KML/GPX)
+6. Clicca **📄 Genera PDF**: l'app mostra un'anteprima, poi puoi salvarla o scartarla
+7. Clicca **💾 Salva** per conservare il progetto come file `.stradario`
 
 ---
 
 ## Note tecniche
 
-- I tile OSM vengono scaricati da `tile.openstreetmap.org` e tenuti in cache in memoria
-- Il PDF include: pagina indice + una pagina per ogni quadrante definito
-- Le pagine nel PDF sono ordinate da sinistra a destra, dall'alto verso il basso
-- Ogni pagina PDF mostra i riferimenti alle pagine adiacenti (N, S, E, O) nei bordi
+- I tile OSM vengono scaricati dal tile server scelto e tenuti in cache in memoria
+- Il PDF include: eventuali pagine gazetteer POI, indice, mappa riassuntiva,
+  una pagina per ogni pagina definita
+- Le pagine nel PDF sono ordinate per righe (nord→sud), colonne (ovest→est)
+- Ogni pagina PDF mostra i riferimenti alle pagine adiacenti (N/S/E/O) e la scala grafica
 - Il file `.stradario` è JSON leggibile e modificabile manualmente
+- Le chiavi API (tile server, Groq) sono salvate solo nelle preferenze
+  dell'applicazione, mai nel file `.stradario`
 
 ---
 
-## Limiti noti / Sviluppi futuri
+## File esterno necessario
 
-- La cache tile è solo in memoria (non persistente tra sessioni)
-- Nessun supporto per tile offline/MBTiles (ma BruTile lo supporta facilmente)
-- La modifica dell'etichetta pagina è attualmente solo tramite il file JSON
-- Aggiungere dialog di modifica pagina (etichetta, descrizione) è il prossimo passo
+`cities500.csv` ([GeoNames](https://download.geonames.org/export/dump/cities500.zip),
+~24 MB) nella stessa cartella dell'eseguibile (o in `~`), usato solo dal
+bottone "📍 Città principali" nel dialog di modifica pagina. Senza di esso
+il bottone mostra un avviso ("File cities500.csv non trovato") invece di
+compilare la descrizione — il resto dell'app (mappa, PDF, POI, percorsi,
+import/export) funziona normalmente. Non serve per gli eseguibili scaricati
+dalle Release: va aggiunto manualmente se si vuole usare questa funzione.
 
 ---
 

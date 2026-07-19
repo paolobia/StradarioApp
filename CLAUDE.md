@@ -17,9 +17,16 @@ dotnet restore
 dotnet run                 # build + launch the Avalonia desktop app
 dotnet build               # compile only
 
-# Self-contained publish
+# Self-contained publish (bundles the .NET runtime, no install needed on target)
 dotnet publish -c Release -r linux-x64 --self-contained true -o ./publish/linux
 dotnet publish -c Release -r win-x64   --self-contained true -o ./publish/win
+
+# Single-file framework-dependent publish (smaller, ~10-11 MB; target machine
+# needs the .NET 8 Runtime installed) — used for the GitHub Release assets
+dotnet publish -c Release -r linux-x64 --self-contained false \
+  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish/linux
+dotnet publish -c Release -r win-x64   --self-contained false \
+  -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish/win
 ```
 
 - Requires the **.NET 8 SDK**.
@@ -27,7 +34,12 @@ dotnet publish -c Release -r win-x64   --self-contained true -o ./publish/win
   running the app.
 - `cities500.csv` (GeoNames, ~24 MB, at repo root) must sit next to the
   executable (or in `~`) at runtime; without it, city-name lookups degrade
-  silently to empty results (see `CityDatabase.SearchPaths`).
+  silently to empty results (see `CityDatabase.SearchPaths`). Deliberately
+  excluded from the GitHub Release zips (size) — noted in the release
+  description instead.
+- GitHub Releases (`gh release create <tag> <zips> --repo paolobia/StradarioApp`)
+  host the single-file builds as downloadable zips; `./publish/` is
+  gitignored, so these binaries never go into the git history itself.
 
 ## Architecture
 
@@ -43,6 +55,16 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   `StradarioSettings` (page size, orientation, DPI, scale, tile server URL) and
   `MapPage` (id, label, `GeoRect` bounds). `StradarioSettings` also computes the
   physical→geographic conversions (`GetPageWidthKm`, scale denominators).
+  `MapScale` covers 16 values (1:1.000 up to 1:1.000.000 — the standard set
+  used by printed street/road atlases); **new values must always be appended
+  at the end of the enum, never inserted/reordered**, because Newtonsoft
+  serializes enums as plain integers and `.stradario` files persist that
+  numeric index — reordering would silently change the scale of previously
+  saved projects. `StradarioSettings.TileServerApiKey`/`GroqApiKey` are
+  `[JsonIgnore]`: they're user/account credentials, not document parameters,
+  so they're never written into `.stradario` (which may be shared/versioned)
+  — only into `AppPreferencesService`'s global preferences file, reapplied to
+  every project via `MainWindow.ApplyGlobalPreferences`.
 - `Services/` — stateless/utility logic (see below).
 - `UI/` — Avalonia windows and the custom Skia canvas control.
 
@@ -287,7 +309,8 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
 
 - **PDF map contrast (`StradarioSettings.PdfContrastMode`)** — opt-in,
   PDF-export-only (never applied to the interactive on-screen map), selectable
-  in `SettingsWindow` as "Nessuno" / "Contrasta colore" / "Contrasta B/N".
+  in `SettingsWindow` as "Nessuno" / "Contrasta colore" / "Contrasta B/N" /
+  "Enfatizza strade".
   Applied by `Services/MapContrastFilter.cs` as an `SKColorFilter` on the
   composited tile bitmap in `PdfGenerator.RenderMapPageAsync`/
   `RenderOverviewAsync`, *before* routes/POI are drawn on top, so vector
@@ -317,6 +340,24 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   map the group colors are no longer distinguishable from each other or from
   the basemap, so black-on-white (they already draw a white halo/shadow
   behind lines and text) is more legible than a mid-grey.
+
+- **`PdfContrastMode.RoadEmphasis`** ("Enfatizza strade") is not a linear
+  `SKColorFilter` — it needs a per-pixel HSL decision, so `MapContrastFilter.
+  ApplyRoadEmphasis` walks `SKBitmap.Pixels` directly (bulk buffer copy, far
+  faster than per-pixel `GetPixel`/`SetPixel`). Classification: pixels with
+  saturation < `AchromaticSatMax` (15) are treated as road casings/borders/text
+  and left untouched; warm-hued (orange/red/yellow) pixels above
+  `RoadMinSaturation` (50) are treated as road fill and saturated+darkened;
+  everything else (area fills — buildings, landuse, water, parks) is pushed
+  toward white. **Do not add a lightness cutoff to the "achromatic" branch**
+  — an earlier version also required lightness < 55 to count as linework,
+  which wiped out minor/residential road casings: sampling a real OSM tile
+  (zoom 16, Rome) showed genuine casing grays at many lightness levels (29%,
+  45%, 60%, 73%, 80%...), while *every* real area fill sampled had
+  saturation ≥15% (residential fill ≈17%, park ≈86%, etc.) — so saturation
+  alone already separates roads/borders from fills; gating on lightness too
+  only ever discards legitimate light-gray road casings. Verified by
+  rendering the filter over a downloaded tile before/after the fix.
 
 ## Interaction model (MainWindow)
 

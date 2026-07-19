@@ -22,16 +22,35 @@ l'app genera un PDF con indice, mappa riassuntiva e una pagina per quadrante.
 
 ## Funzionalità
 1. **Impostazioni**: formato pagina (A5/A4/A3), orientamento, DPI (72/96/150/300),
-   scala (1:1.000 / 1:5.000 / 1:10.000 / 1:100.000 / 1:200.000), tile server
+   scala (da 1:1.000 a 1:1.000.000, 16 valori — tutte le scale tipiche degli
+   stradari cittadini e stradali), tile server (con o senza API key), blocco
+   automatico, contrasto mappa nel PDF (Nessuno/Colore/B-N/Enfatizza strade)
 2. **Mappa interattiva**: pan con drag, zoom con rotella centrato sul cursore,
-   tile OSM con cache in memoria e retry automatico sui fallimenti
-3. **Gestione pagine**: click per aggiungere, drag per spostare, ✏ per modificare
-   (etichetta, descrizione multilinea, coordinate), ✕ per cancellare
+   tile OSM con cache in memoria e retry automatico sui fallimenti, ricerca
+   città (autocomplete GeoNames)
+3. **Gestione pagine**: click destro per aggiungere, drag per spostare, ✏ per
+   modificare (etichetta, descrizione multilinea, coordinate), ✕ per
+   cancellare, 🔒/🔓 blocco manuale + auto-lock dopo inattività
 4. **Descrizione automatica**: bottone "📍 Città principali" cerca in cities500.csv
-   le 3 città più popolose nel bounding box della pagina
-5. **Generazione PDF**: indice + mappa riassuntiva + pagine ordinate con bordi
-   adiacenti e scala grafica (barra km/cm)
-6. **Salvataggio progetto**: file `.stradario` (JSON) con tutte le impostazioni
+   le città più popolose nel bounding box della pagina
+5. **Gruppi POI**: marker con icona/colore configurabili (rendering vettoriale
+   condiviso mappa/PDF/KMZ via `PoiIconRenderer`), aggiunta diretta sulla mappa
+   con auto-label `POI<n>`, drag per riposizionare, ricerca in linguaggio
+   naturale opzionale (Groq API)
+6. **Percorsi**: disegno punto-per-punto sulla mappa (click = punto,
+   shift+click = fine), auto-label `PATH<n>`, estensione di percorsi
+   esistenti, drag dei singoli vertici
+7. **Import/Export unificato**: un solo pulsante toolbar importa KMZ/KML/GPX
+   (POI e percorsi nello stesso file, merge automatico); export separato per
+   gruppi POI e percorsi in KMZ/KML/GPX a seconda dell'estensione scelta
+8. **Generazione PDF**: anteprima (temp file → viewer di sistema → dialog
+   Salva/Chiudi) prima di chiedere dove salvare; indice + mappa riassuntiva +
+   eventuali pagine gazetteer POI + pagine mappa ordinate con bordi
+   adiacenti e scala grafica
+9. **Salvataggio progetto**: file `.stradario` (JSON) con tutte le
+   impostazioni/pagine/POI/percorsi — le chiavi API (`TileServerApiKey`,
+   `GroqApiKey`) sono `[JsonIgnore]`: mai scritte nel progetto, vivono solo
+   in `AppPreferencesService` (preferenze utente globali)
 
 ---
 
@@ -41,6 +60,10 @@ l'app genera un PDF con indice, mappa riassuntiva e una pagina per quadrante.
 - OSM Deutschland
 - OpenTopoMap
 - CartoDB Light
+- Thunderforest Atlas (richiede API key)
+- Thunderforest Neighbourhood (richiede API key)
+- Stadia Alidade Smooth (richiede API key)
+- Stadia Stamen Toner Lite (richiede API key)
 
 ---
 
@@ -50,19 +73,34 @@ StradarioApp/
 ├── Program.cs                   Avvio: FontResolver.Register() + CityDatabase.EnsureLoaded()
 ├── StradarioApp.csproj
 ├── Models/
-│   └── StradarioModels.cs       Tutti i tipi dati (Settings, MapPage, GeoRect, Project, TileServers)
+│   └── StradarioModels.cs       Tutti i tipi dati (Settings, MapPage, GeoRect, Project,
+│                                 TileServers, PoiGroup/PoiItem, Percorso)
 ├── Services/
-│   ├── GeoUtils.cs              Conversioni geo↔pixel, CalcOptimalZoom, CalcTileSizePx, CalcScaleBarKm
-│   ├── MapRenderer.cs           TileCache + rendering mappa su SKCanvas
-│   ├── PdfGenerator.cs          Generazione PDF (indice, overview, pagine, scala grafica)
+│   ├── GeoUtils.cs              Conversioni geo↔pixel, CalcOptimalZoom, CalcScaleExactTiling
+│   ├── MapRenderer.cs           TileCache + rendering mappa (tile + POI + percorsi) su SKCanvas
+│   ├── PdfGenerator.cs          Generazione PDF (indice, overview, pagine, gazetteer, scala grafica)
+│   ├── MapContrastFilter.cs     Filtri contrasto mappa per stampa (Colore/B-N/Enfatizza strade)
+│   ├── PercorsoRenderer.cs      Disegno percorsi condiviso mappa/PDF
+│   ├── PoiIconRenderer.cs       Icone POI vettoriali condivise mappa/PDF/KMZ
+│   ├── PoiService.cs            Import/export KMZ/KML/GPX gruppi POI
+│   ├── PercorsoService.cs       Import/export KMZ/KML/GPX percorsi
+│   ├── PoiSearchService.cs      Ricerca POI (parole chiave + Nominatim + AI/Groq opzionale)
+│   ├── GroqClient.cs            Client minimo chat completions Groq (compatibile OpenAI)
+│   ├── KmlIo.cs                 Caricamento XML KML/KMZ/GPX robusto a BOM/encoding, SanitizeName
+│   ├── GeolocationService.cs    Geolocalizzazione IP di fallback
 │   ├── ProjectService.cs        Salva/carica .stradario (JSON)
+│   ├── AppPreferencesService.cs Preferenze globali (chiavi API), NON nel progetto
 │   ├── FontResolver.cs          Font per PdfSharpCore su Linux (IFontResolver)
-│   └── CityDatabase.cs          Carica cities500.csv, FindTopCities(bounds, n)
+│   ├── CityDatabase.cs          Carica cities500.csv, FindTopCities(bounds, n)
+│   └── RecentFilesService.cs    Elenco progetti recenti
 └── UI/
     ├── MapCanvas.cs             Control Avalonia custom che espone SKCanvas (via Avalonia.Skia)
     ├── MainWindow.cs            Finestra principale (tutto a codice, no AXAML)
     ├── SettingsWindow.cs        Dialog impostazioni
     ├── EditPageWindow.cs        Dialog modifica pagina + bottone città
+    ├── PoiGroupEditWindow.cs / PoiItemEditWindow.cs   Dialog gruppi/POI
+    ├── RouteEditWindow.cs       Dialog modifica percorso
+    ├── PoiManagerWindow.cs      Leftover, NON usato come entry point (vedi CLAUDE.md)
     └── ProgressWindow.cs        Dialog avanzamento generazione PDF
 ```
 
