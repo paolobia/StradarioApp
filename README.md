@@ -174,4 +174,8 @@ dalle Release: va aggiunto manualmente se si vuole usare questa funzione.
 
 ## Licenza
 
-Uso educativo/personale. I dati cartografici sono © OpenStreetMap contributors (ODbL).
+Distribuito sotto licenza [GNU GPL v3.0](LICENSE) o successiva: puoi usare,
+modificare e ridistribuire il codice liberamente, anche a fini commerciali,
+a patto che le versioni derivate/distribuite restino open source con la
+stessa licenza. I dati cartografici sono © OpenStreetMap contributors
+(ODbL), soggetti ai termini separati di [OpenStreetMap](https://www.openstreetmap.org/copyright).

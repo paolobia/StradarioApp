@@ -9,6 +9,7 @@
     <RootNamespace>StradarioApp</RootNamespace>
     <UseWindowsForms>false</UseWindowsForms>
     <!-- Avalonia per portabilità Linux/Windows -->
+    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
   </PropertyGroup>
 
   <ItemGroup>
