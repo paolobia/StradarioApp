@@ -153,6 +153,42 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   (hit-tested by pixel radius, `FindPoiAtPoint`/`PoiHitRadiusPx` in
   `MainWindow`).
 
+- **POI search (`Services/PoiSearchService`) is category-first, not
+  keyword-first.** The category is always chosen from the toolbar combo
+  (`PoiSearchService.AllCategories`, an Overpass tag lookup) — never
+  inferred from free text, so there's no ambiguity between "a category
+  name typed as text" and "a name/refinement typed as text". The combo has
+  no "any category" entry; it defaults to the last category actually used
+  in a search, persisted via `AppPreferencesService.SaveLastPoiCategory`/
+  `LoadLastPoiCategory` (falls back to "ristoranti" the very first time).
+  Typed text is always a refinement *within* the chosen category
+  (`MainWindow.OnPoiSearchAsync`): normally a literal name filter
+  (`PoiSearchService.SearchCategoryAsync`, regex on OSM `name`); if that
+  literal filter finds nothing and a Groq API key is configured, it falls
+  back to `FilterCandidatesByQueryAsync`, which asks an LLM to pick which
+  of the (already-fetched, real) OSM candidates in the area satisfy a
+  constraint the name filter can't express (e.g. category "stazioni
+  ferroviarie" + text "della linea firenze bologna" — no station is
+  literally named that, but the model can recognize which ones belong to
+  that line). Every result is by definition a real OSM point — the model
+  only narrows an existing list, it never proposes places from its own
+  knowledge, so there's no verified/unverified distinction to show. This
+  replaced an earlier 3-phase natural-language design (LLM proposes places
+  from world knowledge → verify each against OSM → rank) that showed
+  green/red markers for confirmed/unconfirmed guesses; that whole
+  hypothesis-and-verify flow, and its `Result.Verified`/`Description`
+  fields and marker coloring in `MainWindow`, are gone.
+
+- **`Services/GroqClient`** now backs only `FilterCandidatesByQueryAsync`
+  above (`CompoundModel`/web-search-integrated calls were removed along
+  with the hypothesis-generation flow). Every request/response is logged
+  via `Services/DebugLog` (append-only file in
+  `%AppData%/StradarioApp/debug.log` or the Linux equivalent,
+  `Environment.SpecialFolder.ApplicationData`) — added after a remote user
+  hit a hard-to-diagnose `413 Request Entity Too Large`; `Debug.WriteLine`
+  is invisible outside an IDE/Debug build, so it couldn't have been used to
+  get that diagnosis from a bug report.
+
 - **Percorsi (routes).** `Models/StradarioModels.cs` defines `Percorso`
   (label, description, color, ordered `List<GeoPoint>`), stored flat in
   `StradarioProject.Percorsi` (no grouping — each route is its own entity)
@@ -197,6 +233,19 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   `PercorsoService.ParseGpxRoutes` reads each `<trk>` (all its `<trkseg>`
   merged) and each `<rte>` as a separate route. The toolbar file picker
   filter includes `*.gpx` alongside `*.kmz`/`*.kml`.
+
+- **Imported points in China are corrected from GCJ-02 to WGS84**
+  (`Services/GcjTransform.cs`, applied inside `PoiService.ParsePlacemarks`/
+  `ParseGpxWaypoints` and `PercorsoService.ParseKmlRoutes`/`ParseGpxRoutes`,
+  right after parsing each raw lon/lat). Chinese mapping services
+  (Amap/Gaode, Baidu and KML/GPX exports derived from them) are legally
+  required to obfuscate coordinates with a deterministic offset ("Mars
+  coordinates", GCJ-02) — up to several hundred meters — while OSM tiles
+  (what this app renders) use true WGS84. `GcjTransform.Gcj02ToWgs84` is a
+  no-op outside `GcjTransform.IsInChina`'s bounding box, so imports from
+  the rest of the world are never altered; inside it, it inverts the
+  (closed-form) WGS84→GCJ-02 formula via iterative bisection (no analytic
+  inverse exists) to correct the point back to its real position.
 
 - **Fallback POI group naming uses the file name.** When a KML has no
   `<Folder><name>` (or the Placemark/`<wpt>` isn't inside any Folder), the

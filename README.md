@@ -19,12 +19,16 @@ stradali a pagine) a partire da OpenStreetMap. Portabile su **Linux** e
    per compilare la descrizione con le città più popolose dell'area
    (database GeoNames `cities500.csv`, opzionale)
 4. **Gruppi POI** – Marker con icona/colore personalizzabili, aggiunta diretta
-   sulla mappa, drag per riposizionare, ricerca POI in linguaggio naturale
-   (opzionale, richiede una chiave API Groq gratuita)
+   sulla mappa, drag per riposizionare, ricerca POI per categoria (menu a
+   tendina, ricordata tra le sessioni) con filtro testuale sul nome e, in
+   opzione (richiede una chiave API Groq gratuita), un filtro AI più ampio
+   quando il filtro letterale non trova nulla
 5. **Percorsi** – Disegno di percorsi punto-per-punto direttamente sulla
    mappa, estendibili in seguito, con drag dei singoli vertici
 6. **Import/Export KMZ/KML/GPX** – Importazione unificata (POI e percorsi
-   nello stesso file), esportazione separata per gruppi POI e percorsi
+   nello stesso file), esportazione separata per gruppi POI e percorsi; i
+   punti che cadono in Cina vengono corretti automaticamente da GCJ-02
+   a WGS84 (le mappe pubbliche cinesi offuscano le coordinate reali)
 7. **Generazione PDF** – Anteprima prima del salvataggio, stradario completo
    con indice, mappa riassuntiva, eventuali pagine gazetteer POI, pagine
    mappa con riferimenti alle pagine adiacenti (N/S/E/O) e scala grafica;
@@ -116,11 +120,14 @@ StradarioApp/
 │   ├── PercorsoRenderer.cs         # Disegno percorsi condiviso mappa/PDF
 │   ├── PoiIconRenderer.cs          # Icone POI vettoriali condivise mappa/PDF/KMZ
 │   ├── PoiService.cs / PercorsoService.cs   # Import/export KMZ/KML/GPX
-│   ├── PoiSearchService.cs         # Ricerca POI (parole chiave + AI/Groq opzionale)
+│   ├── GcjTransform.cs             # Correzione GCJ-02 -> WGS84 per import in Cina
+│   ├── PoiSearchService.cs         # Ricerca POI per categoria + filtro AI/Groq opzionale
+│   ├── GroqClient.cs               # Client HTTP minimo per l'API Groq (filtro POI AI)
 │   ├── KmlIo.cs                    # Caricamento XML KML/KMZ/GPX robusto a BOM/encoding
 │   ├── CityDatabase.cs             # Database città GeoNames
 │   ├── ProjectService.cs           # Salvataggio/caricamento progetto .stradario
-│   ├── AppPreferencesService.cs    # Preferenze globali (chiavi API), non nel progetto
+│   ├── AppPreferencesService.cs    # Preferenze globali (chiavi API, ultima categoria POI), non nel progetto
+│   ├── DebugLog.cs                 # Log diagnostico su file (chiamate Groq)
 │   ├── FontResolver.cs             # Font per PdfSharpCore su Linux
 │   └── RecentFilesService.cs       # Elenco progetti recenti
 └── UI/
