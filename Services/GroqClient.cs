@@ -3,18 +3,16 @@
 //
 // SINOSSI: Client minimo per l'endpoint chat completions di Groq
 //   (compatibile OpenAI, https://api.groq.com/openai/v1/chat/completions),
-//   usato dalla ricerca POI in linguaggio naturale (vedi PoiSearchService:
-//   GenerateHypothesesAsync = Fase A, WebSearchVerifyAsync = Fase D —
-//   entrambe usano CompoundModel, web search integrata: il modello "puro"
-//   DefaultModel si è rivelato con conoscenza troppo debole per generare da
-//   solo ipotesi su luoghi meno comuni nei suoi dati di addestramento). JSON
-//   mode (response_format=json_object) di default per ottenere un JSON
-//   parsabile, disattivato (enableJsonMode:false) per CompoundModel che non
-//   lo garantisce — in quel caso il chiamante estrae l'oggetto JSON dal testo
-//   in modo tollerante (vedi PoiSearchService.ExtractJsonObject).
-//   Un solo retry per errori transitori (timeout / 5xx / rete): un errore
-//   4xx (chiave non valida, richiesta malformata) non viene ritentato,
-//   perché ripetere la stessa richiesta fallirebbe di nuovo allo stesso modo.
+//   usato da PoiSearchService.FilterCandidatesByQueryAsync per scegliere,
+//   dentro un elenco chiuso di POI reali già trovati su OpenStreetMap, quali
+//   soddisfano un vincolo espresso in linguaggio naturale (es. "della linea
+//   firenze bologna"). JSON mode (response_format=json_object) per ottenere
+//   una risposta parsabile senza estrazione tollerante. Un solo retry per
+//   errori transitori (timeout / 5xx / rete): un errore 4xx (chiave non
+//   valida, richiesta malformata) non viene ritentato, perché ripetere la
+//   stessa richiesta fallirebbe di nuovo allo stesso modo. Ogni chiamata è
+//   loggata su file (vedi DebugLog) per poter diagnosticare errori remoti
+//   che dipendono dal contenuto esatto della richiesta/risposta.
 // =============================================================================
 
 using System;
@@ -36,29 +34,14 @@ namespace StradarioApp.Services
 
     public class GroqClient
     {
-        // Timeout generoso: copre anche CompoundModel (Fase D, ricerca web
-        // integrata lato Groq), sensibilmente più lenta di una chat completion
-        // "pura" perché include l'esecuzione della ricerca prima di rispondere.
         private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(35) };
 
         private const string Endpoint     = "https://api.groq.com/openai/v1/chat/completions";
         public  const string DefaultModel = "llama-3.3-70b-versatile";
 
-        // Modello "compound" di Groq: stessa API/chiave, ma con web search
-        // (ed eventuale esecuzione di codice) integrata lato Groq nella
-        // stessa chiamata — usato dalla Fase D come ultima verifica per un
-        // luogo non confermato dai dati OpenStreetMap. NOTA: i modelli
-        // "compound" sono un'offerta relativamente nuova di Groq, l'id esatto
-        // può cambiare — verificare su console.groq.com/docs/model se questa
-        // chiamata inizia a fallire con "model not found".
-        public const string CompoundModel = "compound-beta-mini";
-
         // Invia una chat completion e ritorna il contenuto testuale del
         // messaggio di risposta. enableJsonMode (default true) chiede a Groq
-        // di garantire un JSON valido (response_format=json_object); va
-        // disattivato per CompoundModel, che non lo supporta in modo
-        // affidabile — in quel caso il prompt chiede comunque JSON "a parole"
-        // e il chiamante estrae l'oggetto dal testo in modo tollerante.
+        // di garantire un JSON valido (response_format=json_object).
         public async Task<string> ChatJsonAsync(string apiKey, string systemPrompt, string userPrompt,
             CancellationToken ct = default, string? model = null, bool enableJsonMode = true)
         {
@@ -77,7 +60,16 @@ namespace StradarioApp.Services
             };
             if (enableJsonMode)
                 body["response_format"] = new JObject { ["type"] = "json_object" };
-            string bodyJson = body.ToString(Formatting.None);
+            string bodyJson  = body.ToString(Formatting.None);
+            string usedModel = model ?? DefaultModel;
+
+            // Log su file (vedi DebugLog): a differenza di Debug.WriteLine
+            // resta leggibile anche fuori da un IDE/build Debug, così l'utente
+            // può incollarne il contenuto per il debug di un errore remoto
+            // (es. il 413 "Request Entity Too Large" che ha portato a
+            // introdurre questo log — la dimensione del body qui sotto è
+            // esattamente ciò che serve per confermare/escludere quella causa).
+            DebugLog.Write($"[Groq] → POST {Endpoint} model={usedModel} jsonMode={enableJsonMode} bodyBytes={Encoding.UTF8.GetByteCount(bodyJson)}");
 
             Exception? lastError = null;
             for (int attempt = 0; attempt < 2; attempt++)
@@ -93,6 +85,8 @@ namespace StradarioApp.Services
 
                     using var resp     = await Http.SendAsync(req, ct);
                     string    respBody = await resp.Content.ReadAsStringAsync(ct);
+
+                    DebugLog.Write($"[Groq] ← {(int)resp.StatusCode} {resp.StatusCode} attempt={attempt} bodyBytes={Encoding.UTF8.GetByteCount(respBody)} body={Truncate(respBody, 4000)}");
 
                     if (!resp.IsSuccessStatusCode)
                     {
@@ -111,12 +105,14 @@ namespace StradarioApp.Services
                 catch (GroqException) { throw; }
                 catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
                 {
+                    DebugLog.Write($"[Groq] ← timeout attempt={attempt}: {ex.Message}");
                     lastError = new GroqException("Timeout nella chiamata a Groq.", ex);
                     if (attempt == 0) continue;
                     throw lastError;
                 }
                 catch (HttpRequestException ex)
                 {
+                    DebugLog.Write($"[Groq] ← errore di rete attempt={attempt}: {ex.Message}");
                     lastError = new GroqException($"Errore di rete verso Groq: {ex.Message}", ex);
                     if (attempt == 0) continue;
                     throw lastError;
@@ -129,6 +125,9 @@ namespace StradarioApp.Services
 
             throw lastError ?? new GroqException("Chiamata a Groq non riuscita.");
         }
+
+        private static string Truncate(string s, int max) =>
+            s.Length <= max ? s : s.Substring(0, max) + $"…[troncato, {s.Length} caratteri totali]";
 
         private static string ExtractErrorMessage(string body)
         {

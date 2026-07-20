@@ -211,6 +211,7 @@ namespace StradarioApp.Services
                     if (parts.Length < 2) continue;
                     if (!double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double lon)) continue;
                     if (!double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double lat)) continue;
+                    (lat, lon) = GcjTransform.Gcj02ToWgs84(lat, lon);
                     points.Add(new GeoPoint { Lon = lon, Lat = lat });
                 }
                 if (points.Count < 2) continue;
@@ -259,6 +260,7 @@ namespace StradarioApp.Services
                 if (string.IsNullOrEmpty(latAttr) || string.IsNullOrEmpty(lonAttr)) return false;
                 if (!double.TryParse(lonAttr, NumberStyles.Float, CultureInfo.InvariantCulture, out double lon)) return false;
                 if (!double.TryParse(latAttr, NumberStyles.Float, CultureInfo.InvariantCulture, out double lat)) return false;
+                (lat, lon) = GcjTransform.Gcj02ToWgs84(lat, lon);
                 point = new GeoPoint { Lon = lon, Lat = lat };
                 return true;
             }

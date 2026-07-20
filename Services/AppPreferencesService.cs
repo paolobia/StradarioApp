@@ -22,8 +22,15 @@ namespace StradarioApp.Services
     {
         private class Data
         {
-            public string GroqApiKey       = "";
-            public string TileServerApiKey = "";
+            public string GroqApiKey         = "";
+            public string TileServerApiKey   = "";
+            // Ultima categoria usata nella ricerca POI per categoria (combo
+            // toolbar): riproposta come default ad ogni riapertura dell'app,
+            // così l'utente non deve riselezionarla ogni volta — vedi
+            // MainWindow (combo sempre valorizzato, "ristoranti" è il
+            // default solo quando non è ancora stata usata nessuna categoria).
+            public string LastPoiCategoryKey   = "";
+            public string LastPoiCategoryValue = "";
         }
 
         private static string StorageFilePath =>
@@ -31,34 +38,66 @@ namespace StradarioApp.Services
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "StradarioApp", "preferences.json");
 
-        public (string GroqApiKey, string TileServerApiKey) Load()
+        private Data LoadData()
         {
             try
             {
-                if (!File.Exists(StorageFilePath)) return ("", "");
-                var data = JsonConvert.DeserializeObject<Data>(File.ReadAllText(StorageFilePath)) ?? new Data();
-                return (data.GroqApiKey ?? "", data.TileServerApiKey ?? "");
+                if (!File.Exists(StorageFilePath)) return new Data();
+                return JsonConvert.DeserializeObject<Data>(File.ReadAllText(StorageFilePath)) ?? new Data();
             }
             catch
             {
                 // File corrotto/illeggibile: tratta come "nessuna preferenza salvata"
-                return ("", "");
+                return new Data();
             }
         }
 
-        public void Save(string groqApiKey, string tileServerApiKey)
+        private void SaveData(Data data)
         {
             try
             {
                 string? dir = Path.GetDirectoryName(StorageFilePath);
                 if (dir != null) Directory.CreateDirectory(dir);
-                var data = new Data { GroqApiKey = groqApiKey ?? "", TileServerApiKey = tileServerApiKey ?? "" };
                 File.WriteAllText(StorageFilePath, JsonConvert.SerializeObject(data));
             }
             catch
             {
-                // Persistenza best-effort: un errore qui non deve bloccare il salvataggio delle impostazioni
+                // Persistenza best-effort: un errore qui non deve bloccare il chiamante
             }
+        }
+
+        public (string GroqApiKey, string TileServerApiKey) Load()
+        {
+            var data = LoadData();
+            return (data.GroqApiKey ?? "", data.TileServerApiKey ?? "");
+        }
+
+        // Legge/scrive solo i campi di propria competenza: entrambi passano
+        // da LoadData/SaveData (leggono l'intero file e lo riscrivono per
+        // intero), così Save() e SaveLastPoiCategory() non si cancellano a
+        // vicenda anche se chiamati in momenti diversi.
+        public void Save(string groqApiKey, string tileServerApiKey)
+        {
+            var data = LoadData();
+            data.GroqApiKey       = groqApiKey ?? "";
+            data.TileServerApiKey = tileServerApiKey ?? "";
+            SaveData(data);
+        }
+
+        public (string Key, string Value)? LoadLastPoiCategory()
+        {
+            var data = LoadData();
+            if (string.IsNullOrWhiteSpace(data.LastPoiCategoryKey) || string.IsNullOrWhiteSpace(data.LastPoiCategoryValue))
+                return null;
+            return (data.LastPoiCategoryKey, data.LastPoiCategoryValue);
+        }
+
+        public void SaveLastPoiCategory(string key, string value)
+        {
+            var data = LoadData();
+            data.LastPoiCategoryKey   = key ?? "";
+            data.LastPoiCategoryValue = value ?? "";
+            SaveData(data);
         }
     }
 }

@@ -287,6 +287,7 @@ namespace StradarioApp.Services
                 if (parts.Length < 2) continue;
                 if (!double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double lon)) continue;
                 if (!double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double lat)) continue;
+                (lat, lon) = GcjTransform.Gcj02ToWgs84(lat, lon);
 
                 group.Items.Add(new PoiItem
                 {
@@ -319,6 +320,7 @@ namespace StradarioApp.Services
                 if (string.IsNullOrEmpty(latAttr) || string.IsNullOrEmpty(lonAttr)) continue;
                 if (!double.TryParse(lonAttr, NumberStyles.Float, CultureInfo.InvariantCulture, out double lon)) continue;
                 if (!double.TryParse(latAttr, NumberStyles.Float, CultureInfo.InvariantCulture, out double lat)) continue;
+                (lat, lon) = GcjTransform.Gcj02ToWgs84(lat, lon);
 
                 group.Items.Add(new PoiItem
                 {

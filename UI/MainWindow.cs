@@ -136,12 +136,6 @@ namespace StradarioApp.UI
         // gruppo scelto, ESC annulla
         private bool                          _poiSearchMode      = false;
         private List<PoiSearchService.Result> _poiSearchResults   = new();
-        // true quando _poiSearchResults viene dalla ricerca in linguaggio
-        // naturale (OnPoiSearchNlAsync): solo lì il colore del marker deve
-        // riflettere Verified (verde/rosso); la ricerca classica per parola
-        // chiave (Nominatim/Overpass diretti) resta sempre arancione, anche
-        // se tecnicamente anch'essa valorizza Verified=true di default
-        private bool _poiSearchResultsAreNl = false;
         // Risultato attualmente sotto il cursore (tooltip con più dettagli in OnPaintMapSurface)
         private PoiSearchService.Result? _hoveredPoiSearchResult;
         // Testo con cui è stata avviata la ricerca in corso (o "Ricerca GPS"
@@ -862,27 +856,45 @@ namespace StradarioApp.UI
                         }
                         _poiSearchTextBox.Focus();
                     }
-                    else if (!string.IsNullOrWhiteSpace(_poiSearchTextBox.Text) || _categoryFilterComboBox.SelectedIndex > 0)
-                    {
-                        await OnPoiSearchAsync();
-                    }
                     else
                     {
-                        HidePoiSearchBox();
+                        // Il combo ha sempre una categoria selezionata: un
+                        // secondo click sulla lente cerca sempre (con o
+                        // senza testo di raffinamento), non serve più
+                        // decidere tra "cerca" e "nascondi" in base a cosa è
+                        // stato scelto/digitato.
+                        await OnPoiSearchAsync();
                     }
                 }));
 
             // Combo categoria/tag OSM (vedi PoiSearchService.AllCategories):
             // appare a destra della lente insieme alla casella di testo.
-            // Indice 0 = "Qualsiasi categoria" = nessun filtro.
-            var categoryLabels = new List<string> { "Qualsiasi categoria" };
-            categoryLabels.AddRange(PoiSearchService.AllCategories.Select(c => c.Label));
+            // Sempre valorizzato (nessuna voce "qualsiasi categoria": la
+            // categoria si sceglie SOLO da qui, mai da testo libero — vedi
+            // RunCategorySearchAsync). Default: l'ultima categoria
+            // effettivamente usata in una ricerca (persistita tra sessioni,
+            // vedi AppPreferencesService.LoadLastPoiCategory), altrimenti
+            // "ristoranti" la primissima volta.
+            var categoryLabels = PoiSearchService.AllCategories.Select(c => c.Label).ToList();
+            int defaultCategoryIndex = 0;
+            var lastCategory = _appPrefsSvc.LoadLastPoiCategory();
+            if (lastCategory != null)
+            {
+                int idx = PoiSearchService.AllCategories.ToList()
+                    .FindIndex(c => c.Key == lastCategory.Value.Key && c.Value == lastCategory.Value.Value);
+                if (idx >= 0) defaultCategoryIndex = idx;
+            }
+            else
+            {
+                int idx = PoiSearchService.AllCategories.ToList().FindIndex(c => c.Label == "ristoranti");
+                if (idx >= 0) defaultCategoryIndex = idx;
+            }
             _categoryFilterComboBox = new ComboBox
             {
                 Width         = 170,
                 FontSize      = 12,
                 ItemsSource   = categoryLabels,
-                SelectedIndex = 0,
+                SelectedIndex = defaultCategoryIndex,
                 IsVisible     = false
             };
             toolbar.Children.Add(_categoryFilterComboBox);
@@ -1714,26 +1726,16 @@ namespace StradarioApp.UI
             {
                 // Categoria/testuale (Nominatim/Overpass diretti, sempre
                 // Verified=true): pallino arancione, comportamento storico.
-                using var fillPaint = new SKPaint { Color = new SKColor(255, 140, 0), IsAntialias = true, Style = SKPaintStyle.Fill };
-                // Ricerca in linguaggio naturale: verde acceso se confermato
-                // su OpenStreetMap/web (Fase B/D), rosso pieno se il modello
-                // ha proposto il luogo ma nessuna fonte lo ha confermato —
-                // sempre un pallino pieno (non vuoto/tratteggiato): il colore
-                // da solo deve bastare a distinguerli a colpo d'occhio, i
-                // dettagli completi restano comunque nel tooltip (vedi
-                // DrawPoiSearchTooltip)
-                using var verifiedFill   = new SKPaint { Color = new SKColor(0, 200, 0), IsAntialias = true, Style = SKPaintStyle.Fill };
-                using var unverifiedFill = new SKPaint { Color = new SKColor(220, 20, 60), IsAntialias = true, Style = SKPaintStyle.Fill };
-                using var borderPaint    = new SKPaint { Color = SKColors.Black, IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f };
-                using var textPaint      = new SKPaint { Color = SKColors.Black, TextSize = 11, IsAntialias = true };
-                using var textHalo       = new SKPaint { Color = SKColors.White, TextSize = 11, IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 3 };
+                using var fillPaint   = new SKPaint { Color = new SKColor(255, 140, 0), IsAntialias = true, Style = SKPaintStyle.Fill };
+                using var borderPaint = new SKPaint { Color = SKColors.Black, IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f };
+                using var textPaint   = new SKPaint { Color = SKColors.Black, TextSize = 11, IsAntialias = true };
+                using var textHalo    = new SKPaint { Color = SKColors.White, TextSize = 11, IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 3 };
 
                 foreach (var r in _poiSearchResults)
                 {
                     var (px, py) = GeoUtils.GeoToPixel(r.Lon, r.Lat, _viewCenterLon, _viewCenterLat, _viewZoom, w, h);
 
-                    var fill = _poiSearchResultsAreNl ? (r.Verified ? verifiedFill : unverifiedFill) : fillPaint;
-                    e.Canvas.DrawCircle((float)px, (float)py, 9, fill);
+                    e.Canvas.DrawCircle((float)px, (float)py, 9, fillPaint);
                     e.Canvas.DrawCircle((float)px, (float)py, 9, borderPaint);
 
                     string label = SanitizeSearchLabel(r.DisplayName);
@@ -1805,23 +1807,12 @@ namespace StradarioApp.UI
             string? category = CombineCategory(r.Category, r.Type);
             if (!string.IsNullOrWhiteSpace(category)) lines.Add(category!);
 
-            // Descrizione generata dalla ricerca in linguaggio naturale (Fase C), se presente
-            if (!string.IsNullOrWhiteSpace(r.Description))
-                lines.AddRange(WrapText(r.Description!, 40));
-
             if (!string.IsNullOrWhiteSpace(r.Address))
                 lines.AddRange(WrapText(r.Address!, 40));
             else
                 lines.AddRange(WrapText(r.DisplayName, 40).Take(2));
 
             lines.Add($"{r.Lat:F5}°N, {r.Lon:F5}°E");
-
-            // Sempre presente (non solo per i risultati della ricerca AI): fa
-            // capire a colpo d'occhio se questo marker è un riscontro reale su
-            // OpenStreetMap o una proposta del modello non confermata da nessuna
-            // fonte — stesso identico dato del colore/stile del marker, qui in
-            // testo per chi passa il cursore invece di fidarsi solo dello stile
-            lines.Add(r.Verified ? "✓ Verificato" : "⚠ Non verificato");
 
             using var titleFont = SKTypeface.FromFamilyName(null, SKFontStyleWeight.Bold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright);
             using var titlePaint = new SKPaint { TextSize = 13, IsAntialias = true, Typeface = titleFont, Color = SKColors.Black };
@@ -2669,26 +2660,27 @@ namespace StradarioApp.UI
         }
 
         // Nasconde di nuovo il campo di ricerca POI in toolbar e ne svuota il
-        // testo (non tocca eventuali risultati già mostrati sulla mappa)
+        // testo (non tocca eventuali risultati già mostrati sulla mappa). La
+        // categoria selezionata NON viene resettata: resta l'ultima scelta,
+        // pronta per la prossima ricerca (vedi anche la persistenza in
+        // AppPreferencesService.SaveLastPoiCategory).
         private void HidePoiSearchBox()
         {
             if (_poiSearchTextBox == null) return;
             _poiSearchTextBox.Text      = "";
             _poiSearchTextBox.IsVisible = false;
             if (_categoryFilterComboBox != null)
-            {
-                _categoryFilterComboBox.SelectedIndex = 0;
-                _categoryFilterComboBox.IsVisible     = false;
-            }
+                _categoryFilterComboBox.IsVisible = false;
         }
 
-        // Categoria scelta nel combo (indice 0 = "qualsiasi categoria", nessun
-        // filtro), o null se non applicabile
+        // Categoria scelta nel combo: sempre valorizzata (nessuna voce
+        // "qualsiasi categoria"), quindi null solo in caso difensivo di
+        // indice non valido.
         private (string Key, string Value, string Label)? GetSelectedCategoryFilter()
         {
-            int idx = _categoryFilterComboBox?.SelectedIndex ?? 0;
-            if (idx <= 0) return null;
-            return PoiSearchService.AllCategories[idx - 1];
+            int idx = _categoryFilterComboBox?.SelectedIndex ?? -1;
+            if (idx < 0 || idx >= PoiSearchService.AllCategories.Count) return null;
+            return PoiSearchService.AllCategories[idx];
         }
 
         // Riconosce una preposizione di luogo ("a", "in", "presso", "vicino a")
@@ -2737,122 +2729,71 @@ namespace StradarioApp.UI
             return new GeoRect { MinLon = minLon, MinLat = minLat, MaxLon = maxLon, MaxLat = maxLat };
         }
 
+        // La categoria si sceglie SOLO dal combo (sempre valorizzato, nessuna
+        // voce "qualsiasi categoria" — vedi BuildToolbar): il testo digitato
+        // è sempre un raffinamento ALL'INTERNO della categoria (es. categoria
+        // "stazioni ferroviarie" + testo "centrale" → solo le stazioni con
+        // "centrale" nel nome; testo vuoto → tutti i luoghi della categoria).
         private async Task OnPoiSearchAsync()
         {
             string query = _poiSearchTextBox?.Text?.Trim() ?? "";
             var selectedCategory = GetSelectedCategoryFilter();
+            if (selectedCategory == null) return;
 
-            // Nessun filtro categoria e nessun testo: niente da cercare
-            if (selectedCategory == null && string.IsNullOrWhiteSpace(query)) return;
-
+            var (key, value, label) = selectedCategory.Value;
             var viewBounds = GetCurrentViewBounds();
 
-            // Categoria scelta nel combo: ricerca DIRETTA per tag OSM, non
-            // "scritta" nella casella di testo. Il testo (se presente) fa da
-            // filtro sul nome ALL'INTERNO della categoria (es. categoria
-            // "stazioni ferroviarie" + testo "centrale" → solo le stazioni con
-            // "centrale" nel nome); vuoto → tutti i luoghi della categoria,
-            // che è il comportamento atteso scegliendo una voce dal menu.
-            if (selectedCategory != null)
+            _lastPoiSearchQuery = query;
+            // Persistita per riproporla come default del combo alla
+            // prossima apertura dell'app (vedi BuildToolbar/AppPreferencesService).
+            _appPrefsSvc.SaveLastPoiCategory(key, value);
+
+            GeoRect searchBounds = viewBounds;
+            string? nameFilter   = string.IsNullOrWhiteSpace(query) ? null : query;
+
+            // Se il testo contiene una preposizione di luogo ("a Pechino",
+            // "stazione centrale a Prato"...) la parte dopo NON è un filtro
+            // sul nome: è un luogo diverso dall'area visualizzata, e va
+            // cercato lì — geocodificato via Nominatim (nessuna IA, stesso
+            // meccanismo deterministico di questo percorso), non lasciato
+            // come testo da cercare nel nome (dove non troverebbe mai
+            // nulla: nessuna stazione si chiama letteralmente "a Pechino").
+            if (nameFilter != null)
             {
-                var (key, value, label) = selectedCategory.Value;
-                _lastPoiSearchQuery = query;
-
-                GeoRect searchBounds = viewBounds;
-                string? nameFilter   = string.IsNullOrWhiteSpace(query) ? null : query;
-
-                // Se il testo contiene una preposizione di luogo ("a Pechino",
-                // "stazione centrale a Prato"...) la parte dopo NON è un filtro
-                // sul nome: è un luogo diverso dall'area visualizzata, e va
-                // cercato lì — geocodificato via Nominatim (nessuna IA, stesso
-                // meccanismo deterministico di questo percorso), non lasciato
-                // come testo da cercare nel nome (dove non troverebbe mai
-                // nulla: nessuna stazione si chiama letteralmente "a Pechino").
-                if (nameFilter != null)
+                var (namePart, locationPart) = SplitNameAndLocation(nameFilter);
+                if (locationPart != null)
                 {
-                    var (namePart, locationPart) = SplitNameAndLocation(nameFilter);
-                    if (locationPart != null)
-                    {
-                        ShowStatusMessage($"Cerco \"{locationPart}\" sulla mappa…", seconds: 15);
-                        GeoRect? geocoded = null;
-                        try { geocoded = await _poiSearchSvc.GeocodePlaceAsync(locationPart); }
-                        catch (Exception ex) { Debug.WriteLine($"[PoiSearchCategory] geocodifica di \"{locationPart}\" fallita: {ex.Message}"); }
+                    ShowStatusMessage($"Cerco \"{locationPart}\" sulla mappa…", seconds: 15);
+                    GeoRect? geocoded = null;
+                    try { geocoded = await _poiSearchSvc.GeocodePlaceAsync(locationPart); }
+                    catch (Exception ex) { Debug.WriteLine($"[PoiSearchCategory] geocodifica di \"{locationPart}\" fallita: {ex.Message}"); }
 
-                        if (geocoded != null)
-                        {
-                            searchBounds   = geocoded;
-                            nameFilter     = namePart;
-                            // Ricentra la mappa lì (senza toccare lo zoom, stessa
-                            // regola di sempre), altrimenti i risultati trovati
-                            // resterebbero comunque fuori dallo schermo
-                            _viewCenterLon = searchBounds.CenterLon;
-                            _viewCenterLat = searchBounds.CenterLat;
-                        }
-                        else
-                        {
-                            ShowStatusMessage($"Luogo \"{locationPart}\" non trovato: cerco \"{query}\" nel nome, nell'area visualizzata.", isError: true, seconds: 6);
-                        }
+                    if (geocoded != null)
+                    {
+                        searchBounds   = geocoded;
+                        nameFilter     = namePart;
+                        // Ricentra la mappa lì (senza toccare lo zoom, stessa
+                        // regola di sempre), altrimenti i risultati trovati
+                        // resterebbero comunque fuori dallo schermo
+                        _viewCenterLon = searchBounds.CenterLon;
+                        _viewCenterLat = searchBounds.CenterLat;
+                    }
+                    else
+                    {
+                        ShowStatusMessage($"Luogo \"{locationPart}\" non trovato: cerco \"{query}\" nel nome, nell'area visualizzata.", isError: true, seconds: 6);
                     }
                 }
-
-                await RunCategorySearchAsync(key, value, label, searchBounds, subFilters: null, nameFilter: nameFilter);
-                return;
             }
 
-            _lastPoiSearchQuery = query;
-
-            // Se la parola digitata è una categoria nota ("stazione", "farmacia",
-            // ...) cerca per TAG OSM via Overpass invece che per nome via
-            // Nominatim: trova risultati anche scritti in un'altra lingua/alfabeto
-            // (vedi PoiSearchService). Altrimenti, ricerca testuale come sempre.
-            bool isCategory = PoiSearchService.TryMatchCategory(query, out string catKey, out string catValue, out string catLabel);
-
-            // Query libera (non una parola-chiave nota) + chiave Groq
-            // configurata nelle Impostazioni: passa dalla ricerca in
-            // linguaggio naturale (interpretazione AI + Overpass + ranking/
-            // descrizione AI) invece che dalla ricerca testuale Nominatim.
-            // Senza chiave configurata, comportamento invariato.
-            if (!isCategory && !string.IsNullOrWhiteSpace(_project.Settings.GroqApiKey))
-            {
-                await OnPoiSearchNlAsync(query, viewBounds);
-                return;
-            }
-
-            if (isCategory)
-            {
-                await RunCategorySearchAsync(catKey, catValue, catLabel, viewBounds, subFilters: null);
-                return;
-            }
-
-            ShowStatusMessage($"Ricerca \"{query}\" in corso...", seconds: 3);
-            try
-            {
-                var results = await _poiSearchSvc.SearchAsync(query, viewBounds);
-
-                if (results.Count == 0)
-                {
-                    ShowStatusMessage($"Nessun risultato per \"{query}\" nella zona visualizzata.", isError: true);
-                    return;
-                }
-
-                CancelAllAddModes();
-                _poiSearchMode       = true;
-                _poiSearchResults    = results;
-                _poiSearchResultsAreNl = false;
-                _poiSearchQueryLabel = query;
-                _mapCanvas?.InvalidateVisual();
-                ShowStatusMessage($"{results.Count} risultati per \"{query}\": clicca i marker sulla mappa per aggiungerli, uno o più di uno (ESC = esci).", seconds: 8);
-            }
-            catch (Exception ex)
-            {
-                ShowStatusMessage($"Errore ricerca online: {ex.Message}", isError: true, seconds: 8);
-            }
+            await RunCategorySearchAsync(key, value, label, searchBounds, subFilters: null, nameFilter: nameFilter);
         }
 
-        // Ricerca per categoria via tag OSM (Overpass): condivisa dalla parola
-        // chiave digitata nella casella di ricerca (TryMatchCategory) e dal
-        // selettore a combobox nella toolbar (OnCategorySearchSelected) — stessa
-        // identica esecuzione, cambia solo come si arriva a key/value/label.
+        // Ricerca per categoria via tag OSM (Overpass): unico chiamante è il
+        // ramo "categoria scelta dal combo" di OnPoiSearchAsync — la
+        // categoria si sceglie SOLO lì, mai da testo libero riconosciuto
+        // automaticamente (nessuna ambiguità: se l'utente non la sceglie dal
+        // combo, il testo va sempre alla ricerca in linguaggio naturale/
+        // Nominatim, mai qui).
         private async Task RunCategorySearchAsync(string key, string value, string label, GeoRect viewBounds,
             IEnumerable<string>? subFilters, string? nameFilter = null)
         {
@@ -2869,6 +2810,11 @@ namespace StradarioApp.UI
 
             string displayLabel = string.IsNullOrWhiteSpace(nameFilter) ? label : $"{label} \"{nameFilter}\"";
             ShowStatusMessage($"Cerco {displayLabel} nella zona...", seconds: 3);
+
+            var allSubFilters = (subFilters ?? Enumerable.Empty<string>())
+                .Concat(PoiSearchService.GetCategoryExcludeFilters(key, value));
+
+            List<PoiSearchService.Result> results;
             try
             {
                 // Unisce sempre i filtri di esclusione fissi della categoria
@@ -2877,219 +2823,77 @@ namespace StradarioApp.UI
                 // modo, queste riempiono da sole il limite di risultati e le
                 // stazioni ferroviarie vere restano fuori — vedi
                 // PoiSearchService.CategoryExcludeFilters)
-                var allSubFilters = (subFilters ?? Enumerable.Empty<string>())
-                    .Concat(PoiSearchService.GetCategoryExcludeFilters(key, value));
-                var results = await _poiSearchSvc.SearchCategoryAsync(key, value, viewBounds, allSubFilters, nameFilter);
-
-                if (results.Count == 0)
-                {
-                    ShowStatusMessage($"Nessun risultato per \"{displayLabel}\" nella zona visualizzata.", isError: true);
-                    return;
-                }
-
-                CancelAllAddModes();
-                _poiSearchMode         = true;
-                _poiSearchResults      = results;
-                _poiSearchResultsAreNl = false;
-                _poiSearchQueryLabel   = displayLabel;
-                _mapCanvas?.InvalidateVisual();
-                // Se il conteggio tocca il limite della query, l'elenco
-                // potrebbe non essere completo: l'utente deve saperlo invece
-                // di credere che siano davvero tutti (vedi PoiSearchService.CategoryResultCap)
-                bool possiblyTruncated = results.Count >= PoiSearchService.CategoryResultCap;
-                ShowStatusMessage(
-                    $"{results.Count} risultati per \"{displayLabel}\": clicca i marker sulla mappa per aggiungerli, uno o più di uno (ESC = esci)." +
-                    (possiblyTruncated ? " (potrebbero essercene altri: prova a restringere l'area)" : ""),
-                    seconds: 8);
+                results = await _poiSearchSvc.SearchCategoryAsync(key, value, viewBounds, allSubFilters, nameFilter);
             }
             catch (Exception ex)
             {
                 ShowStatusMessage($"Errore ricerca per categoria (Overpass): {ex.Message}", isError: true, seconds: 8);
-            }
-        }
-
-        // ---------------------------------------------------------------
-        // Ricerca POI in linguaggio naturale (Groq + Overpass): tre fasi
-        // separate, ciascuna con il proprio messaggio di stato/errore, così
-        // è chiaro all'utente in quale fase si è fermata una ricerca fallita.
-        // ---------------------------------------------------------------
-        private async Task OnPoiSearchNlAsync(string query, GeoRect viewBounds)
-        {
-            string apiKey = _project.Settings.GroqApiKey;
-
-            // Fase A: generazione ipotesi (Groq, conoscenza del mondo del
-            // modello — non una tassonomia di tag: può proporre un luogo per
-            // nome, es. "Prato Centrale")
-            ShowStatusMessage($"Genero ipotesi per \"{query}\"…", seconds: 30);
-            PoiSearchService.HypothesesResult hyp;
-            try
-            {
-                hyp = await _poiSearchSvc.GenerateHypothesesAsync(apiKey, query);
-            }
-            catch (Exception ex)
-            {
-                ShowStatusMessage($"Generazione ipotesi non riuscita: {ex.Message}", isError: true, seconds: 8);
                 return;
             }
 
-            if (hyp.Hypotheses.Count == 0)
+            bool possiblyTruncated = results.Count >= PoiSearchService.CategoryResultCap;
+
+            // Il filtro sul nome è una corrispondenza letterale (regex su
+            // "name"): per un vincolo che non è un nome ma una descrizione
+            // più ampia (es. "della linea firenze bologna" — nessuna
+            // stazione si chiama letteralmente così) non trova nulla. In
+            // quel caso, se è configurata una chiave Groq, si riprova SENZA
+            // filtro sul nome (tutti i {label} già presenti nell'area
+            // visualizzata) e si lascia scegliere all'AI quali sono
+            // pertinenti alla richiesta — sempre dentro l'elenco chiuso di
+            // luoghi OSM reali già trovati qui, MAI luoghi proposti dall'AI
+            // di sua iniziativa (vedi PoiSearchService.FilterCandidatesByQueryAsync).
+            // Nessun pan/zoom: resta l'area già visualizzata dall'utente.
+            bool usedAiFallback = false;
+            if (results.Count == 0 && !string.IsNullOrWhiteSpace(nameFilter) && !string.IsNullOrWhiteSpace(_project.Settings.GroqApiKey))
             {
-                ShowStatusMessage($"Il modello non conosce con certezza luoghi pertinenti a \"{query}\".", isError: true, seconds: 8);
-                return;
-            }
-
-            // Se la frase nomina esplicitamente uno o più luoghi, questi hanno
-            // priorità sul bbox della mappa visibile (la Fase C li userà come
-            // filtro geografico finale): geocodificati qui via Nominatim,
-            // esattamente come nel design precedente.
-            GeoRect searchBounds = viewBounds;
-            if (hyp.LocationHints.Count > 0)
-            {
-                ShowStatusMessage($"Cerco \"{string.Join(", ", hyp.LocationHints)}\" sulla mappa…", seconds: 30);
-
-                var resolvedRects = new List<GeoRect>();
-                var notFound      = new List<string>();
-                foreach (string hint in hyp.LocationHints)
-                {
-                    GeoRect? rect;
-                    try { rect = await _poiSearchSvc.GeocodePlaceAsync(hint); }
-                    catch (Exception ex)
-                    {
-                        ShowStatusMessage($"Geocodifica di \"{hint}\" non riuscita: {ex.Message}", isError: true, seconds: 8);
-                        return;
-                    }
-                    if (rect != null) resolvedRects.Add(rect); else notFound.Add(hint);
-                }
-
-                if (resolvedRects.Count > 0)
-                {
-                    searchBounds = new GeoRect
-                    {
-                        MinLon = resolvedRects.Min(r => r.MinLon),
-                        MinLat = resolvedRects.Min(r => r.MinLat),
-                        MaxLon = resolvedRects.Max(r => r.MaxLon),
-                        MaxLat = resolvedRects.Max(r => r.MaxLat)
-                    };
-
-                    // Ricentra la mappa sull'area cercata (altrimenti i marker
-                    // trovati resterebbero fuori dallo schermo), MA senza
-                    // toccare lo zoom: resta un parametro dell'utente.
-                    _viewCenterLon = searchBounds.CenterLon;
-                    _viewCenterLat = searchBounds.CenterLat;
-                }
-
-                if (notFound.Count > 0)
-                    ShowStatusMessage($"Luogo/i non trovato/i: {string.Join(", ", notFound)} — proseguo con gli altri.", isError: true, seconds: 6);
-            }
-
-            // Fase B: ogni ipotesi va verificata su OpenStreetMap prima di
-            // essere mostrata (reverse geocoding + fuzzy match, poi fallback
-            // Overpass per nome) — sequenziale, non parallela: PoiSearchService
-            // limita le chiamate a Nominatim a ~1/sec (policy d'uso), farle in
-            // parallelo violerebbe comunque quel limite lato server.
-            ShowStatusMessage($"Verifico {hyp.Hypotheses.Count} ipotesi su OpenStreetMap…", seconds: 60);
-            var verified = new List<PoiSearchService.VerifiedPlace>();
-            foreach (var h in hyp.Hypotheses)
-            {
+                ShowStatusMessage($"Nessuna corrispondenza diretta per \"{nameFilter}\": provo con l'AI su tutti i {label} della zona…", seconds: 15);
+                List<PoiSearchService.Result> allCandidates;
                 try
                 {
-                    verified.Add(await _poiSearchSvc.VerifyHypothesisAsync(h));
+                    allCandidates = await _poiSearchSvc.SearchCategoryAsync(key, value, viewBounds, allSubFilters, nameFilter: null);
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"[PoiSearchNl] verifica di \"{h.Name}\" fallita: {ex.Message}");
+                    ShowStatusMessage($"Errore ricerca per categoria (Overpass): {ex.Message}", isError: true, seconds: 8);
+                    return;
                 }
-            }
+                possiblyTruncated = allCandidates.Count >= PoiSearchService.CategoryResultCap;
 
-            if (verified.Count == 0)
-            {
-                ShowStatusMessage($"Nessuna ipotesi verificabile per \"{query}\" (errori di rete durante la verifica).", isError: true, seconds: 8);
-                return;
-            }
-
-            // Fase D: ultimo tentativo SOLO per le ipotesi non confermate
-            // dalla Fase B — ricerca web (Groq Compound, stessa chiave, nessun
-            // servizio esterno aggiuntivo). Come la Fase B, non scarta mai
-            // un'ipotesi: se anche questa fallisce resta Verified=false.
-            int unverifiedCount = verified.Count(v => !v.Verified);
-            if (unverifiedCount > 0)
-            {
-                ShowStatusMessage($"Verifico {unverifiedCount} ipotesi non confermate con una ricerca web…", seconds: 60);
-                string? locationHint = hyp.LocationHints.Count > 0 ? string.Join(" ", hyp.LocationHints) : null;
-
-                for (int i = 0; i < verified.Count; i++)
+                if (allCandidates.Count > 0)
                 {
-                    if (verified[i].Verified) continue;
-
-                    // Il record non verificato conserva nome/coordinate/indirizzo
-                    // originali dell'ipotesi (vedi VerifyHypothesisAsync): si può
-                    // ricostruire la PlaceHypothesis di partenza direttamente da lì
-                    var hypothesisForSearch = new PoiSearchService.PlaceHypothesis(
-                        verified[i].Name, verified[i].Lat, verified[i].Lon, verified[i].Address, "low");
                     try
                     {
-                        verified[i] = await _poiSearchSvc.WebSearchVerifyAsync(apiKey, hypothesisForSearch, locationHint);
+                        results = await _poiSearchSvc.FilterCandidatesByQueryAsync(_project.Settings.GroqApiKey, nameFilter, allCandidates);
+                        usedAiFallback = true;
                     }
                     catch (Exception ex)
                     {
-                        Debug.WriteLine($"[PoiSearchNl] Fase D fallita per \"{verified[i].Name}\": {ex.Message}");
+                        ShowStatusMessage($"Selezione AI non riuscita: {ex.Message}", isError: true, seconds: 8);
+                        return;
                     }
                 }
             }
 
-            // Fase C: filtro geografico + ranking, puramente locale (nessuna
-            // chiamata di rete/LLM). Posizione di riferimento per la distanza:
-            // quella "dove sono" se attiva e già con un fix, altrimenti il
-            // centro della vista corrente.
-            GeoPoint userLoc = _myLocationActive && _myLocation != null
-                ? _myLocation
-                : new GeoPoint { Lon = _viewCenterLon, Lat = _viewCenterLat };
-
-            var ranked = _poiSearchSvc.FilterAndRank(verified, searchBounds, userLoc);
-
-            // Il filtro geografico ha scartato tutto (es. le coordinate stimate
-            // dall'LLM cadono fuori dall'area attesa): meglio mostrare comunque
-            // i luoghi trovati — magari fuori area, magari non confermati, ma
-            // visibili con un colore diverso — che zero risultati senza
-            // possibilità per l'utente di giudicare da sé.
-            bool boundsDropped = ranked.Count == 0 && verified.Count > 0;
-            if (boundsDropped)
-                ranked = _poiSearchSvc.RankByDistance(verified, userLoc);
-
-            if (ranked.Count == 0)
+            if (results.Count == 0)
             {
-                ShowStatusMessage($"Nessun luogo, nemmeno non verificato, trovato per \"{query}\".", isError: true, seconds: 8);
+                ShowStatusMessage($"Nessun risultato per \"{displayLabel}\" nella zona visualizzata.", isError: true);
                 return;
             }
 
-            var results = ranked.Select(rp => new PoiSearchService.Result(
-                rp.Place.Name, rp.Place.Lon, rp.Place.Lat,
-                null, null, rp.Place.Address, null, rp.Place.Verified)).ToList();
-
-            int verifiedCount = results.Count(r => r.Verified);
-
-            // Se erano fuori dall'area attesa, ricentra lì la mappa (senza
-            // toccare lo zoom, stessa regola di sempre) altrimenti resterebbero
-            // fuori dallo schermo esattamente come nel caso originale che ha
-            // fatto scoprire questo problema
-            if (boundsDropped)
-            {
-                _viewCenterLon = results.Average(r => r.Lon);
-                _viewCenterLat = results.Average(r => r.Lat);
-            }
-
             CancelAllAddModes();
-            _poiSearchMode       = true;
-            _poiSearchResults    = results;
-            _poiSearchResultsAreNl = true;
-            _poiSearchQueryLabel = query;
+            _poiSearchMode         = true;
+            _poiSearchResults      = results;
+            _poiSearchQueryLabel   = displayLabel;
             _mapCanvas?.InvalidateVisual();
+            // Se il conteggio tocca il limite della query, l'elenco
+            // potrebbe non essere completo: l'utente deve saperlo invece
+            // di credere che siano davvero tutti (vedi PoiSearchService.CategoryResultCap)
             ShowStatusMessage(
-                $"{results.Count} risultati per \"{query}\" ({verifiedCount} verificati, " +
-                $"{results.Count - verifiedCount} non verificati)" +
-                (boundsDropped ? " — fuori dall'area attesa, mappa ricentrata" : "") +
-                ": clicca i marker sulla mappa per aggiungerli (ESC = esci).",
-                seconds: 10);
+                $"{results.Count} risultati per \"{displayLabel}\"" + (usedAiFallback ? " (selezionati dall'AI)" : "") +
+                ": clicca i marker sulla mappa per aggiungerli, uno o più di uno (ESC = esci)." +
+                (possiblyTruncated ? " (potrebbero essercene altri: prova a restringere l'area)" : ""),
+                seconds: 8);
         }
 
         // Ricerca inversa "cosa c'è in questo punto GPS" (shift + tasto destro
@@ -3112,7 +2916,6 @@ namespace StradarioApp.UI
                 CancelAllAddModes();
                 _poiSearchMode       = true;
                 _poiSearchResults    = new List<PoiSearchService.Result> { result };
-                _poiSearchResultsAreNl = false;
                 _poiSearchQueryLabel = "Ricerca GPS";
                 _mapCanvas?.InvalidateVisual();
                 ShowStatusMessage($"Trovato: {SanitizeSearchLabel(result.DisplayName)}. Clicca il marker per aggiungerlo (ESC = esci).", seconds: 8);
@@ -3877,9 +3680,7 @@ namespace StradarioApp.UI
             {
                 Id          = _poiSvc.GetNextItemId(target),
                 Label       = label,
-                // Preferisce la descrizione generata dalla ricerca in linguaggio
-                // naturale (Fase C), quando presente, al posto del solo nome esteso
-                Description = !string.IsNullOrWhiteSpace(result.Description) ? result.Description! : result.DisplayName,
+                Description = result.DisplayName,
                 Lon         = result.Lon,
                 Lat         = result.Lat
             };
