@@ -32,11 +32,16 @@ dotnet publish -c Release -r win-x64   --self-contained false \
 - Requires the **.NET 8 SDK**.
 - There is **no test suite** and no linter configured — verification is by
   running the app.
-- `cities500.csv` (GeoNames, ~24 MB, at repo root) must sit next to the
-  executable (or in `~`) at runtime; without it, city-name lookups degrade
-  silently to empty results (see `CityDatabase.SearchPaths`). Deliberately
-  excluded from the GitHub Release zips (size) — noted in the release
-  description instead.
+- `cities500.csv` (GeoNames, ~24 MB) is looked for at repo root/executable
+  folder/`~` first (`CityDatabase.SearchPaths`); if not found anywhere,
+  `CityDatabase.DownloadAndExtract` downloads the official
+  `cities500.zip` from `download.geonames.org` automatically and caches the
+  extracted raw dump under `%AppData%/StradarioApp/cities500.txt` (Linux:
+  `~/.config/StradarioApp`) — the user never has to go fetch the file by
+  hand. Only if the download itself fails (no network, server down) does
+  city-name lookup degrade silently to empty results, same as the old
+  "file not found" behavior. Deliberately excluded from the GitHub Release
+  zips (size) — noted in the release description instead.
 - GitHub Releases (`gh release create <tag> <zips> --repo paolobia/StradarioApp`)
   host the single-file builds as downloadable zips; `./publish/` is
   gitignored, so these binaries never go into the git history itself.
@@ -179,6 +184,70 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   hypothesis-and-verify flow, and its `Result.Verified`/`Description`
   fields and marker coloring in `MainWindow`, are gone.
 
+- **The category combo has two "special" entries pinned at the top**
+  (`PoiSearchService.SentinelCategoryKey`/`AddressSearchValue`/
+  `CitySearchValue`, prepended to `AllCategories` so the combo index stays
+  1:1 with it — `GetSelectedCategoryFilter` needs no special-casing): "Ricerca
+  un indirizzo" and "Ricerca una città (anche parziale)". Both bypass
+  `RunCategorySearchAsync` entirely (no Overpass tag involved) and are
+  dispatched straight from `OnPoiSearchAsync`:
+  - **Indirizzo** → `MainWindow.RunAddressSearchAsync` →
+    `PoiSearchService.SearchAddressAsync` (Nominatim `/search`, `limit`
+    results, `viewbox` as a *hint* not a hard filter — a fully-written
+    address can legitimately be outside the current view). Text is
+    mandatory (watermark says so); recenters the map on the top (most
+    relevant) result, same rule as the existing "a `<place>`" geocoding
+    branch, otherwise found markers could land off-screen and look like
+    "no results".
+  - **Città** → `MainWindow.RunCitySearchAsync` → `CityDatabase.SearchByName`
+    (local, no network) when text is given, but **text is optional here**
+    (unlike address search) — empty text instead calls
+    `CityDatabase.FindTopCities(viewBounds, CitiesInViewMax=30)`, i.e. "show
+    me the cities already visible", and in that branch the map is *not*
+    recentered (results are already on-screen). `UpdatePoiSearchWatermark`
+    keeps the textbox hint in sync with whichever of the three modes
+    (category / address / city) is selected.
+
+- **`CityDatabase.SearchByName` matches through a small curated
+  Italian→GeoNames alias table** (`CityAliases`, ~28 entries: major Italian
+  cities + well-known world capitals). GeoNames often stores the English
+  exonym as a city's canonical `name` (Firenze→"Florence", Roma→"Rome",
+  Milano→"Milan", Napoli→"Naples"...) — a literal substring search for
+  "firen" would otherwise only ever match minor places like "Firenzuola"
+  and never find Florence itself. Not a general translation layer: it's a
+  hand-picked list for the realistic common cases, explicitly *not* meant
+  to grow indefinitely — see the TODO note in the same file about a future
+  GeoNames-`alternateNames`-based approach if the app ever goes properly
+  multi-language (UI strings, not just this search).
+
+- **Category search (`RunCategorySearchAsync`) clamps an over-wide view
+  instead of just refusing.** If the visualized area exceeds
+  `MainWindow.MaxCategorySearchDegrees` (3°) on either side (e.g. "vedo
+  tutta la Toscana e il Lazio" at a very small zoom), it used to just show
+  an easy-to-miss status message and return nothing. Now it silently
+  restricts the Overpass query to a 3°×3° box centered on the current view
+  center — so a search always returns *something* useful, with an explicit
+  note (both in the initial "cerco..." message and in the final result
+  count) that the area was restricted. `PoiSearchService.CategoryResultCap`
+  (now `5000`, was `200`) is a safety valve against pathological responses,
+  not a normal usage limit anymore — a dense category like "caffetterie" in
+  a big city should return everything real, not an arbitrary subset.
+
+- **Every category/address/city search runs inside `UI/PoiSearchLogWindow`**,
+  a small non-modal-in-spirit dialog opened at the start of
+  `OnPoiSearchAsync` (Invio or the search icon's second click) showing a
+  timestamped, ever-growing log of what's happening right now (area
+  clamped? querying Overpass? asking Groq? geocoding?) instead of a single
+  transient status-bar line. One button, "Annulla" (the window's own X
+  behaves the same way — there's no second way to close it manually): both
+  request cancellation via a `CancellationTokenSource` threaded through
+  every awaited call (`PoiSearchService.*Async`'s `onProgress`/`ct`
+  parameters) and close the window immediately. On success/error/
+  cancellation the window is closed *programmatically*
+  (`CloseProgrammatically`, which skips the Closing handler's
+  cancel-on-close logic) only once the whole operation has actually
+  finished — never before results are already placed on the map.
+
 - **`Services/GroqClient`** now backs only `FilterCandidatesByQueryAsync`
   above (`CompoundModel`/web-search-integrated calls were removed along
   with the hypothesis-generation flow). Every request/response is logged
@@ -246,6 +315,23 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   the rest of the world are never altered; inside it, it inverts the
   (closed-form) WGS84→GCJ-02 formula via iterative bisection (no analytic
   inverse exists) to correct the point back to its real position.
+
+- **Export applies the same correction symmetrically, in reverse.**
+  `GcjTransform.Wgs84ToGcj02ForExport` (public wrapper around the already-
+  existing private `Wgs84ToGcj02`, the closed-form direction used
+  internally by the bisection above) converts a point's true WGS84
+  coordinates (what the app stores internally) back to GCJ-02 right before
+  writing it out, in every KMZ/KML/GPX coordinate written by
+  `PoiService.BuildKmlDocument`/`ExportGpxAsync` and
+  `PercorsoService.BuildKmlDocument`/`ExportGpxAsync`. Same no-op-outside-
+  China guard as the import direction. Rationale: a POI/route imported from
+  a Chinese source and corrected on the way in should, if exported again
+  (e.g. to be reopened in a Chinese mapping app, which still expects
+  GCJ-02), land back on its original "Mars" coordinates instead of drifting
+  by the same few-hundred-meter offset in the opposite direction — verified
+  with a real Beijing point (Tiananmen, WGS84 39.9055,116.3976 →
+  exported GCJ-02 39.9069,116.4038, ~555 m offset, round-trip back to
+  within 6 cm).
 
 - **Fallback POI group naming uses the file name.** When a KML has no
   `<Folder><name>` (or the Placemark/`<wpt>` isn't inside any Folder), the

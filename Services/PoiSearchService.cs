@@ -47,15 +47,16 @@ namespace StradarioApp.Services
         // pubblico è sotto carico
         private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(25) };
 
-        // Limite risultati di SearchCategoryAsync per singola query Overpass:
-        // sufficiente per la stragrande maggioranza delle ricerche, ma una
-        // categoria molto densa in un'area vasta (es. "stazioni ferroviarie"
-        // su una grande metropoli, dove spesso anche le fermate della
-        // metropolitana condividono lo stesso tag) può comunque saturarlo.
-        // Pubblico così il chiamante può confrontarlo con Result.Count e
-        // avvisare che l'elenco potrebbe non essere completo, invece di far
-        // credere che lo sia.
-        public const int CategoryResultCap = 200;
+        // Limite di SICUREZZA (non un limite "normale") passato a Overpass
+        // ("out center N"): per categorie molto dense (es. "caffetterie" in
+        // una grande città) l'utente vuole vederle TUTTE, non un sottoinsieme
+        // arbitrario troncato a poche centinaia — quindi questo valore è
+        // volutamente alto, pensato solo per evitare risposte patologiche
+        // (centinaia di migliaia di elementi) che bloccherebbero client e
+        // server, non per limitare l'uso normale. Pubblico così il chiamante
+        // può confrontarlo con Result.Count e avvisare nel raro caso in cui
+        // anche questo tetto molto alto venga raggiunto.
+        public const int CategoryResultCap = 5000;
 
         static PoiSearchService()
         {
@@ -100,8 +101,9 @@ namespace StradarioApp.Services
         // ("stazione centrale a Pechino" → cerca a Pechino, non nell'area
         // visualizzata) e da GetCoordinatesAsync/SearchByPlaceAndCategoryAsync
         // più sotto. Ritorna null se il luogo non viene trovato.
-        public async Task<GeoRect?> GeocodePlaceAsync(string placeName, CancellationToken ct = default)
+        public async Task<GeoRect?> GeocodePlaceAsync(string placeName, Action<string>? onProgress = null, CancellationToken ct = default)
         {
+            onProgress?.Invoke($"Attendo il turno per interrogare Nominatim (max 1 richiesta/secondo)...");
             await ThrottleNominatimAsync(ct);
 
             string url =
@@ -109,12 +111,17 @@ namespace StradarioApp.Services
                 $"?q={Uri.EscapeDataString(placeName)}" +
                 "&format=jsonv2&limit=1&accept-language=it,en";
 
+            onProgress?.Invoke($"Interrogo Nominatim per il luogo \"{placeName}\"...");
             using var resp = await Http.GetAsync(url, ct);
             resp.EnsureSuccessStatusCode();
             string json = await resp.Content.ReadAsStringAsync(ct);
 
             var arr = JArray.Parse(json);
-            if (arr.Count == 0) return null;
+            if (arr.Count == 0)
+            {
+                onProgress?.Invoke($"Nominatim non ha trovato nessun luogo per \"{placeName}\".");
+                return null;
+            }
 
             var bbox = arr[0]["boundingbox"] as JArray;
             if (bbox == null || bbox.Count < 4) return null;
@@ -126,6 +133,46 @@ namespace StradarioApp.Services
             double maxLon = double.Parse(bbox[3].Value<string>()!, CultureInfo.InvariantCulture);
 
             return new GeoRect { MinLon = minLon, MinLat = minLat, MaxLon = maxLon, MaxLat = maxLat };
+        }
+
+        // Ricerca libera di un indirizzo/via+città su Nominatim (voce "Ricerca
+        // un indirizzo" del combo categoria, MainWindow.RunAddressSearchAsync):
+        // a differenza di GeocodePlaceAsync (un solo luogo, ritorna il suo
+        // bounding box) qui il testo è un indirizzo puntuale e il chiamante
+        // vuole vedere TUTTI i candidati plausibili come marker sulla mappa
+        // (stessa UX della ricerca per categoria), non un solo bbox su cui
+        // ricentrare. `viewBounds`, se dato, passa a Nominatim come suggerimento
+        // di area (parametro "viewbox", non "bounded": un indirizzo scritto per
+        // esteso con la propria città può stare benissimo fuori dalla vista
+        // attuale, non va scartato).
+        public async Task<List<Result>> SearchAddressAsync(string query, GeoRect? viewBounds = null, int limit = 15,
+            Action<string>? onProgress = null, CancellationToken ct = default)
+        {
+            onProgress?.Invoke("Attendo il turno per interrogare Nominatim (max 1 richiesta/secondo)...");
+            await ThrottleNominatimAsync(ct);
+
+            string url =
+                "https://nominatim.openstreetmap.org/search" +
+                $"?q={Uri.EscapeDataString(query)}" +
+                $"&format=jsonv2&limit={limit}&addressdetails=1&accept-language=it,en";
+            if (viewBounds != null)
+                url += $"&viewbox={Fmt(viewBounds.MinLon)},{Fmt(viewBounds.MaxLat)},{Fmt(viewBounds.MaxLon)},{Fmt(viewBounds.MinLat)}";
+
+            onProgress?.Invoke($"Interrogo Nominatim per l'indirizzo \"{query}\"...");
+            using var resp = await Http.GetAsync(url, ct);
+            resp.EnsureSuccessStatusCode();
+            string json = await resp.Content.ReadAsStringAsync(ct);
+
+            var arr = JArray.Parse(json);
+            var results = new List<Result>();
+            foreach (var item in arr)
+            {
+                var r = ParseResult(item);
+                if (r != null) results.Add(r);
+            }
+
+            onProgress?.Invoke($"Trovati {results.Count} indirizzi corrispondenti.");
+            return results;
         }
 
         // Ricerca inversa: cosa si trova nel punto geografico (lon, lat)
@@ -233,12 +280,31 @@ namespace StradarioApp.Services
             (new[] { "cambio", "cambio valuta", "currency exchange" },             "amenity", "bureau_de_change","uffici cambio"),
         };
 
+        // Le due voci "speciali" in testa al combo (vedi BuildToolbar in
+        // MainWindow): non sono tag OSM da interrogare su Overpass come le
+        // altre, ma modalità di ricerca diverse (geocoding indirizzo via
+        // Nominatim, nome città anche parziale da CityDatabase/cities500.csv)
+        // — riconosciute da Key == SentinelCategoryKey, con Value che
+        // distingue le due (AddressSearchValue/CitySearchValue). Prependerle
+        // qui invece che in una lista separata mantiene l'indice del combo
+        // allineato 1:1 con AllCategories, così GetSelectedCategoryFilter
+        // (MainWindow) resta invariato.
+        public const string SentinelCategoryKey  = "__special__";
+        public const string AddressSearchValue    = "address";
+        public const string CitySearchValue       = "city";
+
         // Vista pubblica di sola lettura di Categories, per il selettore a
         // combobox nella toolbar (MainWindow): solo Key/Value/Label, non le
         // parole chiave (quelle servono solo al riconoscimento testuale di
         // TryMatchCategory, non alla UI).
         public static IReadOnlyList<(string Key, string Value, string Label)> AllCategories { get; } =
-            Categories.Select(c => (c.Key, c.Value, c.Label)).ToList();
+            new List<(string Key, string Value, string Label)>
+            {
+                (SentinelCategoryKey, AddressSearchValue, "Ricerca un indirizzo"),
+                (SentinelCategoryKey, CitySearchValue,     "Ricerca una città (anche parziale)"),
+            }
+            .Concat(Categories.Select(c => (c.Key, c.Value, c.Label)))
+            .ToList();
 
         // Sottofiltri di ESCLUSIONE applicati sempre a una categoria (oltre a
         // quelli passati dal chiamante), a prescindere da come vi si arriva
@@ -294,13 +360,16 @@ namespace StradarioApp.Services
         // richiamare Overpass più volte per la stessa identica ricerca (es.
         // l'utente che riprova o pan minimi).
         public async Task<List<Result>> SearchCategoryAsync(string key, string value, GeoRect viewBounds,
-            IEnumerable<string>? subFilters = null, string? nameFilter = null, CancellationToken ct = default)
+            IEnumerable<string>? subFilters = null, string? nameFilter = null, Action<string>? onProgress = null, CancellationToken ct = default)
         {
             var subList = (subFilters ?? Enumerable.Empty<string>()).ToList();
 
             string cacheKey = BuildCategoryCacheKey(key, value, viewBounds, subList, nameFilter);
             if (_categoryCache.TryGetValue(cacheKey, out var cached) && cached.Expiry > DateTime.UtcNow)
+            {
+                onProgress?.Invoke($"Trovata in cache la stessa ricerca ({key}={value}) per quest'area: nessuna nuova richiesta a Overpass.");
                 return cached.Results;
+            }
 
             string extraFilters = "";
             foreach (string sf in subList)
@@ -332,9 +401,12 @@ namespace StradarioApp.Services
                 ");" +
                 $"out center {CategoryResultCap};";
 
+            onProgress?.Invoke($"Costruita la query Overpass per \"{key}={value}\" nell'area {Fmt(viewBounds.MinLat)},{Fmt(viewBounds.MinLon)} – {Fmt(viewBounds.MaxLat)},{Fmt(viewBounds.MaxLon)}.");
+            onProgress?.Invoke("Invio la richiesta al server pubblico Overpass (overpass-api.de)...");
             using var content = new FormUrlEncodedContent(new[] { new KeyValuePair<string, string>("data", ql) });
             using var resp = await Http.PostAsync("https://overpass-api.de/api/interpreter", content, ct);
             resp.EnsureSuccessStatusCode();
+            onProgress?.Invoke("Risposta ricevuta da Overpass, analizzo gli elementi trovati...");
             string json = await resp.Content.ReadAsStringAsync(ct);
 
             var root = JObject.Parse(json);
@@ -357,6 +429,8 @@ namespace StradarioApp.Services
                     lon.Value, lat.Value,
                     key, value, null));
             }
+
+            onProgress?.Invoke($"Trovati {results.Count} elementi validi (con coordinate) su Overpass.");
 
             if (_categoryCache.Count >= CategoryCacheMaxEntries) _categoryCache.Clear();
             _categoryCache[cacheKey] = (DateTime.UtcNow.AddSeconds(CategoryCacheTtlSeconds), results);
@@ -404,7 +478,7 @@ namespace StradarioApp.Services
         // qui il compito è scegliere dentro un elenco dato, non cercare
         // informazioni nuove.
         // ---------------------------------------------------------------
-        public async Task<List<Result>> FilterCandidatesByQueryAsync(string apiKey, string query, List<Result> candidates, CancellationToken ct = default)
+        public async Task<List<Result>> FilterCandidatesByQueryAsync(string apiKey, string query, List<Result> candidates, Action<string>? onProgress = null, CancellationToken ct = default)
         {
             if (candidates.Count == 0) return new List<Result>();
 
@@ -429,8 +503,10 @@ namespace StradarioApp.Services
 
             string userPrompt = $"Richiesta: \"{query}\"\n\nElenco candidati:\n{indexed.ToString(Formatting.None)}";
 
+            onProgress?.Invoke($"Invio a Groq/AI {candidates.Count} candidati OSM da filtrare per \"{query}\"...");
             string raw = await _groq.ChatJsonAsync(apiKey, systemPrompt, userPrompt, ct,
                 model: GroqClient.DefaultModel, enableJsonMode: true).ConfigureAwait(false);
+            onProgress?.Invoke("Risposta AI ricevuta, analizzo la selezione...");
 
             JObject obj;
             try { obj = ExtractJsonObject(raw); }
@@ -447,6 +523,7 @@ namespace StradarioApp.Services
                 .Distinct()
                 .ToList() ?? new List<int>();
 
+            onProgress?.Invoke($"L'AI ha selezionato {indices.Count} luoghi pertinenti su {candidates.Count} candidati.");
             return indices.Select(i => candidates[i]).ToList();
         }
 
@@ -475,7 +552,7 @@ namespace StradarioApp.Services
         // un'eccezione.
         public async Task<(double Lat, double Lon)> GetCoordinatesAsync(string place, CancellationToken ct = default)
         {
-            var rect = await GeocodePlaceAsync(place, ct).ConfigureAwait(false);
+            var rect = await GeocodePlaceAsync(place, ct: ct).ConfigureAwait(false);
             if (rect == null)
                 throw new InvalidOperationException($"Luogo \"{place}\" non trovato.");
             return (rect.CenterLat, rect.CenterLon);

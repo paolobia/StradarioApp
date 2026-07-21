@@ -16,7 +16,7 @@ l'app genera un PDF con indice, mappa riassuntiva e una pagina per quadrante.
 | Generazione PDF | PdfSharpCore 1.3.65 |
 | Serializzazione | Newtonsoft.Json 13.0.3 |
 | Font PDF Linux | FontResolver custom (IFontResolver) |
-| Database città | GeoNames cities500.csv (file esterno) |
+| Database città | GeoNames cities500.csv (scaricato automaticamente se assente) |
 
 ---
 
@@ -35,14 +35,20 @@ l'app genera un PDF con indice, mappa riassuntiva e una pagina per quadrante.
    le città più popolose nel bounding box della pagina
 5. **Gruppi POI**: marker con icona/colore configurabili (rendering vettoriale
    condiviso mappa/PDF/KMZ via `PoiIconRenderer`), aggiunta diretta sulla mappa
-   con auto-label `POI<n>`, drag per riposizionare, ricerca in linguaggio
-   naturale opzionale (Groq API)
+   con auto-label `POI<n>`, drag per riposizionare. Ricerca per categoria
+   (menu a tendina, filtro testuale sul nome, fallback AI/Groq opzionale se
+   il filtro letterale non trova nulla), più due voci speciali in cima al
+   menu: ricerca indirizzo (Nominatim) e ricerca città (GeoNames, nome anche
+   parziale o vuoto per quelle visibili). Ogni ricerca mostra una finestra
+   di log passo-passo con pulsante Annulla (`PoiSearchLogWindow`)
 6. **Percorsi**: disegno punto-per-punto sulla mappa (click = punto,
    shift+click = fine), auto-label `PATH<n>`, estensione di percorsi
    esistenti, drag dei singoli vertici
 7. **Import/Export unificato**: un solo pulsante toolbar importa KMZ/KML/GPX
    (POI e percorsi nello stesso file, merge automatico); export separato per
-   gruppi POI e percorsi in KMZ/KML/GPX a seconda dell'estensione scelta
+   gruppi POI e percorsi in KMZ/KML/GPX a seconda dell'estensione scelta.
+   Punti in Cina corretti GCJ-02→WGS84 in import e simmetricamente
+   WGS84→GCJ-02 in export (`GcjTransform`)
 8. **Generazione PDF**: anteprima (temp file → viewer di sistema → dialog
    Salva/Chiudi) prima di chiedere dove salvare; indice + mappa riassuntiva +
    eventuali pagine gazetteer POI + pagine mappa ordinate con bordi
@@ -91,7 +97,8 @@ StradarioApp/
 │   ├── ProjectService.cs        Salva/carica .stradario (JSON)
 │   ├── AppPreferencesService.cs Preferenze globali (chiavi API), NON nel progetto
 │   ├── FontResolver.cs          Font per PdfSharpCore su Linux (IFontResolver)
-│   ├── CityDatabase.cs          Carica cities500.csv, FindTopCities(bounds, n)
+│   ├── CityDatabase.cs          Carica cities500.csv (download automatico se assente),
+│   │                             FindTopCities/SearchByName + alias IT→GeoNames
 │   └── RecentFilesService.cs    Elenco progetti recenti
 └── UI/
     ├── MapCanvas.cs             Control Avalonia custom che espone SKCanvas (via Avalonia.Skia)
@@ -101,6 +108,7 @@ StradarioApp/
     ├── PoiGroupEditWindow.cs / PoiItemEditWindow.cs   Dialog gruppi/POI
     ├── RouteEditWindow.cs       Dialog modifica percorso
     ├── PoiManagerWindow.cs      Leftover, NON usato come entry point (vedi CLAUDE.md)
+    ├── PoiSearchLogWindow.cs    Log passo-passo di ogni ricerca POI, con Annulla
     └── ProgressWindow.cs        Dialog avanzamento generazione PDF
 ```
 
@@ -161,16 +169,21 @@ mostrare il dialog "salva?". Prima di `Close()` finale fare
 vengono ritentati al prossimo frame. La chiave include il server URL:
 `"serverUrl|z/x/y"` — così cambiare server non mescola tile diversi.
 
-**cities500.csv**: va scaricato da https://download.geonames.org/export/dump/cities500.zip
-e messo nella stessa cartella dell'eseguibile. Il parser CSV gestisce campi
-tra virgolette (formato GeoNames). Il caricamento parte in background all'avvio.
+**cities500.csv**: se non trovato nella cartella dell'eseguibile/`~`,
+`CityDatabase.DownloadAndExtract` lo scarica da sola da
+https://download.geonames.org/export/dump/cities500.zip e lo mette in
+cache in `%AppData%/StradarioApp` (formato TSV grezzo GeoNames, diverso dal
+CSV con intestazione atteso se fornito a mano — due parser distinti
+selezionati per estensione, `.txt` vs `.csv`). Il caricamento parte in
+background all'avvio (`Program.cs` → `CityDatabase.EnsureLoaded()`).
 
 ---
 
 ## File esterno necessario
-`cities500.csv` nella stessa cartella dell'eseguibile (o di `dotnet run`).
-Senza di esso il bottone "📍 Città principali" mostra un avviso ma tutto
-il resto funziona normalmente.
+`cities500.csv`: non richiede più intervento manuale, l'app lo scarica da
+sola al primo utilizzo se non lo trova (vedi sopra). Se il download fallisce
+(rete assente), il bottone "📍 Città principali" e la ricerca POI "Ricerca
+una città" mostrano un avviso ma tutto il resto funziona normalmente.
 
 ---
 

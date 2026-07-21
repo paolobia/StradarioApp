@@ -65,8 +65,14 @@ namespace StradarioApp.Services
                     placemark.Add(new XElement(kml + "description", r.Description));
                 placemark.Add(new XElement(kml + "styleUrl", $"#style_{r.Id}"));
 
+                // Simmetrico all'import (GcjTransform.Gcj02ToWgs84): i punti
+                // che cadono in Cina vengono qui ri-corretti da WGS84 a
+                // GCJ-02, vedi commento analogo in PoiService.BuildKmlDocument.
                 string coords = string.Join(" ", r.Points.Select(p =>
-                    $"{p.Lon.ToString(CultureInfo.InvariantCulture)},{p.Lat.ToString(CultureInfo.InvariantCulture)},0"));
+                {
+                    var (expLat, expLon) = GcjTransform.Wgs84ToGcj02ForExport(p.Lat, p.Lon);
+                    return $"{expLon.ToString(CultureInfo.InvariantCulture)},{expLat.ToString(CultureInfo.InvariantCulture)},0";
+                }));
                 placemark.Add(new XElement(kml + "LineString",
                     new XElement(kml + "tessellate", 1),
                     new XElement(kml + "coordinates", coords)));
@@ -125,9 +131,12 @@ namespace StradarioApp.Services
 
                 var trkseg = new XElement(gpx + "trkseg");
                 foreach (var p in r.Points)
+                {
+                    var (expLat, expLon) = GcjTransform.Wgs84ToGcj02ForExport(p.Lat, p.Lon);
                     trkseg.Add(new XElement(gpx + "trkpt",
-                        new XAttribute("lat", p.Lat.ToString(CultureInfo.InvariantCulture)),
-                        new XAttribute("lon", p.Lon.ToString(CultureInfo.InvariantCulture))));
+                        new XAttribute("lat", expLat.ToString(CultureInfo.InvariantCulture)),
+                        new XAttribute("lon", expLon.ToString(CultureInfo.InvariantCulture))));
+                }
                 trk.Add(trkseg);
 
                 root.Add(trk);

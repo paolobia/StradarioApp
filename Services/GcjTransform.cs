@@ -65,6 +65,22 @@ namespace StradarioApp.Services
             return (wgLat, wgLon);
         }
 
+        // Operazione inversa di Gcj02ToWgs84: corregge un punto WGS84 (quello
+        // usato internamente dall'app) nel corrispondente punto GCJ-02, per
+        // l'export simmetrico all'import — un POI/percorso importato da una
+        // fonte cinese e corretto in ingresso deve, una volta ri-esportato
+        // (es. per essere riaperto in un'app di mappe cinese, che si aspetta
+        // GCJ-02), tornare alle coordinate "Mars" originali invece di restare
+        // in WGS84 e apparire spostato. No-op fuori dalla Cina, stesso
+        // bounding box di IsInChina/Gcj02ToWgs84.
+        public static (double Lat, double Lon) Wgs84ToGcj02ForExport(double wgsLat, double wgsLon)
+        {
+            if (!IsInChina(wgsLat, wgsLon))
+                return (wgsLat, wgsLon);
+
+            return Wgs84ToGcj02(wgsLat, wgsLon);
+        }
+
         private static (double Lat, double Lon) Wgs84ToGcj02(double wgLat, double wgLon)
         {
             double dLat = TransformLat(wgLon - 105.0, wgLat - 35.0);

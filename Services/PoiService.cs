@@ -92,9 +92,15 @@ namespace StradarioApp.Services
                     if (!string.IsNullOrWhiteSpace(item.Description))
                         placemark.Add(new XElement(kml + "description", item.Description));
                     placemark.Add(new XElement(kml + "styleUrl", $"#style_{g.Id}"));
+                    // Simmetrico all'import (GcjTransform.Gcj02ToWgs84): un
+                    // punto che cade in Cina viene qui ri-corretto da WGS84
+                    // (usato internamente) a GCJ-02, così riaperto in un'app
+                    // di mappe cinese torna a coincidere con la posizione
+                    // mostrata da quell'app invece di apparire spostato.
+                    var (expLat, expLon) = GcjTransform.Wgs84ToGcj02ForExport(item.Lat, item.Lon);
                     placemark.Add(new XElement(kml + "Point",
                         new XElement(kml + "coordinates",
-                            $"{item.Lon.ToString(CultureInfo.InvariantCulture)},{item.Lat.ToString(CultureInfo.InvariantCulture)},0")));
+                            $"{expLon.ToString(CultureInfo.InvariantCulture)},{expLat.ToString(CultureInfo.InvariantCulture)},0")));
                     folder.Add(placemark);
                 }
 
@@ -163,9 +169,10 @@ namespace StradarioApp.Services
             {
                 foreach (var item in g.Items)
                 {
+                    var (expLat, expLon) = GcjTransform.Wgs84ToGcj02ForExport(item.Lat, item.Lon);
                     var wpt = new XElement(gpx + "wpt",
-                        new XAttribute("lat", item.Lat.ToString(CultureInfo.InvariantCulture)),
-                        new XAttribute("lon", item.Lon.ToString(CultureInfo.InvariantCulture)));
+                        new XAttribute("lat", expLat.ToString(CultureInfo.InvariantCulture)),
+                        new XAttribute("lon", expLon.ToString(CultureInfo.InvariantCulture)));
                     if (!string.IsNullOrWhiteSpace(item.Label))
                         wpt.Add(new XElement(gpx + "name", item.Label));
                     if (!string.IsNullOrWhiteSpace(item.Description))

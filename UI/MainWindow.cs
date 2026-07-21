@@ -16,6 +16,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -142,6 +143,13 @@ namespace StradarioApp.UI
         // per la ricerca inversa): usato per intitolare un gruppo POI creato
         // automaticamente se il progetto non ne ha ancora nessuno
         private string _poiSearchQueryLabel = "";
+        // Vero quando l'ultima ricerca per categoria ha dovuto restringere
+        // l'area (vista troppo ampia, vedi RunCategorySearchAsync/
+        // MaxCategorySearchDegrees): l'hint persistente disegnato sulla
+        // mappa mentre la ricerca è attiva (sotto, nel PaintSkia) lo include
+        // sempre, a differenza del messaggio transitorio della barra di
+        // stato che scompare dopo pochi secondi.
+        private bool _poiSearchAreaClamped = false;
         // Ultimo testo cercato con successo (nessuna eccezione di rete): proposto
         // precompilato la prossima volta che si apre il campo di ricerca
         private string _lastPoiSearchQuery = "";
@@ -897,7 +905,13 @@ namespace StradarioApp.UI
                 SelectedIndex = defaultCategoryIndex,
                 IsVisible     = false
             };
+            // Le due voci speciali in testa (indirizzo/città) richiedono
+            // sempre del testo, a differenza delle categorie vere (dove il
+            // testo è un filtro opzionale sul nome): aggiorna il watermark
+            // per non far credere che si possa cercare a vuoto anche lì.
+            _categoryFilterComboBox.SelectionChanged += (s, e) => UpdatePoiSearchWatermark();
             toolbar.Children.Add(_categoryFilterComboBox);
+            UpdatePoiSearchWatermark();
 
             toolbar.Children.Add(ToolbarSeparator());
             toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Settings, "Impostazioni", OnOpenSettings));
@@ -1745,7 +1759,8 @@ namespace StradarioApp.UI
                 }
 
                 DrawOverlayHint(e.Canvas,
-                    $"{_poiSearchResults.Count} risultati: clicca un marker per aggiungerlo (ESC = annulla)",
+                    $"{_poiSearchResults.Count} risultati: clicca un marker per aggiungerlo (ESC = annulla)" +
+                    (_poiSearchAreaClamped ? " — area troppo ampia: risultati solo intorno al centro della mappa" : ""),
                     h);
 
                 // Tooltip con più dettagli sul marker sotto il cursore
@@ -2683,6 +2698,21 @@ namespace StradarioApp.UI
             return PoiSearchService.AllCategories[idx];
         }
 
+        // Aggiorna il watermark del campo di testo in base alla voce scelta
+        // nel combo: le due voci speciali (indirizzo/città, vedi
+        // PoiSearchService.SentinelCategoryKey) richiedono sempre del testo,
+        // le categorie vere no (il testo è un filtro opzionale sul nome).
+        private void UpdatePoiSearchWatermark()
+        {
+            if (_poiSearchTextBox == null) return;
+            var selected = GetSelectedCategoryFilter();
+            _poiSearchTextBox.Watermark = selected?.Key == PoiSearchService.SentinelCategoryKey
+                ? (selected.Value.Value == PoiSearchService.AddressSearchValue
+                    ? "Indirizzo: via, città... (obbligatorio)"
+                    : "Nome città, anche parziale (vuoto = quelle visibili)")
+                : "Testo libero (opzionale)";
+        }
+
         // Riconosce una preposizione di luogo ("a", "in", "presso", "vicino a")
         // dentro il testo digitato accanto al combo categoria: la parte dopo
         // NON è un filtro sul nome, è un luogo diverso dall'area visualizzata
@@ -2751,42 +2781,100 @@ namespace StradarioApp.UI
             GeoRect searchBounds = viewBounds;
             string? nameFilter   = string.IsNullOrWhiteSpace(query) ? null : query;
 
-            // Se il testo contiene una preposizione di luogo ("a Pechino",
-            // "stazione centrale a Prato"...) la parte dopo NON è un filtro
-            // sul nome: è un luogo diverso dall'area visualizzata, e va
-            // cercato lì — geocodificato via Nominatim (nessuna IA, stesso
-            // meccanismo deterministico di questo percorso), non lasciato
-            // come testo da cercare nel nome (dove non troverebbe mai
-            // nulla: nessuna stazione si chiama letteralmente "a Pechino").
-            if (nameFilter != null)
-            {
-                var (namePart, locationPart) = SplitNameAndLocation(nameFilter);
-                if (locationPart != null)
-                {
-                    ShowStatusMessage($"Cerco \"{locationPart}\" sulla mappa…", seconds: 15);
-                    GeoRect? geocoded = null;
-                    try { geocoded = await _poiSearchSvc.GeocodePlaceAsync(locationPart); }
-                    catch (Exception ex) { Debug.WriteLine($"[PoiSearchCategory] geocodifica di \"{locationPart}\" fallita: {ex.Message}"); }
+            // Finestra di log che segue passo-passo l'intera ricerca (Invio o
+            // secondo clic sulla lente): l'utente vuole sapere sempre cosa sta
+            // succedendo, non solo una riga di stato che sparisce dopo pochi
+            // secondi. Un solo modo di chiuderla manualmente ("Annulla", anche
+            // dalla X) che annulla l'operazione tramite il token; si chiude da
+            // sola SOLO a operazione conclusa (successo, errore o annullamento),
+            // mai prima — vedi UI/PoiSearchLogWindow.
+            var logWindow = new PoiSearchLogWindow();
+            using var cts = new CancellationTokenSource();
+            logWindow.CancelRequested += () => cts.Cancel();
+            var dialogTask = logWindow.ShowDialog(this);
 
-                    if (geocoded != null)
+            logWindow.Log($"Avvio ricerca \"{label}\"" + (nameFilter != null ? $" con testo \"{nameFilter}\"" : "") + "...");
+            try
+            {
+                // Le due voci "speciali" in testa al combo (vedi
+                // PoiSearchService.AllCategories/SentinelCategoryKey) non sono
+                // tag OSM da interrogare su Overpass: dirottano su un flusso
+                // di ricerca completamente diverso (geocoding indirizzo,
+                // nome città anche parziale da cities500.csv), quindi
+                // saltano tutta la logica sotto (preposizione di luogo,
+                // RunCategorySearchAsync) che si applica solo alle categorie
+                // vere e proprie.
+                if (key == PoiSearchService.SentinelCategoryKey)
+                {
+                    if (value == PoiSearchService.AddressSearchValue)
+                        await RunAddressSearchAsync(query, viewBounds, logWindow, cts.Token);
+                    else if (value == PoiSearchService.CitySearchValue)
+                        await RunCitySearchAsync(query, viewBounds, logWindow, cts.Token);
+                    return;
+                }
+
+                // Se il testo contiene una preposizione di luogo ("a Pechino",
+                // "stazione centrale a Prato"...) la parte dopo NON è un filtro
+                // sul nome: è un luogo diverso dall'area visualizzata, e va
+                // cercato lì — geocodificato via Nominatim (nessuna IA, stesso
+                // meccanismo deterministico di questo percorso), non lasciato
+                // come testo da cercare nel nome (dove non troverebbe mai
+                // nulla: nessuna stazione si chiama letteralmente "a Pechino").
+                if (nameFilter != null)
+                {
+                    var (namePart, locationPart) = SplitNameAndLocation(nameFilter);
+                    if (locationPart != null)
                     {
-                        searchBounds   = geocoded;
-                        nameFilter     = namePart;
-                        // Ricentra la mappa lì (senza toccare lo zoom, stessa
-                        // regola di sempre), altrimenti i risultati trovati
-                        // resterebbero comunque fuori dallo schermo
-                        _viewCenterLon = searchBounds.CenterLon;
-                        _viewCenterLat = searchBounds.CenterLat;
-                    }
-                    else
-                    {
-                        ShowStatusMessage($"Luogo \"{locationPart}\" non trovato: cerco \"{query}\" nel nome, nell'area visualizzata.", isError: true, seconds: 6);
+                        logWindow.Log($"Rilevato un luogo nel testo: geocodifico \"{locationPart}\"...");
+                        ShowStatusMessage($"Cerco \"{locationPart}\" sulla mappa…", seconds: 15);
+                        GeoRect? geocoded = null;
+                        try { geocoded = await _poiSearchSvc.GeocodePlaceAsync(locationPart, logWindow.Log, cts.Token); }
+                        catch (OperationCanceledException) { throw; }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"[PoiSearchCategory] geocodifica di \"{locationPart}\" fallita: {ex.Message}");
+                            logWindow.Log($"Geocodifica fallita: {ex.Message}");
+                        }
+
+                        if (geocoded != null)
+                        {
+                            searchBounds   = geocoded;
+                            nameFilter     = namePart;
+                            // Ricentra la mappa lì (senza toccare lo zoom, stessa
+                            // regola di sempre), altrimenti i risultati trovati
+                            // resterebbero comunque fuori dallo schermo
+                            _viewCenterLon = searchBounds.CenterLon;
+                            _viewCenterLat = searchBounds.CenterLat;
+                            logWindow.Log($"Luogo trovato: ricentro la ricerca lì.");
+                        }
+                        else
+                        {
+                            logWindow.Log($"Luogo \"{locationPart}\" non trovato: cerco \"{query}\" nel nome, nell'area visualizzata.");
+                            ShowStatusMessage($"Luogo \"{locationPart}\" non trovato: cerco \"{query}\" nel nome, nell'area visualizzata.", isError: true, seconds: 6);
+                        }
                     }
                 }
-            }
 
-            await RunCategorySearchAsync(key, value, label, searchBounds, subFilters: null, nameFilter: nameFilter);
+                await RunCategorySearchAsync(key, value, label, searchBounds, subFilters: null, nameFilter: nameFilter,
+                    logWindow: logWindow, ct: cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                logWindow.Log("Ricerca annullata dall'utente.");
+                ShowStatusMessage("Ricerca annullata.", seconds: 4);
+            }
+            finally
+            {
+                logWindow.CloseProgrammatically();
+                await dialogTask;
+            }
         }
+
+        // Lato massimo (in gradi) del riquadro di ricerca per categoria: oltre
+        // questo la vista viene ristretta a un quadrato centrato sul centro
+        // della mappa (vedi RunCategorySearchAsync) invece di interrogare
+        // Overpass su tutta l'area visualizzata.
+        private const double MaxCategorySearchDegrees = 3.0;
 
         // Ricerca per categoria via tag OSM (Overpass): unico chiamante è il
         // ramo "categoria scelta dal combo" di OnPoiSearchAsync — la
@@ -2795,21 +2883,40 @@ namespace StradarioApp.UI
         // combo, il testo va sempre alla ricerca in linguaggio naturale/
         // Nominatim, mai qui).
         private async Task RunCategorySearchAsync(string key, string value, string label, GeoRect viewBounds,
-            IEnumerable<string>? subFilters, string? nameFilter = null)
+            IEnumerable<string>? subFilters, string? nameFilter = null,
+            PoiSearchLogWindow? logWindow = null, CancellationToken ct = default)
         {
+            ct.ThrowIfCancellationRequested();
+            void log(string msg) => logWindow?.Log(msg);
+
             // Le ricerche per categoria (Overpass) scandagliscono tutta l'area
             // visualizzata cercando il tag OSM: su una vista molto ampia (es.
-            // un intero paese) diventano lentissime e rischiano il timeout sul
-            // server pubblico condiviso. Meglio avvisare e chiedere di
-            // zoomare, piuttosto che aspettare a vuoto e fallire in silenzio.
-            if (viewBounds.Width > 3 || viewBounds.Height > 3)
+            // un'intera regione/nazione) diventano lentissime e rischiano il
+            // timeout sul server pubblico condiviso. Invece di rifiutarsi e
+            // basta (lasciando l'utente senza risultati e con un messaggio
+            // facile da non notare), si restringe la ricerca a un riquadro
+            // di lato MaxCategorySearchDegrees centrato sul centro della
+            // vista attuale — così torna comunque qualcosa di utile, anche
+            // se non copre tutta l'area visualizzata.
+            bool areaClamped = viewBounds.Width > MaxCategorySearchDegrees || viewBounds.Height > MaxCategorySearchDegrees;
+            if (areaClamped)
             {
-                ShowStatusMessage($"Zoom in di più per cercare \"{label}\": l'area visualizzata è troppo ampia per una ricerca per categoria.", isError: true);
-                return;
+                double origWidth = viewBounds.Width, origHeight = viewBounds.Height;
+                double half = MaxCategorySearchDegrees / 2.0;
+                viewBounds = new GeoRect
+                {
+                    MinLon = viewBounds.CenterLon - half,
+                    MaxLon = viewBounds.CenterLon + half,
+                    MinLat = viewBounds.CenterLat - half,
+                    MaxLat = viewBounds.CenterLat + half,
+                };
+                log($"Area visualizzata troppo ampia ({origWidth:F1}° x {origHeight:F1}°): restringo la ricerca a {MaxCategorySearchDegrees}°x{MaxCategorySearchDegrees}° intorno al centro della mappa.");
             }
 
             string displayLabel = string.IsNullOrWhiteSpace(nameFilter) ? label : $"{label} \"{nameFilter}\"";
-            ShowStatusMessage($"Cerco {displayLabel} nella zona...", seconds: 3);
+            ShowStatusMessage(areaClamped
+                ? $"Area troppo ampia: cerco {displayLabel} solo intorno al centro della mappa..."
+                : $"Cerco {displayLabel} nella zona...", seconds: 3);
 
             var allSubFilters = (subFilters ?? Enumerable.Empty<string>())
                 .Concat(PoiSearchService.GetCategoryExcludeFilters(key, value));
@@ -2823,10 +2930,13 @@ namespace StradarioApp.UI
                 // modo, queste riempiono da sole il limite di risultati e le
                 // stazioni ferroviarie vere restano fuori — vedi
                 // PoiSearchService.CategoryExcludeFilters)
-                results = await _poiSearchSvc.SearchCategoryAsync(key, value, viewBounds, allSubFilters, nameFilter);
+                log($"Cerco \"{label}\" ({key}={value}) nell'area...");
+                results = await _poiSearchSvc.SearchCategoryAsync(key, value, viewBounds, allSubFilters, nameFilter, log, ct);
             }
+            catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
+                log($"Errore ricerca per categoria (Overpass): {ex.Message}");
                 ShowStatusMessage($"Errore ricerca per categoria (Overpass): {ex.Message}", isError: true, seconds: 8);
                 return;
             }
@@ -2847,14 +2957,17 @@ namespace StradarioApp.UI
             bool usedAiFallback = false;
             if (results.Count == 0 && !string.IsNullOrWhiteSpace(nameFilter) && !string.IsNullOrWhiteSpace(_project.Settings.GroqApiKey))
             {
+                log($"Nessuna corrispondenza diretta per \"{nameFilter}\": ricarico tutti i {label} della zona per farli valutare dall'AI...");
                 ShowStatusMessage($"Nessuna corrispondenza diretta per \"{nameFilter}\": provo con l'AI su tutti i {label} della zona…", seconds: 15);
                 List<PoiSearchService.Result> allCandidates;
                 try
                 {
-                    allCandidates = await _poiSearchSvc.SearchCategoryAsync(key, value, viewBounds, allSubFilters, nameFilter: null);
+                    allCandidates = await _poiSearchSvc.SearchCategoryAsync(key, value, viewBounds, allSubFilters, nameFilter: null, onProgress: log, ct: ct);
                 }
+                catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
+                    log($"Errore ricerca per categoria (Overpass): {ex.Message}");
                     ShowStatusMessage($"Errore ricerca per categoria (Overpass): {ex.Message}", isError: true, seconds: 8);
                     return;
                 }
@@ -2864,11 +2977,13 @@ namespace StradarioApp.UI
                 {
                     try
                     {
-                        results = await _poiSearchSvc.FilterCandidatesByQueryAsync(_project.Settings.GroqApiKey, nameFilter, allCandidates);
+                        results = await _poiSearchSvc.FilterCandidatesByQueryAsync(_project.Settings.GroqApiKey, nameFilter, allCandidates, log, ct);
                         usedAiFallback = true;
                     }
+                    catch (OperationCanceledException) { throw; }
                     catch (Exception ex)
                     {
+                        log($"Selezione AI non riuscita: {ex.Message}");
                         ShowStatusMessage($"Selezione AI non riuscita: {ex.Message}", isError: true, seconds: 8);
                         return;
                     }
@@ -2877,14 +2992,19 @@ namespace StradarioApp.UI
 
             if (results.Count == 0)
             {
-                ShowStatusMessage($"Nessun risultato per \"{displayLabel}\" nella zona visualizzata.", isError: true);
+                log($"Nessun risultato per \"{displayLabel}\".");
+                ShowStatusMessage(areaClamped
+                    ? $"Nessun risultato per \"{displayLabel}\" intorno al centro della mappa (area troppo ampia, ricerca ristretta): prova a spostare/zoomare la vista."
+                    : $"Nessun risultato per \"{displayLabel}\" nella zona visualizzata.", isError: true);
                 return;
             }
 
+            log($"{results.Count} risultati trovati: li mostro sulla mappa.");
             CancelAllAddModes();
             _poiSearchMode         = true;
             _poiSearchResults      = results;
             _poiSearchQueryLabel   = displayLabel;
+            _poiSearchAreaClamped  = areaClamped;
             _mapCanvas?.InvalidateVisual();
             // Se il conteggio tocca il limite della query, l'elenco
             // potrebbe non essere completo: l'utente deve saperlo invece
@@ -2892,7 +3012,155 @@ namespace StradarioApp.UI
             ShowStatusMessage(
                 $"{results.Count} risultati per \"{displayLabel}\"" + (usedAiFallback ? " (selezionati dall'AI)" : "") +
                 ": clicca i marker sulla mappa per aggiungerli, uno o più di uno (ESC = esci)." +
-                (possiblyTruncated ? " (potrebbero essercene altri: prova a restringere l'area)" : ""),
+                (possiblyTruncated ? " (potrebbero essercene altri: prova a restringere l'area)" : "") +
+                (areaClamped ? " (area visualizzata troppo ampia: mostrati solo i risultati intorno al centro)" : ""),
+                seconds: 8);
+        }
+
+        // Voce "Ricerca un indirizzo" del combo categoria (sentinella, vedi
+        // PoiSearchService.SentinelCategoryKey/AllCategories): il testo
+        // digitato è un indirizzo/via+città, geocodificato su Nominatim
+        // (PoiSearchService.SearchAddressAsync) — a differenza della ricerca
+        // per categoria non c'è alcun tag OSM/Overpass coinvolto, quindi
+        // niente clamp d'area (un indirizzo scritto per esteso può stare
+        // benissimo fuori dalla vista attuale).
+        private async Task RunAddressSearchAsync(string query, GeoRect viewBounds, PoiSearchLogWindow logWindow, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                logWindow.Log("Nessun indirizzo digitato.");
+                ShowStatusMessage("Scrivi un indirizzo (via, città) nel campo di testo prima di cercare.", isError: true);
+                return;
+            }
+
+            logWindow.Log($"Cerco l'indirizzo \"{query}\"...");
+            ShowStatusMessage($"Cerco l'indirizzo \"{query}\"...", seconds: 3);
+
+            List<PoiSearchService.Result> results;
+            try
+            {
+                results = await _poiSearchSvc.SearchAddressAsync(query, viewBounds, onProgress: logWindow.Log, ct: ct);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                logWindow.Log($"Errore ricerca indirizzo: {ex.Message}");
+                ShowStatusMessage($"Errore ricerca indirizzo: {ex.Message}", isError: true, seconds: 8);
+                return;
+            }
+
+            if (results.Count == 0)
+            {
+                logWindow.Log($"Nessun indirizzo trovato per \"{query}\".");
+                ShowStatusMessage($"Nessun indirizzo trovato per \"{query}\".", isError: true);
+                return;
+            }
+
+            logWindow.Log($"{results.Count} indirizzi trovati: li mostro sulla mappa.");
+            CancelAllAddModes();
+            // Ricentra la mappa sul risultato più rilevante (il primo,
+            // l'ordine di Nominatim è per pertinenza — non sulla media di
+            // tutti: risultati sparsi in tutto il mondo per una query
+            // generica darebbero un baricentro senza senso), stessa regola
+            // della geocodifica "a <città>" in OnPoiSearchAsync, senza
+            // toccare lo zoom. Un indirizzo cercato può benissimo stare
+            // fuori dalla vista attuale, altrimenti i marker resterebbero
+            // fuori schermo e sembrerebbe che la ricerca non abbia trovato
+            // nulla.
+            _viewCenterLon = results[0].Lon;
+            _viewCenterLat = results[0].Lat;
+            _poiSearchMode        = true;
+            _poiSearchResults     = results;
+            _poiSearchQueryLabel  = $"indirizzo \"{query}\"";
+            _poiSearchAreaClamped = false;
+            _mapCanvas?.InvalidateVisual();
+            ShowStatusMessage(
+                $"{results.Count} risultati per l'indirizzo \"{query}\": clicca i marker sulla mappa per aggiungerli, uno o più di uno (ESC = esci).",
+                seconds: 8);
+        }
+
+        // Numero massimo di città mostrate quando il testo è vuoto (vedi
+        // sotto): solo per orientarsi tra quelle già visibili nella vista
+        // attuale, non serve mostrarle tutte come per una ricerca per nome.
+        private const int CitiesInViewMax = 30;
+
+        // Voce "Ricerca una città" del combo categoria (sentinella): il testo
+        // digitato è un nome di città anche parziale, cercato su tutto il
+        // database mondiale cities500.csv (CityDatabase.SearchByName) — nessuna
+        // chiamata di rete, ricerca locale immediata. Niente clamp d'area/
+        // vincolo alla vista attuale: cercare "milano" deve trovare Milano
+        // anche se la mappa è centrata altrove. Testo vuoto (a differenza
+        // della ricerca indirizzo, qui NON è obbligatorio): mostra invece le
+        // città già visibili nella vista attuale (CityDatabase.FindTopCities),
+        // "quello che vedo", senza ricentrare la mappa (sono già a schermo).
+        private async Task RunCitySearchAsync(string query, GeoRect viewBounds, PoiSearchLogWindow logWindow, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            bool inViewMode = string.IsNullOrWhiteSpace(query);
+            List<PoiSearchService.Result> results;
+
+            if (inViewMode)
+            {
+                logWindow.Log("Nessun nome digitato: cerco le città più popolose nell'area visualizzata...");
+                ShowStatusMessage("Cerco le città visibili nell'area...", seconds: 3);
+
+                var cities = await Task.Run(() => CityDatabase.FindTopCities(viewBounds, CitiesInViewMax), ct);
+                ct.ThrowIfCancellationRequested();
+
+                if (cities.Count == 0)
+                {
+                    logWindow.Log($"Nessuna città trovata nell'area visualizzata ({CityDatabase.LoadStatus}).");
+                    ShowStatusMessage("Nessuna città trovata nell'area visualizzata.", isError: true);
+                    return;
+                }
+
+                results = cities.Select(c => new PoiSearchService.Result(
+                    c.Name, c.Lon, c.Lat, "città", null, $"Popolazione: {c.Population:N0}")).ToList();
+            }
+            else
+            {
+                logWindow.Log($"Cerco città il cui nome contiene \"{query}\" in cities500.csv...");
+                ShowStatusMessage($"Cerco città \"{query}\"...", seconds: 3);
+
+                var cities = await Task.Run(() => CityDatabase.SearchByName(query), ct);
+                ct.ThrowIfCancellationRequested();
+
+                if (cities.Count == 0)
+                {
+                    logWindow.Log($"Nessuna città trovata per \"{query}\" ({CityDatabase.LoadStatus}).");
+                    ShowStatusMessage($"Nessuna città trovata per \"{query}\".", isError: true);
+                    return;
+                }
+
+                results = cities.Select(c => new PoiSearchService.Result(
+                    c.Name, c.Lon, c.Lat, "città", null, $"Popolazione: {c.Population:N0}")).ToList();
+            }
+
+            logWindow.Log($"{results.Count} città trovate: le mostro sulla mappa.");
+            CancelAllAddModes();
+            if (!inViewMode)
+            {
+                // Ricentra sulla città più popolosa tra i risultati (il primo:
+                // CityDatabase.SearchByName ordina già per popolazione
+                // decrescente) — altrimenti i marker potrebbero restare fuori
+                // dalla vista attuale e sembrare "nessun risultato". Non serve
+                // in modalità "quello che vedo": sono già nella vista attuale.
+                _viewCenterLon = results[0].Lon;
+                _viewCenterLat = results[0].Lat;
+            }
+            _poiSearchMode        = true;
+            _poiSearchResults     = results;
+            _poiSearchQueryLabel  = inViewMode ? "città nell'area visualizzata" : $"città \"{query}\"";
+            _poiSearchAreaClamped = false;
+            _mapCanvas?.InvalidateVisual();
+            ShowStatusMessage(
+                (inViewMode
+                    ? $"{results.Count} città nell'area visualizzata"
+                    : $"{results.Count} città trovate per \"{query}\"") +
+                ": clicca i marker sulla mappa per aggiungerli, uno o più di uno (ESC = esci).",
                 seconds: 8);
         }
 
@@ -2917,6 +3185,7 @@ namespace StradarioApp.UI
                 _poiSearchMode       = true;
                 _poiSearchResults    = new List<PoiSearchService.Result> { result };
                 _poiSearchQueryLabel = "Ricerca GPS";
+                _poiSearchAreaClamped = false;
                 _mapCanvas?.InvalidateVisual();
                 ShowStatusMessage($"Trovato: {SanitizeSearchLabel(result.DisplayName)}. Clicca il marker per aggiungerlo (ESC = esci).", seconds: 8);
             }

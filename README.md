@@ -22,13 +22,19 @@ stradali a pagine) a partire da OpenStreetMap. Portabile su **Linux** e
    sulla mappa, drag per riposizionare, ricerca POI per categoria (menu a
    tendina, ricordata tra le sessioni) con filtro testuale sul nome e, in
    opzione (richiede una chiave API Groq gratuita), un filtro AI più ampio
-   quando il filtro letterale non trova nulla
+   quando il filtro letterale non trova nulla. In cima al menu, due voci
+   speciali: **"Ricerca un indirizzo"** (geocoding libero via Nominatim) e
+   **"Ricerca una città"** (nome anche parziale, o vuoto per le città già
+   visibili nell'area — database GeoNames). Ogni ricerca mostra una
+   finestra di log passo-passo con un pulsante "Annulla", che si chiude da
+   sola a risultati ottenuti
 5. **Percorsi** – Disegno di percorsi punto-per-punto direttamente sulla
    mappa, estendibili in seguito, con drag dei singoli vertici
 6. **Import/Export KMZ/KML/GPX** – Importazione unificata (POI e percorsi
    nello stesso file), esportazione separata per gruppi POI e percorsi; i
-   punti che cadono in Cina vengono corretti automaticamente da GCJ-02
-   a WGS84 (le mappe pubbliche cinesi offuscano le coordinate reali)
+   punti che cadono in Cina vengono corretti automaticamente da GCJ-02 a
+   WGS84 in importazione e viceversa in esportazione (le mappe pubbliche
+   cinesi offuscano le coordinate reali con un offset deterministico)
 7. **Generazione PDF** – Anteprima prima del salvataggio, stradario completo
    con indice, mappa riassuntiva, eventuali pagine gazetteer POI, pagine
    mappa con riferimenti alle pagine adiacenti (N/S/E/O) e scala grafica;
@@ -70,8 +76,9 @@ La scala della mappa stampata è calcolata esattamente per il DPI scelto
 
 ### Prerequisiti
 - [.NET 8 SDK](https://dotnet.microsoft.com/download)
-- `cities500.csv` (GeoNames, ~24 MB) nella stessa cartella dell'eseguibile
-  (o in `~`) per la ricerca città — vedi sotto
+- `cities500.csv` (GeoNames, ~24 MB) per la ricerca città: **non serve
+  procurarselo manualmente**, l'app lo scarica da sola al primo avvio se
+  non lo trova — vedi sotto
 
 ```bash
 dotnet restore
@@ -99,8 +106,8 @@ dotnet publish -c Release -r win-x64   --self-contained false \
 Le [Release](https://github.com/paolobia/StradarioApp/releases) del repo
 GitHub contengono eseguibili singoli framework-dependent già pronti per
 Linux e Windows (richiedono il [.NET 8 Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)
-installato). `cities500.csv` non è incluso per motivi di dimensione: va
-scaricato a parte da GeoNames (vedi sotto).
+installato). `cities500.csv` non è incluso per motivi di dimensione, ma
+l'app lo scarica da sola al primo avvio (vedi sotto) — non va procurato a parte.
 
 ---
 
@@ -121,10 +128,10 @@ StradarioApp/
 │   ├── PoiIconRenderer.cs          # Icone POI vettoriali condivise mappa/PDF/KMZ
 │   ├── PoiService.cs / PercorsoService.cs   # Import/export KMZ/KML/GPX
 │   ├── GcjTransform.cs             # Correzione GCJ-02 -> WGS84 per import in Cina
-│   ├── PoiSearchService.cs         # Ricerca POI per categoria + filtro AI/Groq opzionale
+│   ├── PoiSearchService.cs         # Ricerca POI per categoria/indirizzo + filtro AI/Groq opzionale
 │   ├── GroqClient.cs               # Client HTTP minimo per l'API Groq (filtro POI AI)
 │   ├── KmlIo.cs                    # Caricamento XML KML/KMZ/GPX robusto a BOM/encoding
-│   ├── CityDatabase.cs             # Database città GeoNames
+│   ├── CityDatabase.cs             # Database città GeoNames, download automatico se assente
 │   ├── ProjectService.cs           # Salvataggio/caricamento progetto .stradario
 │   ├── AppPreferencesService.cs    # Preferenze globali (chiavi API, ultima categoria POI), non nel progetto
 │   ├── DebugLog.cs                 # Log diagnostico su file (chiamate Groq)
@@ -137,6 +144,7 @@ StradarioApp/
     ├── EditPageWindow.cs            # Dialog modifica pagina
     ├── PoiGroupEditWindow.cs / PoiItemEditWindow.cs
     ├── RouteEditWindow.cs
+    ├── PoiSearchLogWindow.cs        # Log passo-passo di ogni ricerca POI, con Annulla
     └── ProgressWindow.cs            # Dialog avanzamento generazione PDF
 ```
 
@@ -167,15 +175,17 @@ StradarioApp/
 
 ---
 
-## File esterno necessario
+## Database città (cities500.csv)
 
-`cities500.csv` ([GeoNames](https://download.geonames.org/export/dump/cities500.zip),
-~24 MB) nella stessa cartella dell'eseguibile (o in `~`), usato solo dal
-bottone "📍 Città principali" nel dialog di modifica pagina. Senza di esso
-il bottone mostra un avviso ("File cities500.csv non trovato") invece di
-compilare la descrizione — il resto dell'app (mappa, PDF, POI, percorsi,
-import/export) funziona normalmente. Non serve per gli eseguibili scaricati
-dalle Release: va aggiunto manualmente se si vuole usare questa funzione.
+Usato dal bottone "📍 Città principali" e dalla ricerca POI "Ricerca una
+città". Cercato nella cartella dell'eseguibile o in `~`; **se non trovato,
+l'app lo scarica da sola** da [GeoNames](https://download.geonames.org/export/dump/cities500.zip)
+al primo utilizzo e lo tiene in cache (`%AppData%/StradarioApp` su Windows,
+`~/.config/StradarioApp` su Linux) — non serve procurarselo manualmente, né
+per gli eseguibili delle Release. Richiede una connessione di rete al primo
+avvio; se il download fallisce (rete assente), le funzioni che dipendono
+dal database degradano silenziosamente (nessun crash) finché non è
+disponibile.
 
 ---
 
