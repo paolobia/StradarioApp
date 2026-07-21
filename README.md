@@ -8,10 +8,12 @@ stradali a pagine) a partire da OpenStreetMap. Portabile su **Linux** e
 
 ## Funzionalità
 
-1. **Impostazioni** – Formato pagina (A5/A4/A3), orientamento, DPI
-   (72/96/150/300), scala cartografica (da 1:1.000 fino a 1:1.000.000, tutte
-   le scale tipiche degli stradari — vedi elenco sotto), tile server (con o
-   senza API key), blocco automatico oggetti inattivi, contrasto mappa nel PDF
+1. **Impostazioni** – Due tab: "Generale" (formato pagina A5/A4/A3,
+   orientamento, DPI 72/96/150/300, scala cartografica da 1:1.000 fino a
+   1:1.000.000 — vedi elenco sotto, tile server con o senza API key, blocco
+   automatico oggetti inattivi, contrasto mappa nel PDF) e "Categorie POI"
+   (aggiunta di categorie di ricerca personalizzate, oltre alle predefinite,
+   specificando etichetta e tag OSM `chiave=valore`)
 2. **Mappa interattiva** – Pan (drag), zoom (rotella) centrato sul cursore
 3. **Pagine** – Click destro per aggiungere una pagina; drag per spostarla;
    etichette automatiche (A1, B2…); blocco/sblocco per evitare spostamenti
@@ -19,15 +21,18 @@ stradali a pagine) a partire da OpenStreetMap. Portabile su **Linux** e
    per compilare la descrizione con le città più popolose dell'area
    (database GeoNames `cities500.csv`, opzionale)
 4. **Gruppi POI** – Marker con icona/colore personalizzabili, aggiunta diretta
-   sulla mappa, drag per riposizionare, ricerca POI per categoria (menu a
-   tendina, ricordata tra le sessioni) con filtro testuale sul nome e, in
+   sulla mappa, drag per riposizionare, ricerca POI per 43 categorie
+   predefinite (elenco completo dei tag OSM in `CategoriePOI.txt`, menu a
+   tendina, ricordata tra le sessioni, estendibile dalle Impostazioni —
+   vedi sopra) con filtro testuale sul nome e, in
    opzione (richiede una chiave API Groq gratuita), un filtro AI più ampio
    quando il filtro letterale non trova nulla. In cima al menu, due voci
    speciali: **"Ricerca un indirizzo"** (geocoding libero via Nominatim) e
    **"Ricerca una città"** (nome anche parziale, o vuoto per le città già
    visibili nell'area — database GeoNames). Ogni ricerca mostra una
-   finestra di log passo-passo con un pulsante "Annulla", che si chiude da
-   sola a risultati ottenuti
+   finestra di log passo-passo con un pulsante "Annulla": si chiude da sola
+   a ricerca riuscita, resta invece aperta in caso di errore (per non far
+   sparire il messaggio prima che l'utente possa leggerlo)
 5. **Percorsi** – Disegno di percorsi punto-per-punto direttamente sulla
    mappa, estendibili in seguito, con drag dei singoli vertici
 6. **Import/Export KMZ/KML/GPX** – Importazione unificata (POI e percorsi
@@ -117,6 +122,7 @@ l'app lo scarica da sola al primo avvio (vedi sotto) — non va procurato a part
 StradarioApp/
 ├── Program.cs                     # Entry point Avalonia
 ├── StradarioApp.csproj
+├── CategoriePOI.txt                # Elenco (key=value) delle categorie POI predefinite, per riferimento
 ├── Models/
 │   └── StradarioModels.cs         # Progetto, impostazioni, pagine, POI, percorsi, tile server
 ├── Services/

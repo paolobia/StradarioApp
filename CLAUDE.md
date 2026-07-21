@@ -208,6 +208,26 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
     keeps the textbox hint in sync with whichever of the three modes
     (category / address / city) is selected.
 
+- **The 43 built-in categories (`PoiSearchService.Categories`, plain-text
+  `key=value` list also kept in `CategoriePOI.txt` at the repo root for
+  quick reference/documentation — regenerate it by hand if `Categories`
+  changes, it's not read by the app) can be extended by the user** from
+  Settings ("⚙ Impostazioni" → tab "Categorie POI",
+  `UI/SettingsWindow.BuildCategoriesTab`): a small form (etichetta +
+  tag OSM `key`/`value`) appends a custom entry, always after the built-ins
+  in the combo, never editable/removable except via its own 🗑. Persisted
+  globally (not per-project, same rationale as the API keys) in
+  `AppPreferencesService.CustomPoiCategories`/`LoadCustomPoiCategories`/
+  `SaveCustomPoiCategories`. `PoiSearchService.SetCustomCategories` holds
+  them in a static list merged into `AllCategories`/`TryMatchCategory`
+  (keyword-matched by their own label, no separate synonyms list) —
+  `MainWindow`'s constructor calls it once at startup (before
+  `InitializeComponent`, which already builds the combo reading
+  `AllCategories`) and `OnOpenSettings` calls it again after a confirmed
+  edit, followed by `RefreshCategoryCombo` to rebuild the combo's
+  `ItemsSource` in place (trying to keep the current selection by label)
+  instead of requiring an app restart.
+
 - **`CityDatabase.SearchByName` matches through a small curated
   Italian→GeoNames alias table** (`CityAliases`, ~28 entries: major Italian
   cities + well-known world capitals). GeoNames often stores the English

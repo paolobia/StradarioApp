@@ -11,11 +11,14 @@
 // =============================================================================
 
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using StradarioApp.Models;
+using StradarioApp.Services;
 
 namespace StradarioApp.UI
 {
@@ -23,6 +26,17 @@ namespace StradarioApp.UI
     {
         public bool              Confirmed      { get; private set; } = false;
         public StradarioSettings ResultSettings { get; private set; }
+
+        // Categorie POI personalizzate (tab "Categorie POI"): letta al posto
+        // di PoiSearchService.CustomCategories dal chiamante (MainWindow), che
+        // le persiste/riapplica alla conferma — vedi OnOpenSettings.
+        public List<(string Key, string Value, string Label)> ResultCustomCategories { get; private set; } = new();
+        private readonly List<(string Key, string Value, string Label)> _customCategories;
+        private StackPanel? _customCategoriesPanel;
+        private TextBox?    _tbCustomLabel;
+        private TextBox?    _tbCustomKey;
+        private TextBox?    _tbCustomValue;
+        private TextBlock?  _tbCustomError;
 
         private ComboBox?  _cbPageSize;
         private ComboBox?  _cbOrientation;
@@ -54,19 +68,45 @@ namespace StradarioApp.UI
             "1:400.000", "1:500.000", "1:800.000", "1:1.000.000"
         };
 
-        public SettingsWindow(StradarioSettings current)
+        public SettingsWindow(StradarioSettings current, IEnumerable<(string Key, string Value, string Label)>? customCategories = null)
         {
-            ResultSettings = current;
+            ResultSettings   = current;
+            _customCategories = (customCategories ?? Enumerable.Empty<(string, string, string)>()).ToList();
             Title          = "Impostazioni stradario";
             Width          = 460;
-            Height         = 560;
+            Height         = 600;
             CanResize      = false;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
-            BuildUI(current);
+            var tabs = new TabControl();
+            tabs.Items.Add(new TabItem { Header = "Generale",     Content = BuildGeneralTab(current) });
+            tabs.Items.Add(new TabItem { Header = "Categorie POI", Content = BuildCategoriesTab() });
+
+            // Pulsanti condivisi da entrambe le tab (OK conferma tutto,
+            // impostazioni generali E categorie personalizzate insieme).
+            var btnRow = new StackPanel
+            {
+                Orientation         = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Spacing             = 10,
+                Margin              = new Thickness(16, 8, 16, 12)
+            };
+            var btnOk     = DialogUi.MakeDialogButton("OK", primary: true);
+            var btnCancel = DialogUi.MakeDialogButton("Annulla");
+            btnOk.Click     += OnOkClick;
+            btnCancel.Click += (_, _) => Close();
+            btnRow.Children.Add(btnOk);
+            btnRow.Children.Add(btnCancel);
+
+            var root = new DockPanel();
+            DockPanel.SetDock(btnRow, Dock.Bottom);
+            root.Children.Add(btnRow);
+            root.Children.Add(tabs);
+
+            Content = root;
         }
 
-        private void BuildUI(StradarioSettings s)
+        private Control BuildGeneralTab(StradarioSettings s)
         {
             var grid = new Grid
             {
@@ -236,28 +276,147 @@ namespace StradarioApp.UI
             };
             AddControl(grid, _tbGroqApiKey, 10);
 
-            // ---- Pulsanti ----
-            var btnRow = new StackPanel
+            return grid;
+        }
+
+        // Tab "Categorie POI": elenco delle categorie personalizzate aggiunte
+        // dall'utente (oltre a quelle predefinite, vedi PoiSearchService.
+        // Categories), con un modulo per aggiungerne di nuove specificando
+        // direttamente il tag OSM (chiave=valore) e l'etichetta da mostrare
+        // nel combo di ricerca POI.
+        private Control BuildCategoriesTab()
+        {
+            var root = new DockPanel { Margin = new Thickness(16) };
+
+            var intro = new TextBlock
             {
-                Orientation         = Orientation.Horizontal,
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Spacing             = 10,
-                Margin              = new Thickness(0, 12, 0, 0)
+                Text = "Categorie aggiuntive per la ricerca POI per categoria, oltre a quelle predefinite " +
+                       "(ristoranti, farmacie, ecc.). Specifica il tag OSM (chiave e valore, es. amenity / vending_machine) " +
+                       "e l'etichetta da mostrare nel menu di ricerca.",
+                TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                FontSize     = 11,
+                Foreground   = Brushes.DimGray,
+                Margin       = new Thickness(0, 0, 0, 10)
             };
+            DockPanel.SetDock(intro, Dock.Top);
+            root.Children.Add(intro);
 
-            var btnOk     = DialogUi.MakeDialogButton("OK", primary: true);
-            var btnCancel = DialogUi.MakeDialogButton("Annulla");
-            btnOk.Click     += OnOkClick;
-            btnCancel.Click += (_, _) => Close();
+            var addGrid = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("*,*,*,Auto"),
+                Margin            = new Thickness(0, 0, 0, 4)
+            };
+            _tbCustomLabel = new TextBox { Watermark = "Etichetta (es. distributori acqua)", Margin = new Thickness(0, 0, 4, 0) };
+            _tbCustomKey   = new TextBox { Watermark = "Chiave OSM (es. amenity)",            Margin = new Thickness(0, 0, 4, 0) };
+            _tbCustomValue = new TextBox { Watermark = "Valore OSM (es. vending_machine)",     Margin = new Thickness(0, 0, 4, 0) };
+            var btnAdd = DialogUi.MakeDialogButton("➕ Aggiungi");
+            btnAdd.Click += (_, _) => OnAddCustomCategory();
 
-            btnRow.Children.Add(btnOk);
-            btnRow.Children.Add(btnCancel);
+            Grid.SetColumn(_tbCustomLabel, 0);
+            Grid.SetColumn(_tbCustomKey, 1);
+            Grid.SetColumn(_tbCustomValue, 2);
+            Grid.SetColumn(btnAdd, 3);
+            addGrid.Children.Add(_tbCustomLabel);
+            addGrid.Children.Add(_tbCustomKey);
+            addGrid.Children.Add(_tbCustomValue);
+            addGrid.Children.Add(btnAdd);
+            DockPanel.SetDock(addGrid, Dock.Top);
+            root.Children.Add(addGrid);
 
-            Grid.SetRow(btnRow, 11);
-            Grid.SetColumnSpan(btnRow, 2);
-            grid.Children.Add(btnRow);
+            _tbCustomError = new TextBlock
+            {
+                Foreground   = Brushes.Firebrick,
+                FontSize     = 11,
+                TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                Margin       = new Thickness(0, 0, 0, 8),
+                IsVisible    = false
+            };
+            DockPanel.SetDock(_tbCustomError, Dock.Top);
+            root.Children.Add(_tbCustomError);
 
-            Content = grid;
+            _customCategoriesPanel = new StackPanel { Spacing = 4 };
+            var scroll = new ScrollViewer { Content = _customCategoriesPanel };
+            root.Children.Add(scroll); // ultimo figlio del DockPanel: riempie lo spazio restante
+
+            RefreshCustomCategoriesList();
+
+            return root;
+        }
+
+        private void SetCustomError(string? message)
+        {
+            if (_tbCustomError == null) return;
+            _tbCustomError.Text      = message ?? "";
+            _tbCustomError.IsVisible = !string.IsNullOrEmpty(message);
+        }
+
+        private void OnAddCustomCategory()
+        {
+            string label = _tbCustomLabel?.Text?.Trim() ?? "";
+            string key   = _tbCustomKey?.Text?.Trim() ?? "";
+            string value = _tbCustomValue?.Text?.Trim() ?? "";
+
+            if (label.Length == 0 || key.Length == 0 || value.Length == 0)
+            {
+                SetCustomError("Compila etichetta, chiave e valore prima di aggiungere.");
+                return;
+            }
+
+            bool alreadyExists =
+                _customCategories.Any(c => c.Key.Equals(key, StringComparison.OrdinalIgnoreCase) && c.Value.Equals(value, StringComparison.OrdinalIgnoreCase)) ||
+                PoiSearchService.AllCategories.Any(c => c.Key.Equals(key, StringComparison.OrdinalIgnoreCase) && c.Value.Equals(value, StringComparison.OrdinalIgnoreCase));
+            if (alreadyExists)
+            {
+                SetCustomError($"Esiste già una categoria con il tag \"{key}={value}\".");
+                return;
+            }
+
+            _customCategories.Add((key, value, label));
+            _tbCustomLabel!.Text = "";
+            _tbCustomKey!.Text   = "";
+            _tbCustomValue!.Text = "";
+            SetCustomError(null);
+            RefreshCustomCategoriesList();
+        }
+
+        private void RefreshCustomCategoriesList()
+        {
+            if (_customCategoriesPanel == null) return;
+            _customCategoriesPanel.Children.Clear();
+
+            if (_customCategories.Count == 0)
+            {
+                _customCategoriesPanel.Children.Add(new TextBlock
+                {
+                    Text       = "Nessuna categoria personalizzata.",
+                    FontSize   = 11,
+                    Foreground = Brushes.DimGray
+                });
+                return;
+            }
+
+            foreach (var cat in _customCategories.ToList())
+            {
+                var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+                var lbl = new TextBlock
+                {
+                    Text              = $"{cat.Label}  ({cat.Key}={cat.Value})",
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                var btnRemove = new Button { Content = "🗑", Padding = new Thickness(6, 2) };
+                ToolTip.SetTip(btnRemove, "Rimuovi questa categoria personalizzata");
+                btnRemove.Click += (_, _) =>
+                {
+                    _customCategories.Remove(cat);
+                    RefreshCustomCategoriesList();
+                };
+
+                Grid.SetColumn(lbl, 0);
+                Grid.SetColumn(btnRemove, 1);
+                row.Children.Add(lbl);
+                row.Children.Add(btnRemove);
+                _customCategoriesPanel.Children.Add(row);
+            }
         }
 
         private void AddLabel(Grid grid, string text, int row)
@@ -292,8 +451,9 @@ namespace StradarioApp.UI
 
         private void OnOkClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
         {
-            ResultSettings = BuildSettingsFromControls();
-            Confirmed      = true;
+            ResultSettings         = BuildSettingsFromControls();
+            ResultCustomCategories = _customCategories.ToList();
+            Confirmed              = true;
             Close();
         }
 

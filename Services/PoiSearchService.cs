@@ -264,6 +264,15 @@ namespace StradarioApp.Services
             (new[] { "posta", "ufficio postale", "post office" },                  "amenity", "post_office",   "uffici postali"),
             (new[] { "biblioteca", "biblioteche", "library" },                     "amenity", "library",       "biblioteche"),
             (new[] { "cinema" },                                                   "amenity", "cinema",        "cinema"),
+            (new[] { "distributore automatico", "distributori automatici", "vending machine" }, "amenity", "vending_machine", "distributori automatici"),
+            (new[] { "edicola", "edicole", "newsagent" },                         "shop",    "newsagent",     "edicole"),
+            (new[] { "fast food", "fastfood" },                                   "amenity", "fast_food",     "fast food"),
+            (new[] { "tabaccheria", "tabaccherie", "tabacchi", "tobacco" },        "shop",    "tobacco",       "tabaccherie"),
+            (new[] { "parrucchiere", "parrucchieri", "hairdresser" },              "shop",    "hairdresser",   "parrucchieri"),
+            (new[] { "veterinario", "veterinari", "veterinary" },                  "amenity", "veterinary",    "veterinari"),
+            (new[] { "colonnina elettrica", "colonnine elettriche", "ricarica elettrica", "charging station" }, "amenity", "charging_station", "colonnine ricarica elettrica"),
+            (new[] { "fontanella", "fontanelle", "acqua potabile", "drinking water" }, "amenity", "drinking_water", "fontanelle (acqua potabile)"),
+            (new[] { "lavanderia", "lavanderie", "laundry" },                     "shop",    "laundry",       "lavanderie"),
 
             // Aggiunte per il selettore a categoria (combobox toolbar, vedi
             // AllCategories/OnCategorySearchSelected in MainWindow) — utili
@@ -293,17 +302,40 @@ namespace StradarioApp.Services
         public const string AddressSearchValue    = "address";
         public const string CitySearchValue       = "city";
 
+        // Categorie personalizzate aggiunte dall'utente dalle Impostazioni
+        // (tab "Categorie POI"), persistite in AppPreferencesService — a
+        // differenza di Categories (fisse, compilate nel codice), queste
+        // possono cambiare a runtime: MainWindow le carica all'avvio
+        // (SetCustomCategories) e le aggiorna ogni volta che le Impostazioni
+        // vengono confermate. La parola chiave di riconoscimento testuale
+        // (TryMatchCategory) è semplicemente l'etichetta stessa: l'utente non
+        // compila un elenco di sinonimi separato, solo etichetta+tag OSM.
+        private static List<(string[] Keywords, string Key, string Value, string Label)> _customCategories = new();
+
+        public static void SetCustomCategories(IEnumerable<(string Key, string Value, string Label)> customs)
+        {
+            _customCategories = (customs ?? Enumerable.Empty<(string, string, string)>())
+                .Where(c => !string.IsNullOrWhiteSpace(c.Key) && !string.IsNullOrWhiteSpace(c.Value) && !string.IsNullOrWhiteSpace(c.Label))
+                .Select(c => (new[] { c.Label.Trim().ToLowerInvariant() }, c.Key.Trim(), c.Value.Trim(), c.Label.Trim()))
+                .ToList();
+        }
+
+        public static IReadOnlyList<(string Key, string Value, string Label)> CustomCategories =>
+            _customCategories.Select(c => (c.Key, c.Value, c.Label)).ToList();
+
         // Vista pubblica di sola lettura di Categories, per il selettore a
         // combobox nella toolbar (MainWindow): solo Key/Value/Label, non le
         // parole chiave (quelle servono solo al riconoscimento testuale di
-        // TryMatchCategory, non alla UI).
-        public static IReadOnlyList<(string Key, string Value, string Label)> AllCategories { get; } =
+        // TryMatchCategory, non alla UI). Le categorie personalizzate vanno
+        // sempre in coda, dopo quelle predefinite.
+        public static IReadOnlyList<(string Key, string Value, string Label)> AllCategories =>
             new List<(string Key, string Value, string Label)>
             {
                 (SentinelCategoryKey, AddressSearchValue, "Ricerca un indirizzo"),
                 (SentinelCategoryKey, CitySearchValue,     "Ricerca una città (anche parziale)"),
             }
             .Concat(Categories.Select(c => (c.Key, c.Value, c.Label)))
+            .Concat(_customCategories.Select(c => (c.Key, c.Value, c.Label)))
             .ToList();
 
         // Sottofiltri di ESCLUSIONE applicati sempre a una categoria (oltre a
@@ -331,7 +363,7 @@ namespace StradarioApp.Services
         public static bool TryMatchCategory(string query, out string key, out string value, out string label)
         {
             string q = (query ?? "").Trim().ToLowerInvariant();
-            foreach (var cat in Categories)
+            foreach (var cat in Categories.Concat(_customCategories))
             {
                 if (cat.Keywords.Any(k => k.Equals(q, StringComparison.OrdinalIgnoreCase)))
                 {

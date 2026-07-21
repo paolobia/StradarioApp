@@ -13,13 +13,25 @@
 // =============================================================================
 
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using Newtonsoft.Json;
 
 namespace StradarioApp.Services
 {
     public class AppPreferencesService
     {
+        // Una categoria POI personalizzata aggiunta dall'utente dalle
+        // Impostazioni (tab "Categorie POI") — vedi PoiSearchService.
+        // SetCustomCategories/CustomCategories.
+        public class CustomPoiCategoryPref
+        {
+            public string Key   = "";
+            public string Value = "";
+            public string Label = "";
+        }
+
         private class Data
         {
             public string GroqApiKey         = "";
@@ -31,6 +43,10 @@ namespace StradarioApp.Services
             // default solo quando non è ancora stata usata nessuna categoria).
             public string LastPoiCategoryKey   = "";
             public string LastPoiCategoryValue = "";
+            // Categorie POI personalizzate (oltre a quelle predefinite in
+            // PoiSearchService.Categories), gestite dalla tab "Categorie POI"
+            // delle Impostazioni.
+            public List<CustomPoiCategoryPref> CustomPoiCategories = new();
         }
 
         private static string StorageFilePath =>
@@ -97,6 +113,23 @@ namespace StradarioApp.Services
             var data = LoadData();
             data.LastPoiCategoryKey   = key ?? "";
             data.LastPoiCategoryValue = value ?? "";
+            SaveData(data);
+        }
+
+        public List<(string Key, string Value, string Label)> LoadCustomPoiCategories()
+        {
+            var data = LoadData();
+            return (data.CustomPoiCategories ?? new())
+                .Select(c => (c.Key ?? "", c.Value ?? "", c.Label ?? ""))
+                .ToList();
+        }
+
+        public void SaveCustomPoiCategories(IEnumerable<(string Key, string Value, string Label)> categories)
+        {
+            var data = LoadData();
+            data.CustomPoiCategories = categories
+                .Select(c => new CustomPoiCategoryPref { Key = c.Key, Value = c.Value, Label = c.Label })
+                .ToList();
             SaveData(data);
         }
     }

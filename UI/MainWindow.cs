@@ -381,6 +381,12 @@ namespace StradarioApp.UI
         // ---------------------------------------------------------------
         public MainWindow()
         {
+            // Categorie POI personalizzate (Impostazioni -> tab "Categorie
+            // POI"): vanno caricate PRIMA di InitializeComponent, che
+            // costruisce subito il combo di ricerca leggendo
+            // PoiSearchService.AllCategories.
+            PoiSearchService.SetCustomCategories(_appPrefsSvc.LoadCustomPoiCategories());
+
             InitializeComponent();
             InitializeView();
 
@@ -2688,6 +2694,20 @@ namespace StradarioApp.UI
                 _categoryFilterComboBox.IsVisible = false;
         }
 
+        // Ricostruisce le voci del combo categoria dopo che le Impostazioni
+        // hanno cambiato l'elenco delle categorie personalizzate (vedi
+        // OnOpenSettings): prova a mantenere la selezione corrente per
+        // etichetta, altrimenti torna al primo elemento.
+        private void RefreshCategoryCombo()
+        {
+            if (_categoryFilterComboBox == null) return;
+            string? currentLabel = _categoryFilterComboBox.SelectedItem as string;
+            var labels = PoiSearchService.AllCategories.Select(c => c.Label).ToList();
+            _categoryFilterComboBox.ItemsSource = labels;
+            int idx = currentLabel != null ? labels.IndexOf(currentLabel) : -1;
+            _categoryFilterComboBox.SelectedIndex = idx >= 0 ? idx : 0;
+        }
+
         // Categoria scelta nel combo: sempre valorizzata (nessuna voce
         // "qualsiasi categoria"), quindi null solo in caso difensivo di
         // indice non valido.
@@ -2833,6 +2853,10 @@ namespace StradarioApp.UI
                         catch (Exception ex)
                         {
                             Debug.WriteLine($"[PoiSearchCategory] geocodifica di \"{locationPart}\" fallita: {ex.Message}");
+                            // Non fatale: si prosegue comunque cercando "query" nell'area
+                            // visualizzata (vedi ramo "else" sotto), quindi solo Log, non
+                            // LogError (che terrebbe la finestra aperta anche se la ricerca
+                            // poi va comunque a buon fine).
                             logWindow.Log($"Geocodifica fallita: {ex.Message}");
                         }
 
@@ -2865,7 +2889,19 @@ namespace StradarioApp.UI
             }
             finally
             {
-                logWindow.CloseProgrammatically();
+                // Si chiude da sé solo se la ricerca è finita bene (o è stata
+                // annullata dall'utente): in caso di errore (LogError più sopra
+                // ha impostato HasError) resta aperta, altrimenti il messaggio
+                // d'errore sparirebbe prima che l'utente possa leggerlo — va
+                // chiusa a mano con "Annulla"/X. In entrambi i casi però si
+                // attende SEMPRE che la finestra si chiuda (qui o manualmente)
+                // prima di uscire dal metodo: "cts" è "using" in questo scope,
+                // quindi verrebbe già smaltito al return — se la finestra
+                // restasse aperta oltre la fine del metodo, il click su
+                // "Annulla" chiamerebbe cts.Cancel() su un token già disposto
+                // (ObjectDisposedException).
+                if (!logWindow.HasError)
+                    logWindow.CloseProgrammatically();
                 await dialogTask;
             }
         }
@@ -2936,8 +2972,7 @@ namespace StradarioApp.UI
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
-                log($"Errore ricerca per categoria (Overpass): {ex.Message}");
-                ShowStatusMessage($"Errore ricerca per categoria (Overpass): {ex.Message}", isError: true, seconds: 8);
+                logWindow?.LogError($"Errore ricerca per categoria (Overpass): {ex.Message}");
                 return;
             }
 
@@ -2967,8 +3002,7 @@ namespace StradarioApp.UI
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
-                    log($"Errore ricerca per categoria (Overpass): {ex.Message}");
-                    ShowStatusMessage($"Errore ricerca per categoria (Overpass): {ex.Message}", isError: true, seconds: 8);
+                    logWindow?.LogError($"Errore ricerca per categoria (Overpass): {ex.Message}");
                     return;
                 }
                 possiblyTruncated = allCandidates.Count >= PoiSearchService.CategoryResultCap;
@@ -2983,8 +3017,7 @@ namespace StradarioApp.UI
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex)
                     {
-                        log($"Selezione AI non riuscita: {ex.Message}");
-                        ShowStatusMessage($"Selezione AI non riuscita: {ex.Message}", isError: true, seconds: 8);
+                        logWindow?.LogError($"Selezione AI non riuscita: {ex.Message}");
                         return;
                     }
                 }
@@ -3046,8 +3079,7 @@ namespace StradarioApp.UI
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
-                logWindow.Log($"Errore ricerca indirizzo: {ex.Message}");
-                ShowStatusMessage($"Errore ricerca indirizzo: {ex.Message}", isError: true, seconds: 8);
+                logWindow.LogError($"Errore ricerca indirizzo: {ex.Message}");
                 return;
             }
 
@@ -4327,7 +4359,7 @@ namespace StradarioApp.UI
 
         private async void OnOpenSettings(object? sender, RoutedEventArgs e)
         {
-            var win = new SettingsWindow(_project.Settings);
+            var win = new SettingsWindow(_project.Settings, PoiSearchService.CustomCategories);
             await win.ShowDialog(this);
 
             if (win.Confirmed)
@@ -4341,6 +4373,13 @@ namespace StradarioApp.UI
                 // salvate anche a parte così restano disponibili di default sui
                 // prossimi progetti nuovi/aperti (vedi ApplyGlobalPreferences)
                 _appPrefsSvc.Save(_project.Settings.GroqApiKey, _project.Settings.TileServerApiKey);
+
+                // Categorie POI personalizzate (tab "Categorie POI"): stesso
+                // pattern, persistite globalmente e riapplicate subito al
+                // combo di ricerca (nuove aggiunte visibili senza riavviare).
+                _appPrefsSvc.SaveCustomPoiCategories(win.ResultCustomCategories);
+                PoiSearchService.SetCustomCategories(win.ResultCustomCategories);
+                RefreshCategoryCombo();
 
                 foreach (var p in _project.Pages)
                     p.GeoBounds = GeoUtils.CalcPageBounds(

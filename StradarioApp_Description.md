@@ -21,10 +21,13 @@ l'app genera un PDF con indice, mappa riassuntiva e una pagina per quadrante.
 ---
 
 ## Funzionalità
-1. **Impostazioni**: formato pagina (A5/A4/A3), orientamento, DPI (72/96/150/300),
-   scala (da 1:1.000 a 1:1.000.000, 16 valori — tutte le scale tipiche degli
-   stradari cittadini e stradali), tile server (con o senza API key), blocco
-   automatico, contrasto mappa nel PDF (Nessuno/Colore/B-N/Enfatizza strade)
+1. **Impostazioni**: due tab. "Generale": formato pagina (A5/A4/A3), orientamento,
+   DPI (72/96/150/300), scala (da 1:1.000 a 1:1.000.000, 16 valori — tutte le
+   scale tipiche degli stradari cittadini e stradali), tile server (con o senza
+   API key), blocco automatico, contrasto mappa nel PDF (Nessuno/Colore/B-N/
+   Enfatizza strade). "Categorie POI": aggiunta di categorie di ricerca
+   personalizzate (etichetta + tag OSM `chiave=valore`), in coda alle
+   predefinite, persistite globalmente
 2. **Mappa interattiva**: pan con drag, zoom con rotella centrato sul cursore,
    tile OSM con cache in memoria e retry automatico sui fallimenti, ricerca
    città (autocomplete GeoNames)
@@ -35,9 +38,11 @@ l'app genera un PDF con indice, mappa riassuntiva e una pagina per quadrante.
    le città più popolose nel bounding box della pagina
 5. **Gruppi POI**: marker con icona/colore configurabili (rendering vettoriale
    condiviso mappa/PDF/KMZ via `PoiIconRenderer`), aggiunta diretta sulla mappa
-   con auto-label `POI<n>`, drag per riposizionare. Ricerca per categoria
-   (menu a tendina, filtro testuale sul nome, fallback AI/Groq opzionale se
-   il filtro letterale non trova nulla), più due voci speciali in cima al
+   con auto-label `POI<n>`, drag per riposizionare. Ricerca per categoria, 43
+   predefinite (elenco `key=value` in `CategoriePOI.txt`; menu a tendina,
+   filtro testuale sul nome, fallback AI/Groq opzionale se il filtro
+   letterale non trova nulla, estendibile dalle
+   Impostazioni con categorie personalizzate), più due voci speciali in cima al
    menu: ricerca indirizzo (Nominatim) e ricerca città (GeoNames, nome anche
    parziale o vuoto per quelle visibili). Ogni ricerca mostra una finestra
    di log passo-passo con pulsante Annulla (`PoiSearchLogWindow`)
@@ -78,6 +83,7 @@ l'app genera un PDF con indice, mappa riassuntiva e una pagina per quadrante.
 StradarioApp/
 ├── Program.cs                   Avvio: FontResolver.Register() + CityDatabase.EnsureLoaded()
 ├── StradarioApp.csproj
+├── CategoriePOI.txt              Elenco (key=value) delle categorie POI predefinite, per riferimento
 ├── Models/
 │   └── StradarioModels.cs       Tutti i tipi dati (Settings, MapPage, GeoRect, Project,
 │                                 TileServers, PoiGroup/PoiItem, Percorso)

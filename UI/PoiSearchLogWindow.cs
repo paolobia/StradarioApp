@@ -29,6 +29,13 @@ namespace StradarioApp.UI
         private readonly ScrollViewer _scroll;
         private bool _closingProgrammatically = false;
 
+        // Impostato da LogError: MainWindow.OnPoiSearchAsync lo controlla
+        // prima di chiudere la finestra da sé a fine ricerca — se c'è stato
+        // un errore la finestra resta aperta (l'utente la chiude a mano con
+        // "Annulla"/X), invece di sparire portandosi via il messaggio
+        // d'errore prima che l'utente possa leggerlo.
+        public bool HasError { get; private set; } = false;
+
         public PoiSearchLogWindow()
         {
             Title         = "Ricerca POI in corso...";
@@ -83,6 +90,22 @@ namespace StradarioApp.UI
             {
                 Text         = $"{DateTime.Now:HH:mm:ss}  {message}",
                 FontSize     = 12,
+                TextWrapping = TextWrapping.Wrap
+            });
+            _scroll.ScrollToEnd();
+        }
+
+        // Come Log, ma segna l'errore (rosso) e marca HasError = true così
+        // la finestra non si chiude da sola a fine ricerca.
+        public void LogError(string message)
+        {
+            HasError = true;
+            _logPanel.Children.Add(new TextBlock
+            {
+                Text         = $"{DateTime.Now:HH:mm:ss}  ⚠ {message}",
+                FontSize     = 12,
+                FontWeight   = FontWeight.Bold,
+                Foreground   = Brushes.Firebrick,
                 TextWrapping = TextWrapping.Wrap
             });
             _scroll.ScrollToEnd();
