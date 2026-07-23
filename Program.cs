@@ -59,10 +59,23 @@ namespace StradarioApp
         {
             if (ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
             {
-                desktop.MainWindow = new MainWindow();
+                var window = new MainWindow();
+                window.Icon = LoadAppIcon();
+                desktop.MainWindow = window;
             }
 
             base.OnFrameworkInitializationCompleted();
+        }
+
+        // L'icona e' incorporata come risorsa (vedi <EmbeddedResource> nel .csproj)
+        // invece che letta da disco: cosi' funziona identica sia in dev (dotnet run)
+        // sia nei publish single-file, dove non c'e' una cartella Resources accanto
+        // all'eseguibile.
+        private static Avalonia.Controls.WindowIcon? LoadAppIcon()
+        {
+            var assembly = typeof(App).Assembly;
+            using var stream = assembly.GetManifestResourceStream("StradarioApp.AppIcon.png");
+            return stream is null ? null : new Avalonia.Controls.WindowIcon(stream);
         }
     }
 }

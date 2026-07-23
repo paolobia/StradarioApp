@@ -258,6 +258,8 @@ namespace StradarioApp.Resources
             ["MainWindow_TestoLiberoWatermark"] = "Testo libero (opzionale)",
             ["MainWindow_CercaPoiTooltip"] = "Cerca POI su OpenStreetMap nell'area visualizzata",
             ["MainWindow_ImpostazioniTooltip"] = "Impostazioni",
+            ["MainWindow_InfoTooltip"] = "Informazioni su StradarioApp",
+            ["MainWindow_NuovaVersioneDisponibile"] = "🔔 Nuova versione {0} disponibile — clicca per scaricarla",
             ["MainWindow_ImpostazioniCorrenti"] = "Impostazioni correnti",
             ["MainWindow_Navigazione"] = "Navigazione",
             ["MainWindow_FiltraPerEtichetta"] = "🔎 Filtra per etichetta...",
@@ -437,6 +439,20 @@ namespace StradarioApp.Resources
             ["MainWindow_Ok"] = "OK",
             ["MainWindow_TitoloConProgetto"] = "Stradario - {0} [{1}]{2}",
             ["MainWindow_ErroreTitolo"] = "Errore",
+
+            ["AboutWindow_Titolo"] = "Informazioni su StradarioApp",
+            ["AboutWindow_Descrizione"] = "Crea stradari (atlanti stradali a pagine) da mappe OpenStreetMap: pagine, punti di interesse e percorsi, esportati in un PDF pronto per la stampa.",
+            ["AboutWindow_Versione"] = "Versione {0}",
+            ["AboutWindow_ControllaAggiornamenti"] = "Controlla aggiornamenti",
+            ["AboutWindow_ControlloInCorso"] = "Controllo in corso...",
+            ["AboutWindow_NessunAggiornamento"] = "Hai già la versione più recente.",
+            ["AboutWindow_NuovaVersioneTrovata"] = "È disponibile la versione {0}.",
+            ["AboutWindow_ControlloFallito"] = "Controllo non riuscito (verifica la connessione a Internet).",
+            ["AboutWindow_ApriPagina"] = "Apri pagina della release",
+            ["AboutWindow_RepositoryGitHub"] = "Repository su GitHub",
+            ["AboutWindow_Licenza"] = "Licenza GNU GPL v3.0",
+            ["AboutWindow_DatiMappe"] = "Dati cartografici © contributori OpenStreetMap",
+            ["AboutWindow_Chiudi"] = "Chiudi",
         };
     }
 }

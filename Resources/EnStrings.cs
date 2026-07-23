@@ -251,6 +251,8 @@ namespace StradarioApp.Resources
             ["MainWindow_TestoLiberoWatermark"] = "Free text (optional)",
             ["MainWindow_CercaPoiTooltip"] = "Search for POIs on OpenStreetMap in the visible area",
             ["MainWindow_ImpostazioniTooltip"] = "Settings",
+            ["MainWindow_InfoTooltip"] = "About StradarioApp",
+            ["MainWindow_NuovaVersioneDisponibile"] = "🔔 New version {0} available — click to download",
             ["MainWindow_ImpostazioniCorrenti"] = "Current settings",
             ["MainWindow_Navigazione"] = "Navigation",
             ["MainWindow_FiltraPerEtichetta"] = "🔎 Filter by label...",
@@ -430,6 +432,20 @@ namespace StradarioApp.Resources
             ["MainWindow_Ok"] = "OK",
             ["MainWindow_TitoloConProgetto"] = "Stradario - {0} [{1}]{2}",
             ["MainWindow_ErroreTitolo"] = "Error",
+
+            ["AboutWindow_Titolo"] = "About StradarioApp",
+            ["AboutWindow_Descrizione"] = "Builds street atlases (page-based road maps) from OpenStreetMap tiles: pages, points of interest and routes, exported to a print-ready PDF.",
+            ["AboutWindow_Versione"] = "Version {0}",
+            ["AboutWindow_ControllaAggiornamenti"] = "Check for updates",
+            ["AboutWindow_ControlloInCorso"] = "Checking...",
+            ["AboutWindow_NessunAggiornamento"] = "You already have the latest version.",
+            ["AboutWindow_NuovaVersioneTrovata"] = "Version {0} is available.",
+            ["AboutWindow_ControlloFallito"] = "Check failed (verify your Internet connection).",
+            ["AboutWindow_ApriPagina"] = "Open release page",
+            ["AboutWindow_RepositoryGitHub"] = "GitHub repository",
+            ["AboutWindow_Licenza"] = "GNU GPL v3.0 license",
+            ["AboutWindow_DatiMappe"] = "Map data © OpenStreetMap contributors",
+            ["AboutWindow_Chiudi"] = "Close",
         };
     }
 }

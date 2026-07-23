@@ -10,6 +10,14 @@
     <UseWindowsForms>false</UseWindowsForms>
     <!-- Avalonia per portabilità Linux/Windows -->
     <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+    <!-- Icona dell'eseguibile Windows (mostrata in Explorer/taskbar); su Linux
+         questo attributo del PE viene semplicemente ignorato dal toolchain. -->
+    <ApplicationIcon>Resources/AppIcon/StradarioApp.ico</ApplicationIcon>
+    <!-- Versione corrente: mostrata nel dialog "Info su" e confrontata con
+         l'ultimo tag delle GitHub Release da Services/UpdateChecker per
+         segnalare aggiornamenti disponibili. Va allineata manualmente al tag
+         creato per ogni release (vedi CLAUDE.md). -->
+    <Version>1.0.5</Version>
   </PropertyGroup>
 
   <ItemGroup>
@@ -34,6 +42,14 @@
 
     <!-- Serializzazione progetto JSON -->
     <PackageReference Include="Newtonsoft.Json"          Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Icona applicativa (finestra/taskbar a runtime), caricata via
+         Assembly.GetManifestResourceStream in App.OnFrameworkInitializationCompleted. -->
+    <EmbeddedResource Include="Resources/AppIcon/icon-256.png">
+      <LogicalName>StradarioApp.AppIcon.png</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
 </Project>

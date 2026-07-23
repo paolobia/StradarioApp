@@ -245,8 +245,10 @@ namespace StradarioApp.UI
         // Barra di stato in basso: riepilogo permanente + posizione cursore + messaggio temporaneo
         private TextBlock?       _statusBarSummaryText;
         private TextBlock?       _statusBarPositionText;
+        private TextBlock?       _statusBarUpdateText;
         private TextBlock?       _statusBarMessageText;
         private DispatcherTimer? _statusMessageTimer;
+        private string?          _availableUpdateUrl;
 
         // Campo di filtro dell'albero di navigazione (Pagine/Gruppi POI/Percorsi)
         private TextBox? _navFilterBox;
@@ -428,6 +430,22 @@ namespace StradarioApp.UI
             _autosaveTimer = new DispatcherTimer { Interval = AutosaveInterval };
             _autosaveTimer.Tick += OnAutosaveTimerTick;
             _autosaveTimer.Start();
+
+            _ = CheckForUpdateOnStartupAsync();
+        }
+
+        // Controllo aggiornamenti in background all'avvio: silenzioso in caso
+        // di esito negativo/errore (vedi UpdateChecker), mostra una notifica
+        // persistente e cliccabile nella barra di stato solo se è disponibile
+        // davvero una versione più recente.
+        private async System.Threading.Tasks.Task CheckForUpdateOnStartupAsync()
+        {
+            var info = await UpdateChecker.CheckForNewerVersionAsync();
+            if (info == null || _statusBarUpdateText == null) return;
+
+            _availableUpdateUrl = info.ReleaseUrl;
+            _statusBarUpdateText.Text      = string.Format(Strings.Get("MainWindow_NuovaVersioneDisponibile"), info.LatestVersion);
+            _statusBarUpdateText.IsVisible = true;
         }
 
         // Percorso del file di autosalvataggio per il progetto corrente
@@ -654,7 +672,7 @@ namespace StradarioApp.UI
         // a destra, al posto dei message-box con solo "OK" ----
         private Control BuildStatusBar()
         {
-            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto") };
+            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto") };
 
             _statusBarSummaryText = new TextBlock
             {
@@ -676,6 +694,30 @@ namespace StradarioApp.UI
             Grid.SetColumn(_statusBarPositionText, 1);
             grid.Children.Add(_statusBarPositionText);
 
+            // Notifica persistente (non temporizzata, a differenza di
+            // _statusBarMessageText) di un nuovo aggiornamento disponibile,
+            // popolata da CheckForUpdateOnStartupAsync: resta visibile finché
+            // non si chiude il progetto o non si clicca per aprire la pagina
+            // della release.
+            _statusBarUpdateText = new TextBlock
+            {
+                FontSize   = 11,
+                FontWeight = FontWeight.SemiBold,
+                Foreground = Brushes.DarkOrange,
+                Margin     = new Thickness(0, 0, 12, 0),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                Cursor     = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+                IsVisible  = false
+            };
+            _statusBarUpdateText.PointerPressed += (_, _) =>
+            {
+                if (string.IsNullOrEmpty(_availableUpdateUrl)) return;
+                try { Process.Start(new ProcessStartInfo(_availableUpdateUrl) { UseShellExecute = true }); }
+                catch { /* nessun browser disponibile */ }
+            };
+            Grid.SetColumn(_statusBarUpdateText, 2);
+            grid.Children.Add(_statusBarUpdateText);
+
             _statusBarMessageText = new TextBlock
             {
                 FontSize   = 11,
@@ -685,7 +727,7 @@ namespace StradarioApp.UI
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 MaxWidth   = 480
             };
-            Grid.SetColumn(_statusBarMessageText, 2);
+            Grid.SetColumn(_statusBarMessageText, 3);
             grid.Children.Add(_statusBarMessageText);
 
             return new Border
@@ -942,6 +984,7 @@ namespace StradarioApp.UI
 
             toolbar.Children.Add(ToolbarSeparator());
             toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Settings, Strings.Get("MainWindow_ImpostazioniTooltip"), OnOpenSettings));
+            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.InfoCircle, Strings.Get("MainWindow_InfoTooltip"), OnOpenAbout));
 
             return new Border
             {
@@ -4573,6 +4616,12 @@ namespace StradarioApp.UI
                 RefreshNavigationTree();
                 _mapCanvas?.InvalidateVisual();
             }
+        }
+
+        private async void OnOpenAbout(object? sender, RoutedEventArgs e)
+        {
+            var win = new AboutWindow();
+            await win.ShowDialog(this);
         }
 
         // ---------------------------------------------------------------

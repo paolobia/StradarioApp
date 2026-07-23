@@ -514,6 +514,56 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   only ever discards legitimate light-gray road casings. Verified by
   rendering the filter over a downloaded tile before/after the fix.
 
+- **App icon**: `Resources/AppIcon/` holds a hand-drawn (SkiaSharp, not a
+  downloaded asset) road+pin glyph at several sizes plus a multi-resolution
+  `StradarioApp.ico`. `icon-256.png` is embedded as a resource
+  (`<EmbeddedResource LogicalName="StradarioApp.AppIcon.png">` in the
+  `.csproj`) and loaded via `Assembly.GetManifestResourceStream` — both by
+  `Program.cs` (`App.LoadAppIcon`, sets `Window.Icon` so it works identically
+  in `dotnet run` and single-file publishes, where there's no `Resources/`
+  folder next to the executable) and by `UI/AboutWindow` (shown inline in the
+  dialog). `StradarioApp.ico` is wired via `<ApplicationIcon>` for the
+  Windows `.exe`'s own icon (Explorer/taskbar); harmlessly ignored by the
+  Linux build. The road curve and the pin are deliberately kept as two
+  separate, non-overlapping shapes — an earlier version let the pin's
+  teardrop tip overlap the road stroke, which read as a keyhole/blob at
+  16-32 px instead of "road + pin".
+
+- **`<Version>` in `StradarioApp.csproj`** is the single source of truth for
+  the running app's version (read via `Assembly.GetName().Version` in
+  `Services/UpdateChecker.CurrentVersion`, shown in `UI/AboutWindow`) — bump
+  it by hand for every release, matching the git tag (`v1.0.5` ↔
+  `<Version>1.0.5</Version>`), *before* tagging/publishing, or the update
+  check compares against a stale number.
+
+- **`Services/UpdateChecker`** checks `GET
+  api.github.com/repos/paolobia/StradarioApp/releases/latest` (no auth
+  needed, same `StradarioApp/1.0 (educational use)` User-Agent convention as
+  the rest of the app) and compares `tag_name` (stripped of its `v` prefix)
+  against `CurrentVersion`. Any failure (offline, GitHub rate limit,
+  unexpected JSON) swallows to `null` — "no update" — never an exception:
+  it's a best-effort background check, not a required feature.
+  `MainWindow`'s constructor fires it once at startup
+  (`CheckForUpdateOnStartupAsync`) and, only if a strictly newer version
+  exists, shows a persistent (not auto-dismissing, unlike
+  `ShowStatusMessage`) orange notice in a 4th status-bar column — clicking it
+  opens the release's GitHub page. `UI/AboutWindow` reuses the same checker
+  for a manual "Controlla aggiornamenti" button.
+
+- **`UI/AboutWindow` uses `SizeToContent.Height`, not a fixed `Height`.** An
+  earlier version hard-coded `Height = 420`, sized for the dialog's resting
+  state; once "Controlla aggiornamenti" grew the status text by a line
+  and/or revealed the "Apri pagina della release" button, the extra content
+  pushed the "Chiudi" button below the fixed window bottom, clipping it.
+  Also gives the root `StackPanel` an explicit `Width` (rather than
+  Auto-sizing to whichever child happens to be widest) so every child
+  centers against the same reference frame regardless of which text is
+  current — and gives the dynamically-updated status `TextBlock` that same
+  explicit `Width` too: left as Auto, its `DesiredSize` was measured once
+  while the text was still empty, and updating `.Text` afterwards (from the
+  async update check) rendered truncated instead of re-wrapping/centering
+  at full width.
+
 ## Interaction model (MainWindow)
 
 Left click = recenter view; right click = add a page centered on the clicked
