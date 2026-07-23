@@ -1,3 +1,5 @@
+🇮🇹 **Italiano** | 🇬🇧 [English](StradarioApp_Description.en.md)
+
 # StradarioApp — Descrizione del progetto
 
 ## Cos'è
