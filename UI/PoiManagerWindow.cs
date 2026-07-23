@@ -24,6 +24,7 @@ using Avalonia.Media;
 using Avalonia.VisualTree;
 using Newtonsoft.Json;
 using StradarioApp.Models;
+using StradarioApp.Resources;
 using StradarioApp.Services;
 
 namespace StradarioApp.UI
@@ -50,7 +51,7 @@ namespace StradarioApp.UI
             _currentViewLon = currentViewLon;
             _currentViewLat = currentViewLat;
 
-            Title  = "Gestione punti di interesse";
+            Title  = Strings.Get("PoiManagerWindow_Titolo");
             Width  = 560;
             Height = 620;
             MinWidth  = 420;
@@ -81,10 +82,10 @@ namespace StradarioApp.UI
                 Spacing     = 6,
                 Margin      = new Thickness(10, 8)
             };
-            toolbar.Children.Add(MakeButton("➕ Nuovo gruppo", OnNewGroup));
+            toolbar.Children.Add(MakeButton(Strings.Get("PoiManagerWindow_NuovoGruppo"), OnNewGroup));
             toolbar.Children.Add(new Separator { Width = 1, Background = Brushes.LightGray, Margin = new Thickness(4, 0) });
-            toolbar.Children.Add(MakeButton("📂 Importa KMZ", OnImportKmz));
-            toolbar.Children.Add(MakeButton("💾 Esporta KMZ", OnExportKmz));
+            toolbar.Children.Add(MakeButton(Strings.Get("PoiManagerWindow_ImportaKmz"), OnImportKmz));
+            toolbar.Children.Add(MakeButton(Strings.Get("PoiManagerWindow_EsportaKmz"), OnExportKmz));
             var toolbarBorder = new Border
             {
                 Background      = new SolidColorBrush(Color.Parse("#F0F0F0")),
@@ -114,8 +115,8 @@ namespace StradarioApp.UI
                 Spacing             = 8,
                 Margin              = new Thickness(10)
             };
-            var btnOk     = new Button { Content = "OK",      Width = 90 };
-            var btnCancel = new Button { Content = "Annulla", Width = 90 };
+            var btnOk     = new Button { Content = Strings.Get("PoiManagerWindow_Ok"),      Width = 90 };
+            var btnCancel = new Button { Content = Strings.Get("PoiManagerWindow_Annulla"), Width = 90 };
             btnOk.Click     += (_, _) => { Confirmed = true; ResultGroups = _workingGroups; Close(); };
             btnCancel.Click += (_, _) => Close();
             btnRow.Children.Add(btnOk);
@@ -147,7 +148,7 @@ namespace StradarioApp.UI
             {
                 _listPanel.Children.Add(new TextBlock
                 {
-                    Text       = "Nessun gruppo di POI. Usa \"Nuovo gruppo\" o \"Importa KMZ\" per iniziare.",
+                    Text       = Strings.Get("PoiManagerWindow_NessunGruppo"),
                     FontSize   = 12,
                     Foreground = Brushes.Gray,
                     Margin     = new Thickness(6, 12),
@@ -166,7 +167,7 @@ namespace StradarioApp.UI
                     {
                         _listPanel.Children.Add(new TextBlock
                         {
-                            Text       = "Nessun POI in questo gruppo.",
+                            Text       = Strings.Get("PoiManagerWindow_NessunPoiNelGruppo"),
                             FontSize   = 11,
                             Foreground = Brushes.Gray,
                             Margin     = new Thickness(30, 1, 4, 3)
@@ -219,27 +220,29 @@ namespace StradarioApp.UI
             info.Children.Add(new TextBlock { Text = group.Name, FontWeight = FontWeight.Bold, FontSize = 13 });
             info.Children.Add(new TextBlock
             {
-                Text       = $"{group.Items.Count} POI" + (string.IsNullOrWhiteSpace(group.Description) ? "" : $"  ·  {group.Description}"),
+                Text       = string.IsNullOrWhiteSpace(group.Description)
+                    ? string.Format(Strings.Get("PoiManagerWindow_ConteggioPoi"), group.Items.Count)
+                    : string.Format(Strings.Get("PoiManagerWindow_ConteggioPoiConDescrizione"), group.Items.Count, group.Description),
                 FontSize   = 10,
                 Foreground = Brushes.DimGray
             });
             Grid.SetColumn(info, 2);
             row.Children.Add(info);
 
-            var btnAddItem = new Button { Content = "➕ POI", Padding = new Thickness(4, 2), FontSize = 11 };
-            ToolTip.SetTip(btnAddItem, "Aggiungi un POI a questo gruppo");
+            var btnAddItem = new Button { Content = Strings.Get("PoiManagerWindow_AggiungiPoiBtn"), Padding = new Thickness(4, 2), FontSize = 11 };
+            ToolTip.SetTip(btnAddItem, Strings.Get("PoiManagerWindow_AggiungiPoiTooltip"));
             btnAddItem.Click += async (_, _) => await AddPoiToGroup(group);
             Grid.SetColumn(btnAddItem, 3);
             row.Children.Add(btnAddItem);
 
             var btnEdit = new Button { Content = "✏", Padding = new Thickness(4, 2), FontSize = 11, Foreground = Brushes.SteelBlue, Background = Brushes.Transparent };
-            ToolTip.SetTip(btnEdit, "Modifica gruppo");
+            ToolTip.SetTip(btnEdit, Strings.Get("PoiManagerWindow_ModificaGruppoTooltip"));
             btnEdit.Click += async (_, _) => await EditGroup(group);
             Grid.SetColumn(btnEdit, 4);
             row.Children.Add(btnEdit);
 
             var btnDelete = new Button { Content = "✕", Padding = new Thickness(4, 2), FontSize = 11, Foreground = Brushes.Crimson, Background = Brushes.Transparent };
-            ToolTip.SetTip(btnDelete, "Elimina gruppo (e i suoi POI)");
+            ToolTip.SetTip(btnDelete, Strings.Get("PoiManagerWindow_EliminaGruppoTooltip"));
             btnDelete.Click += (_, _) =>
             {
                 _workingGroups.Remove(group);
@@ -366,12 +369,12 @@ namespace StradarioApp.UI
         {
             var files = await StorageProvider.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions
             {
-                Title          = "Importa POI da KMZ/KML",
+                Title          = Strings.Get("PoiManagerWindow_ImportaTitolo"),
                 AllowMultiple  = false,
                 FileTypeFilter = new[]
                 {
-                    new Avalonia.Platform.Storage.FilePickerFileType("KMZ/KML") { Patterns = new[] { "*.kmz", "*.kml" } },
-                    new Avalonia.Platform.Storage.FilePickerFileType("Tutti i file") { Patterns = new[] { "*.*" } }
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("PoiManagerWindow_FiltroKmzKml")) { Patterns = new[] { "*.kmz", "*.kml" } },
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("PoiManagerWindow_FiltroTuttiFile")) { Patterns = new[] { "*.*" } }
                 }
             });
             if (files.Count == 0) return;
@@ -383,18 +386,18 @@ namespace StradarioApp.UI
 
                 if (imported.Count == 0)
                 {
-                    SetStatus("Nessun gruppo/POI trovato nel file.", true);
+                    SetStatus(Strings.Get("PoiManagerWindow_NessunGruppoPoiNelFile"), true);
                     return;
                 }
 
                 _workingGroups.AddRange(imported);
                 foreach (var g in imported) _expandedGroupIds.Add(g.Id);
                 RefreshList();
-                SetStatus($"Importati {imported.Count} gruppi ({imported.Sum(g => g.Items.Count)} POI).", false);
+                SetStatus(string.Format(Strings.Get("PoiManagerWindow_ImportatiGruppi"), imported.Count, imported.Sum(g => g.Items.Count)), false);
             }
             catch (Exception ex)
             {
-                SetStatus($"Errore importazione: {ex.Message}", true);
+                SetStatus(string.Format(Strings.Get("PoiManagerWindow_ErroreImportazione"), ex.Message), true);
             }
         }
 
@@ -402,18 +405,18 @@ namespace StradarioApp.UI
         {
             if (_workingGroups.Count == 0)
             {
-                SetStatus("Nessun gruppo da esportare.", true);
+                SetStatus(Strings.Get("PoiManagerWindow_NessunGruppoDaEsportare"), true);
                 return;
             }
 
             var file = await StorageProvider.SaveFilePickerAsync(new Avalonia.Platform.Storage.FilePickerSaveOptions
             {
-                Title             = "Esporta POI come KMZ",
+                Title             = Strings.Get("PoiManagerWindow_EsportaTitolo"),
                 DefaultExtension  = "kmz",
                 SuggestedFileName = "poi",
                 FileTypeChoices   = new[]
                 {
-                    new Avalonia.Platform.Storage.FilePickerFileType("KMZ") { Patterns = new[] { "*.kmz" } }
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("PoiManagerWindow_FiltroKmz")) { Patterns = new[] { "*.kmz" } }
                 }
             });
             if (file == null) return;
@@ -421,11 +424,11 @@ namespace StradarioApp.UI
             try
             {
                 await _poiSvc.ExportKmzAsync(_workingGroups, file.Path.LocalPath);
-                SetStatus($"Esportato: {file.Path.LocalPath}", false);
+                SetStatus(string.Format(Strings.Get("PoiManagerWindow_Esportato"), file.Path.LocalPath), false);
             }
             catch (Exception ex)
             {
-                SetStatus($"Errore esportazione: {ex.Message}", true);
+                SetStatus(string.Format(Strings.Get("PoiManagerWindow_ErroreEsportazione"), ex.Message), true);
             }
         }
 

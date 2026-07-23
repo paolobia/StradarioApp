@@ -11,6 +11,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using StradarioApp.Resources;
 
 namespace StradarioApp.UI
 {
@@ -39,7 +40,7 @@ namespace StradarioApp.UI
 
             _msg = new TextBlock
             {
-                Text      = "Avvio...",
+                Text      = Strings.Get("ProgressWindow_Avvio"),
                 FontSize  = 12,
                 Foreground = Brushes.DimGray
             };

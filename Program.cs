@@ -21,6 +21,12 @@ namespace StradarioApp
             // Registra il font resolver per PdfSharpCore prima di qualsiasi altra cosa.
             FontResolver.Register();
 
+            // Lingua UI: preferenza salvata, o al primo avvio dedotta dalla
+            // lingua di sistema (vedi AppPreferencesService.LoadLanguage).
+            // Deve avvenire PRIMA di costruire MainWindow: il suo costruttore
+            // legge già Strings.Get per etichette/tooltip/titolo.
+            StradarioApp.Resources.Strings.SetLanguage(new AppPreferencesService().LoadLanguage());
+
             // Avvia il caricamento del database città in background
             // così è pronto quando l'utente apre il dialog di modifica pagina
             System.Threading.Tasks.Task.Run(() => CityDatabase.EnsureLoaded());

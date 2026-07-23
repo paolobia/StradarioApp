@@ -26,3 +26,6 @@ cities500.csv
 *.kml
 *.gpx
 *.stradario
+
+# Debug-only diagnostic log (Services/DebugLog.cs)
+debug.log

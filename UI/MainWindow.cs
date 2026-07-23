@@ -31,6 +31,7 @@ using SkiaSharp;
 // MapCanvas: controllo custom che espone SKCanvas tramite Avalonia.Skia
 // (non esiste un pacchetto "SkiaSharp.Views.Avalonia" separato)
 using StradarioApp.Models;
+using StradarioApp.Resources;
 using StradarioApp.Services;
 
 namespace StradarioApp.UI
@@ -139,6 +140,11 @@ namespace StradarioApp.UI
         private List<PoiSearchService.Result> _poiSearchResults   = new();
         // Risultato attualmente sotto il cursore (tooltip con più dettagli in OnPaintMapSurface)
         private PoiSearchService.Result? _hoveredPoiSearchResult;
+        // POI già presente in un gruppo del progetto (non un risultato di
+        // ricerca) attualmente sotto il cursore: stesso tooltip, vedi
+        // DrawPlacedPoiTooltip. Attivo solo fuori dalla modalità ricerca (che
+        // ha già il suo overlay/tooltip dedicato) e non durante un drag.
+        private (PoiGroup group, PoiItem item)? _hoveredPoi;
         // Testo con cui è stata avviata la ricerca in corso (o "Ricerca GPS"
         // per la ricerca inversa): usato per intitolare un gruppo POI creato
         // automaticamente se il progetto non ne ha ancora nessuno
@@ -150,6 +156,15 @@ namespace StradarioApp.UI
         // sempre, a differenza del messaggio transitorio della barra di
         // stato che scompare dopo pochi secondi.
         private bool _poiSearchAreaClamped = false;
+        // Vero quando i risultati correnti vengono dalla ricerca per
+        // indirizzo (RunAddressSearchAsync): lì Result.DisplayName è già
+        // l'indirizzo completo formattato da Nominatim, quindi
+        // ConfirmPoiSearchResult non deve aggiungere anche Result.Address
+        // nella descrizione del POI creato (sarebbe la stessa informazione
+        // ripetuta due volte). Per categoria/città Address è invece
+        // un'informazione distinta dal nome (indirizzo del POI / popolazione
+        // della città) e va tenuta.
+        private bool _poiSearchResultsAreAddresses = false;
         // Ultimo testo cercato con successo (nessuna eccezione di rete): proposto
         // precompilato la prossima volta che si apre il campo di ricerca
         private string _lastPoiSearchQuery = "";
@@ -204,6 +219,7 @@ namespace StradarioApp.UI
             _poiSearchMode    = false;
             _poiSearchResults = new List<PoiSearchService.Result>();
             _hoveredPoiSearchResult = null;
+            _hoveredPoi = null;
             HidePoiSearchBox();
         }
 
@@ -297,7 +313,7 @@ namespace StradarioApp.UI
             _isDirty = true;
             RefreshNavigationTree();
             _mapCanvas?.InvalidateVisual();
-            ShowStatusMessage("Annullato.", seconds: 2);
+            ShowStatusMessage(Strings.Get("MainWindow_Annullato"), seconds: 2);
         }
 
         private void Redo()
@@ -310,7 +326,7 @@ namespace StradarioApp.UI
             _isDirty = true;
             RefreshNavigationTree();
             _mapCanvas?.InvalidateVisual();
-            ShowStatusMessage("Ripetuto.", seconds: 2);
+            ShowStatusMessage(Strings.Get("MainWindow_Ripetuto"), seconds: 2);
         }
 
         // Stato geografico all'inizio del drag della pagina/POI/vertice
@@ -431,7 +447,7 @@ namespace StradarioApp.UI
                 _project.ViewZoom      = _viewZoom;
 
                 await _projSvc.SaveAsync(_project, GetAutosavePath());
-                ShowStatusMessage("Salvataggio automatico effettuato.", seconds: 3);
+                ShowStatusMessage(Strings.Get("MainWindow_SalvataggioAutomatico"), seconds: 3);
             }
             catch
             {
@@ -479,7 +495,7 @@ namespace StradarioApp.UI
 
             var dlg = new Window
             {
-                Title  = "Modifiche non salvate",
+                Title  = Strings.Get("MainWindow_ModificheNonSalvateTitolo"),
                 Width  = 460,
                 Height = 170,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
@@ -492,7 +508,7 @@ namespace StradarioApp.UI
                     {
                         new TextBlock
                         {
-                            Text = "Ci sono modifiche non salvate.\nVuoi salvare prima di uscire?",
+                            Text = Strings.Get("MainWindow_ModificheNonSalvateMessaggio"),
                             TextWrapping = TextWrapping.Wrap
                         },
                         new StackPanel
@@ -502,9 +518,9 @@ namespace StradarioApp.UI
                             Spacing = 10,
                             Children =
                             {
-                                DialogUi.MakeDialogButton("💾 Salva ed esci", primary: true),
-                                DialogUi.MakeDialogButton("🗑 Esci senza salvare"),
-                                DialogUi.MakeDialogButton("Annulla")
+                                DialogUi.MakeDialogButton(Strings.Get("MainWindow_SalvaEdEsci"), primary: true),
+                                DialogUi.MakeDialogButton(Strings.Get("MainWindow_EsciSenzaSalvare")),
+                                DialogUi.MakeDialogButton(Strings.Get("MainWindow_Annulla"))
                             }
                         }
                     }
@@ -530,12 +546,12 @@ namespace StradarioApp.UI
                     var file = await StorageProvider.SaveFilePickerAsync(
                         new Avalonia.Platform.Storage.FilePickerSaveOptions
                         {
-                            Title            = "Salva progetto stradario",
+                            Title            = Strings.Get("MainWindow_SalvaProgettoTitolo"),
                             DefaultExtension = "stradario",
                             SuggestedFileName = _project.ProjectName,
                             FileTypeChoices  = new[]
                             {
-                                new Avalonia.Platform.Storage.FilePickerFileType("Stradario")
+                                new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroStradario"))
                                     { Patterns = new[] { "*.stradario" } }
                             }
                         });
@@ -574,7 +590,7 @@ namespace StradarioApp.UI
         // ---------------------------------------------------------------
         private void InitializeComponent()
         {
-            Title  = "Stradario";
+            Title  = Strings.Get("MainWindow_TitoloApp");
             Width  = 1200;
             Height = 800;
             MinWidth  = 800;
@@ -688,11 +704,12 @@ namespace StradarioApp.UI
             if (_statusBarSummaryText == null) return;
 
             int poiCount = _project.PoiGroups.Sum(g => g.Items.Count);
-            string file  = _currentFilePath != null ? Path.GetFileName(_currentFilePath) : "Senza titolo";
+            string file  = _currentFilePath != null ? Path.GetFileName(_currentFilePath) : Strings.Get("MainWindow_SenzaTitolo");
 
-            _statusBarSummaryText.Text =
-                $"📄 {_project.Pages.Count} pagine   ·   📍 {poiCount} POI ({_project.PoiGroups.Count} gruppi)   ·   " +
-                $"🥾 {_project.Percorsi.Count} percorsi   ·   {_project.ProjectName} [{file}]{(_isDirty ? " •" : "")}";
+            _statusBarSummaryText.Text = string.Format(
+                Strings.Get("MainWindow_StatusBarRiepilogo"),
+                _project.Pages.Count, poiCount, _project.PoiGroups.Count,
+                _project.Percorsi.Count, _project.ProjectName, file, (_isDirty ? " •" : ""));
         }
 
         // Mostra un messaggio temporaneo nella barra di stato (esito di
@@ -784,7 +801,7 @@ namespace StradarioApp.UI
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
                 Margin          = new Thickness(0, 0, 2, 0)
             };
-            ToolTip.SetTip(clearBtn, "Svuota");
+            ToolTip.SetTip(clearBtn, Strings.Get("MainWindow_Svuota"));
             clearBtn.Click += (_, _) =>
             {
                 tb.Text = "";
@@ -804,26 +821,26 @@ namespace StradarioApp.UI
                 Margin      = new Thickness(4, 2)
             };
 
-            var recentBtn = MakeToolbarIcon(BootstrapIcons.Recent, "File recenti", (_, _) => { });
+            var recentBtn = MakeToolbarIcon(BootstrapIcons.Recent, Strings.Get("MainWindow_FileRecenti"), (_, _) => { });
             recentBtn.Click += (_, _) => ShowRecentFilesFlyout(recentBtn);
 
-            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.New, "Nuovo progetto", OnNewProject));
-            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Open, "Apri progetto", OnOpenProject));
+            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.New, Strings.Get("MainWindow_NuovoProgetto"), OnNewProject));
+            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Open, Strings.Get("MainWindow_ApriProgetto"), OnOpenProject));
             toolbar.Children.Add(recentBtn);
-            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Save, "Salva", OnSaveProject));
-            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.SaveAs, "Salva come...", OnSaveProjectAs));
+            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Save, Strings.Get("MainWindow_Salva"), OnSaveProject));
+            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.SaveAs, Strings.Get("MainWindow_SalvaCome"), OnSaveProjectAs));
 
             toolbar.Children.Add(ToolbarSeparator());
-            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Import, "Importa POI/percorsi da KMZ/KML/GPX", OnImportKmzUnified));
-            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.ExportPdf, "Genera PDF", OnGeneratePdf));
+            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Import, Strings.Get("MainWindow_ImportaTooltip"), OnImportKmzUnified));
+            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.ExportPdf, Strings.Get("MainWindow_GeneraPdf"), OnGeneratePdf));
 
             toolbar.Children.Add(ToolbarSeparator());
-            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Refresh, "Aggiorna mappa (svuota cache tile)", OnRefreshMap));
-            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Undo, "Annulla (Ctrl+Z)", (_, _) => Undo()));
-            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Redo, "Ripeti (Ctrl+Y)", (_, _) => Redo()));
-            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Ruler, "Righello: misura una distanza sulla mappa (clic = aggiungi punto, tasto destro = annulla ultimo, ESC = esci)", OnToggleRuler));
-            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.WhatsHere, "Cosa c'è qui? Clicca il bottone poi un punto sulla mappa (scorciatoia: shift + tasto destro)", OnToggleIdentifyMode));
-            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Locate, "Localizza dove sono (centra la mappa sulla posizione attuale, aggiornata in tempo reale)", OnToggleMyLocation));
+            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Refresh, Strings.Get("MainWindow_AggiornaMappa"), OnRefreshMap));
+            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Undo, Strings.Get("MainWindow_AnnullaCtrlZ"), (_, _) => Undo()));
+            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Redo, Strings.Get("MainWindow_RipetiCtrlY"), (_, _) => Redo()));
+            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Ruler, Strings.Get("MainWindow_RighelloTooltip"), OnToggleRuler));
+            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.WhatsHere, Strings.Get("MainWindow_CosaCeQuiTooltip"), OnToggleIdentifyMode));
+            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Locate, Strings.Get("MainWindow_LocalizzaTooltip"), OnToggleMyLocation));
 
             toolbar.Children.Add(ToolbarSeparator());
 
@@ -836,7 +853,7 @@ namespace StradarioApp.UI
             _poiSearchTextBox = new TextBox
             {
                 Width       = 220,
-                Watermark   = "Testo libero (opzionale)",
+                Watermark   = Strings.Get("MainWindow_TestoLiberoWatermark"),
                 FontSize    = 12,
                 VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center,
                 IsVisible   = false
@@ -853,7 +870,7 @@ namespace StradarioApp.UI
                 _mapCanvas?.InvalidateVisual();
             });
             toolbar.Children.Add(_poiSearchTextBox);
-            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Search, "Cerca POI su OpenStreetMap nell'area visualizzata",
+            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Search, Strings.Get("MainWindow_CercaPoiTooltip"),
                 async (s, e) =>
                 {
                     if (_poiSearchTextBox == null || _categoryFilterComboBox == null) return;
@@ -900,7 +917,11 @@ namespace StradarioApp.UI
             }
             else
             {
-                int idx = PoiSearchService.AllCategories.ToList().FindIndex(c => c.Label == "ristoranti");
+                // Confronto sul tag OSM invariante (amenity=restaurant), non
+                // sull'etichetta tradotta: "ristoranti" è solo il testo
+                // mostrato e cambia con la lingua della UI.
+                int idx = PoiSearchService.AllCategories.ToList()
+                    .FindIndex(c => c.Key == "amenity" && c.Value == "restaurant");
                 if (idx >= 0) defaultCategoryIndex = idx;
             }
             _categoryFilterComboBox = new ComboBox
@@ -920,7 +941,7 @@ namespace StradarioApp.UI
             UpdatePoiSearchWatermark();
 
             toolbar.Children.Add(ToolbarSeparator());
-            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Settings, "Impostazioni", OnOpenSettings));
+            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Settings, Strings.Get("MainWindow_ImpostazioniTooltip"), OnOpenSettings));
 
             return new Border
             {
@@ -940,7 +961,7 @@ namespace StradarioApp.UI
             var settingsInfo = new StackPanel { Margin = new Thickness(8), Spacing = 3 };
             settingsInfo.Children.Add(new TextBlock
             {
-                Text     = "Impostazioni correnti",
+                Text     = Strings.Get("MainWindow_ImpostazioniCorrenti"),
                 FontWeight = FontWeight.Bold,
                 Margin   = new Thickness(0, 0, 0, 4)
             });
@@ -957,7 +978,7 @@ namespace StradarioApp.UI
             };
             listHeader.Children.Add(new TextBlock
             {
-                Text       = "Navigazione",
+                Text       = Strings.Get("MainWindow_Navigazione"),
                 FontWeight = FontWeight.Bold,
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
             });
@@ -969,7 +990,7 @@ namespace StradarioApp.UI
             // RefreshNavigationTree, così non perde il focus mentre si digita)
             _navFilterBox = new TextBox
             {
-                Watermark = "🔎 Filtra per etichetta...",
+                Watermark = Strings.Get("MainWindow_FiltraPerEtichetta"),
                 Margin    = new Thickness(8, 0, 8, 4),
                 FontSize  = 12
             };
@@ -1006,9 +1027,9 @@ namespace StradarioApp.UI
             string pageStr  = $"{s.PageSize} {s.Orientation} @ {s.Dpi} DPI";
 
             var info = new StackPanel { Spacing = 2 };
-            info.Children.Add(MakeInfoRow("Formato:", pageStr));
-            info.Children.Add(MakeInfoRow("Scala:", scaleStr));
-            info.Children.Add(MakeInfoRow("Copertura:", $"{s.GetPageWidthKm():F1} × {s.GetPageHeightKm():F1} km"));
+            info.Children.Add(MakeInfoRow(Strings.Get("MainWindow_InfoFormato"), pageStr));
+            info.Children.Add(MakeInfoRow(Strings.Get("MainWindow_InfoScala"), scaleStr));
+            info.Children.Add(MakeInfoRow(Strings.Get("MainWindow_InfoCopertura"), $"{s.GetPageWidthKm():F1} × {s.GetPageHeightKm():F1} km"));
             return info;
         }
 
@@ -1039,7 +1060,7 @@ namespace StradarioApp.UI
             bool allPagesLocked = _project.Pages.Count > 0 && _project.Pages.All(p => p.IsLocked);
             var pagesIcons = new List<Control>
             {
-                DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, "Aggiungi pagina (clic sulla mappa)", Brushes.SteelBlue, () =>
+                DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, Strings.Get("MainWindow_AggiungiPaginaTooltip"), Brushes.SteelBlue, () =>
                 {
                     CancelAllAddModes();
                     _addPageMode = true;
@@ -1049,13 +1070,13 @@ namespace StradarioApp.UI
             if (_multiSelectedPageIds.Count > 0)
             {
                 pagesIcons.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Trash,
-                    $"Elimina le {_multiSelectedPageIds.Count} pagine selezionate (Ctrl+clic per selezionarne più di una)",
+                    string.Format(Strings.Get("MainWindow_EliminaPagineSelezionateTooltip"), _multiSelectedPageIds.Count),
                     Brushes.Crimson, async () => await DeleteSelectedPagesAsync()));
             }
             pagesIcons.AddRange(new List<Control>
             {
                 DialogUi.MakeTreeIconButton(_pagesVisible ? BootstrapIcons.Eye : BootstrapIcons.EyeSlash,
-                    _pagesVisible ? "Nascondi le pagine sulla mappa" : "Mostra le pagine sulla mappa",
+                    _pagesVisible ? Strings.Get("MainWindow_NascondiPagineTooltip") : Strings.Get("MainWindow_MostraPagineTooltip"),
                     _pagesVisible ? Brushes.SteelBlue : Brushes.Gray, () =>
                 {
                     _pagesVisible = !_pagesVisible;
@@ -1063,7 +1084,7 @@ namespace StradarioApp.UI
                     _mapCanvas?.InvalidateVisual();
                 }),
                 DialogUi.MakeTreeIconButton(allPagesLocked ? BootstrapIcons.LockClosed : BootstrapIcons.LockOpen,
-                    allPagesLocked ? "Sblocca tutte le pagine" : "Blocca tutte le pagine",
+                    allPagesLocked ? Strings.Get("MainWindow_SbloccaTuttePagineTooltip") : Strings.Get("MainWindow_BloccaTuttePagineTooltip"),
                     allPagesLocked ? Brushes.Crimson : Brushes.SteelBlue, () =>
                 {
                     bool lockAll = !allPagesLocked;
@@ -1076,13 +1097,13 @@ namespace StradarioApp.UI
                     RefreshNavigationTree();
                 })
             });
-            root.Children.Add(BuildNavBranchHeader("📄 Pagine", filtering ? visiblePages.Count : _project.Pages.Count,
+            root.Children.Add(BuildNavBranchHeader(Strings.Get("MainWindow_Pagine"), BootstrapIcons.Document, filtering ? visiblePages.Count : _project.Pages.Count,
                 _navPagesExpanded, () => { _navPagesExpanded = !_navPagesExpanded; RefreshNavigationTree(); }, pagesIcons));
 
             if (_navPagesExpanded || filtering)
             {
                 if (visiblePages.Count == 0)
-                    root.Children.Add(Indent(EmptyHint(filtering ? "Nessuna pagina corrisponde al filtro." : "Nessuna pagina. Usa \"➕\" per aggiungerne una.")));
+                    root.Children.Add(Indent(EmptyHint(filtering ? Strings.Get("MainWindow_NessunaPaginaFiltro") : Strings.Get("MainWindow_NessunaPaginaVuota"))));
                 foreach (var page in visiblePages)
                     root.Children.Add(Indent(BuildPageListItem(page)));
             }
@@ -1098,19 +1119,19 @@ namespace StradarioApp.UI
             bool allPoiLocked = _project.PoiGroups.Count > 0 && _project.PoiGroups.All(g => g.IsLocked);
             var poiIcons = new List<Control>
             {
-                DialogUi.MakeTreeIconButton(BootstrapIcons.Save, "Esporta tutti i gruppi POI (KMZ/KML/GPX)", Brushes.SteelBlue, async () => await OnExportKmz()),
-                DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, "Nuovo gruppo POI", Brushes.SteelBlue, async () => await OnNewPoiGroup())
+                DialogUi.MakeTreeIconButton(BootstrapIcons.Save, Strings.Get("MainWindow_EsportaGruppiPoiTooltip"), Brushes.SteelBlue, async () => await OnExportKmz()),
+                DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, Strings.Get("MainWindow_NuovoGruppoPoiTooltip"), Brushes.SteelBlue, async () => await OnNewPoiGroup())
             };
             if (_multiSelectedPoiKeys.Count > 0)
             {
                 poiIcons.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Shuffle,
-                    $"Sposta i {_multiSelectedPoiKeys.Count} POI selezionati in un altro gruppo (Ctrl+clic per selezionarne più di uno)",
+                    string.Format(Strings.Get("MainWindow_SpostaPoiSelezionatiTooltip"), _multiSelectedPoiKeys.Count),
                     Brushes.DarkOrange, async () => await MoveSelectedPoiToGroupAsync()));
             }
             poiIcons.AddRange(new List<Control>
             {
                 DialogUi.MakeTreeIconButton(_poiVisible ? BootstrapIcons.Eye : BootstrapIcons.EyeSlash,
-                    _poiVisible ? "Nascondi tutti i POI sulla mappa" : "Mostra tutti i POI sulla mappa",
+                    _poiVisible ? Strings.Get("MainWindow_NascondiPoiTooltip") : Strings.Get("MainWindow_MostraPoiTooltip"),
                     _poiVisible ? Brushes.SteelBlue : Brushes.Gray, () =>
                 {
                     _poiVisible = !_poiVisible;
@@ -1118,7 +1139,7 @@ namespace StradarioApp.UI
                     _mapCanvas?.InvalidateVisual();
                 }),
                 DialogUi.MakeTreeIconButton(allPoiLocked ? BootstrapIcons.LockClosed : BootstrapIcons.LockOpen,
-                    allPoiLocked ? "Sblocca tutti i gruppi POI" : "Blocca tutti i gruppi POI",
+                    allPoiLocked ? Strings.Get("MainWindow_SbloccaGruppiPoiTooltip") : Strings.Get("MainWindow_BloccaGruppiPoiTooltip"),
                     allPoiLocked ? Brushes.Crimson : Brushes.SteelBlue, () =>
                 {
                     bool lockAll = !allPoiLocked;
@@ -1131,13 +1152,13 @@ namespace StradarioApp.UI
                     RefreshNavigationTree();
                 })
             });
-            root.Children.Add(BuildNavBranchHeader("📍 Gruppi POI", filtering ? visiblePoiCount : _project.PoiGroups.Sum(g => g.Items.Count),
+            root.Children.Add(BuildNavBranchHeader(Strings.Get("MainWindow_GruppiPoi"), BootstrapIcons.Locate, filtering ? visiblePoiCount : _project.PoiGroups.Sum(g => g.Items.Count),
                 _navPoiExpanded, () => { _navPoiExpanded = !_navPoiExpanded; RefreshNavigationTree(); }, poiIcons));
 
             if (_navPoiExpanded || filtering)
             {
                 if (visibleGroups.Count == 0)
-                    root.Children.Add(Indent(EmptyHint(filtering ? "Nessun gruppo/POI corrisponde al filtro." : "Nessun gruppo. Usa \"➕\" o importa un KMZ.")));
+                    root.Children.Add(Indent(EmptyHint(filtering ? Strings.Get("MainWindow_NessunGruppoPoiFiltro") : Strings.Get("MainWindow_NessunGruppoPoiVuoto"))));
 
                 foreach (var group in visibleGroups)
                 {
@@ -1152,7 +1173,7 @@ namespace StradarioApp.UI
                             : group.Items.Where(it => Matches(it.Label)).ToList();
 
                         if (visibleItems.Count == 0)
-                            root.Children.Add(Indent(EmptyHint("Nessun POI in questo gruppo."), 28));
+                            root.Children.Add(Indent(EmptyHint(Strings.Get("MainWindow_NessunPoiNelGruppo")), 28));
                         foreach (var item in visibleItems)
                             root.Children.Add(Indent(BuildPoiItemLeaf(group, item), 28));
                     }
@@ -1167,10 +1188,10 @@ namespace StradarioApp.UI
             bool allRoutesLocked = _project.Percorsi.Count > 0 && _project.Percorsi.All(r => r.IsLocked);
             var percorsiIcons = new List<Control>
             {
-                DialogUi.MakeTreeIconButton(BootstrapIcons.Save, "Esporta tutti i percorsi (KMZ/KML/GPX)", Brushes.SteelBlue, async () => await OnExportPercorsiKmz()),
-                DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, "Nuovo percorso (disegna sulla mappa)", Brushes.SteelBlue, OnNewPercorso),
+                DialogUi.MakeTreeIconButton(BootstrapIcons.Save, Strings.Get("MainWindow_EsportaPercorsiTooltip"), Brushes.SteelBlue, async () => await OnExportPercorsiKmz()),
+                DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, Strings.Get("MainWindow_NuovoPercorsoTooltip"), Brushes.SteelBlue, OnNewPercorso),
                 DialogUi.MakeTreeIconButton(_percorsiVisible ? BootstrapIcons.Eye : BootstrapIcons.EyeSlash,
-                    _percorsiVisible ? "Nascondi tutti i percorsi sulla mappa" : "Mostra tutti i percorsi sulla mappa",
+                    _percorsiVisible ? Strings.Get("MainWindow_NascondiPercorsiTooltip") : Strings.Get("MainWindow_MostraPercorsiTooltip"),
                     _percorsiVisible ? Brushes.SteelBlue : Brushes.Gray, () =>
                 {
                     _percorsiVisible = !_percorsiVisible;
@@ -1178,7 +1199,7 @@ namespace StradarioApp.UI
                     _mapCanvas?.InvalidateVisual();
                 }),
                 DialogUi.MakeTreeIconButton(allRoutesLocked ? BootstrapIcons.LockClosed : BootstrapIcons.LockOpen,
-                    allRoutesLocked ? "Sblocca tutti i percorsi" : "Blocca tutti i percorsi",
+                    allRoutesLocked ? Strings.Get("MainWindow_SbloccaPercorsiTooltip") : Strings.Get("MainWindow_BloccaPercorsiTooltip"),
                     allRoutesLocked ? Brushes.Crimson : Brushes.SteelBlue, () =>
                 {
                     bool lockAll = !allRoutesLocked;
@@ -1191,13 +1212,13 @@ namespace StradarioApp.UI
                     RefreshNavigationTree();
                 })
             };
-            root.Children.Add(BuildNavBranchHeader("🥾 Percorsi", filtering ? visibleRoutes.Count : _project.Percorsi.Count,
+            root.Children.Add(BuildNavBranchHeader(Strings.Get("MainWindow_Percorsi"), BootstrapIcons.Route, filtering ? visibleRoutes.Count : _project.Percorsi.Count,
                 _navPercorsiExpanded, () => { _navPercorsiExpanded = !_navPercorsiExpanded; RefreshNavigationTree(); }, percorsiIcons));
 
             if (_navPercorsiExpanded || filtering)
             {
                 if (visibleRoutes.Count == 0)
-                    root.Children.Add(Indent(EmptyHint(filtering ? "Nessun percorso corrisponde al filtro." : "Nessun percorso. Usa \"➕\" per disegnarne uno sulla mappa, o importa un KMZ.")));
+                    root.Children.Add(Indent(EmptyHint(filtering ? Strings.Get("MainWindow_NessunPercorsoFiltro") : Strings.Get("MainWindow_NessunPercorsoVuoto"))));
 
                 foreach (var route in visibleRoutes)
                     root.Children.Add(Indent(BuildPercorsoNavItem(route)));
@@ -1217,7 +1238,7 @@ namespace StradarioApp.UI
 
         // Intestazione di un ramo principale dell'albero (Pagine / Gruppi POI):
         // freccia espandi/collassa, titolo, contatore e icone di azione (sempre visibili)
-        private Control BuildNavBranchHeader(string title, int count, bool expanded, Action onToggleExpand, IReadOnlyList<Control> actionIcons)
+        private Control BuildNavBranchHeader(string title, string titleIcon, int count, bool expanded, Action onToggleExpand, IReadOnlyList<Control> actionIcons)
         {
             var border = new Border
             {
@@ -1241,17 +1262,24 @@ namespace StradarioApp.UI
             };
             row.Children.Add(expandGlyph);
 
-            var label = new TextBlock
+            var labelPanel = new StackPanel
+            {
+                Orientation = Avalonia.Layout.Orientation.Horizontal,
+                Spacing     = 6,
+                Cursor      = new Cursor(StandardCursorType.Hand),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+            };
+            labelPanel.Children.Add(DialogUi.MakeIconGlyph(titleIcon, Brushes.SteelBlue, 14));
+            labelPanel.Children.Add(new TextBlock
             {
                 Text         = $"{count}  {title}",
                 FontWeight   = FontWeight.Bold,
                 FontSize     = 13,
                 TextTrimming = TextTrimming.CharacterEllipsis,
-                Cursor       = new Cursor(StandardCursorType.Hand),
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
-            };
-            Grid.SetColumn(label, 1);
-            row.Children.Add(label);
+            });
+            Grid.SetColumn(labelPanel, 1);
+            row.Children.Add(labelPanel);
 
             var rightZone = new StackPanel
             {
@@ -1337,14 +1365,14 @@ namespace StradarioApp.UI
                 Spacing     = 4,
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
             };
-            actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, "Aggiungi POI a questo gruppo (clic sulla mappa)", Brushes.SteelBlue,
+            actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, Strings.Get("MainWindow_AggiungiPoiAlGruppoTooltip"), Brushes.SteelBlue,
                 () => StartAddPoiMode(group)));
-            actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Pencil, "Modifica gruppo", Brushes.SteelBlue,
+            actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Pencil, Strings.Get("MainWindow_ModificaGruppoTooltip"), Brushes.SteelBlue,
                 async () => await OnEditPoiGroup(group)));
-            actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Close, "Elimina gruppo (e i suoi POI)", Brushes.Crimson,
+            actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("MainWindow_EliminaGruppoTooltip"), Brushes.Crimson,
                 () => OnDeletePoiGroup(group)));
             actions.Children.Add(DialogUi.MakeTreeIconButton(visible ? BootstrapIcons.Eye : BootstrapIcons.EyeSlash,
-                visible ? "Nascondi questo gruppo sulla mappa" : "Mostra questo gruppo sulla mappa",
+                visible ? Strings.Get("MainWindow_NascondiGruppoTooltip") : Strings.Get("MainWindow_MostraGruppoTooltip"),
                 visible ? Brushes.SteelBlue : Brushes.Gray, () =>
             {
                 if (visible) _hiddenPoiGroupIds.Add(group.Id);
@@ -1353,7 +1381,7 @@ namespace StradarioApp.UI
                 _mapCanvas?.InvalidateVisual();
             }));
             actions.Children.Add(DialogUi.MakeTreeIconButton(group.IsLocked ? BootstrapIcons.LockClosed : BootstrapIcons.LockOpen,
-                group.IsLocked ? "Sblocca gruppo (permetti di nuovo il trascinamento dei POI)" : "Blocca gruppo (impedisci il trascinamento accidentale dei POI)",
+                group.IsLocked ? Strings.Get("MainWindow_SbloccaGruppoTooltip") : Strings.Get("MainWindow_BloccaGruppoTooltip"),
                 group.IsLocked ? Brushes.Crimson : Brushes.SteelBlue, () =>
             {
                 group.IsLocked = !group.IsLocked;
@@ -1408,12 +1436,12 @@ namespace StradarioApp.UI
             Grid.SetColumn(info, 0);
             row.Children.Add(info);
 
-            var editBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Pencil, "Modifica POI", Brushes.SteelBlue,
+            var editBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Pencil, Strings.Get("MainWindow_ModificaPoiTooltip"), Brushes.SteelBlue,
                 async () => await OnEditPoiItem(group, item));
             Grid.SetColumn(editBtn, 1);
             row.Children.Add(editBtn);
 
-            var delBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, "Elimina POI", Brushes.Crimson,
+            var delBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("MainWindow_EliminaPoiTooltip"), Brushes.Crimson,
                 () => OnDeletePoiItem(group, item));
             Grid.SetColumn(delBtn, 2);
             row.Children.Add(delBtn);
@@ -1489,23 +1517,23 @@ namespace StradarioApp.UI
             Grid.SetColumn(info, 1);
             row.Children.Add(info);
 
-            var addPtsBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, "Aggiungi punti a questo percorso (clic sulla mappa)", Brushes.SteelBlue,
+            var addPtsBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, Strings.Get("MainWindow_AggiungiPuntiPercorsoTooltip"), Brushes.SteelBlue,
                 () => StartAddRoutePointsMode(route));
             Grid.SetColumn(addPtsBtn, 2);
             row.Children.Add(addPtsBtn);
 
-            var editBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Pencil, "Modifica percorso", Brushes.SteelBlue,
+            var editBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Pencil, Strings.Get("MainWindow_ModificaPercorsoTooltip"), Brushes.SteelBlue,
                 async () => await OnEditPercorso(route));
             Grid.SetColumn(editBtn, 3);
             row.Children.Add(editBtn);
 
-            var delBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, "Elimina percorso", Brushes.Crimson,
+            var delBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("MainWindow_EliminaPercorsoTooltip"), Brushes.Crimson,
                 () => OnDeletePercorso(route));
             Grid.SetColumn(delBtn, 4);
             row.Children.Add(delBtn);
 
             var eyeBtn = DialogUi.MakeTreeIconButton(visible ? BootstrapIcons.Eye : BootstrapIcons.EyeSlash,
-                visible ? "Nascondi questo percorso sulla mappa" : "Mostra questo percorso sulla mappa",
+                visible ? Strings.Get("MainWindow_NascondiPercorsoTooltip") : Strings.Get("MainWindow_MostraPercorsoTooltip"),
                 visible ? Brushes.SteelBlue : Brushes.Gray, () =>
             {
                 if (visible) _hiddenPercorsoIds.Add(route.Id);
@@ -1517,7 +1545,7 @@ namespace StradarioApp.UI
             row.Children.Add(eyeBtn);
 
             var lockBtn = DialogUi.MakeTreeIconButton(route.IsLocked ? BootstrapIcons.LockClosed : BootstrapIcons.LockOpen,
-                route.IsLocked ? "Sblocca percorso (permetti di nuovo il trascinamento dei punti)" : "Blocca percorso (impedisci il trascinamento accidentale dei punti)",
+                route.IsLocked ? Strings.Get("MainWindow_SbloccaPercorsoTooltip") : Strings.Get("MainWindow_BloccaPercorsoTooltip"),
                 route.IsLocked ? Brushes.Crimson : Brushes.SteelBlue, () =>
             {
                 route.IsLocked = !route.IsLocked;
@@ -1599,20 +1627,20 @@ namespace StradarioApp.UI
             row.Children.Add(info);
 
             // Pulsante modifica
-            var editBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Pencil, "Modifica etichetta e descrizione", Brushes.SteelBlue,
+            var editBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Pencil, Strings.Get("MainWindow_ModificaEtichettaDescrizioneTooltip"), Brushes.SteelBlue,
                 async () => await EditPage(page));
             Grid.SetColumn(editBtn, 1);
             row.Children.Add(editBtn);
 
             // Pulsante elimina
-            var delBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, "Elimina pagina", Brushes.Crimson,
+            var delBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("MainWindow_EliminaPaginaTooltip"), Brushes.Crimson,
                 () => DeletePage(page.Id));
             Grid.SetColumn(delBtn, 2);
             row.Children.Add(delBtn);
 
             // Pulsante blocca/sblocca (impedisce il trascinamento accidentale)
             var lockBtn = DialogUi.MakeTreeIconButton(page.IsLocked ? BootstrapIcons.LockClosed : BootstrapIcons.LockOpen,
-                page.IsLocked ? "Sblocca pagina (permetti di nuovo il trascinamento)" : "Blocca pagina (impedisci il trascinamento accidentale)",
+                page.IsLocked ? Strings.Get("MainWindow_SbloccaPaginaTooltip") : Strings.Get("MainWindow_BloccaPaginaTooltip"),
                 page.IsLocked ? Brushes.Crimson : Brushes.SteelBlue, () =>
             {
                 page.IsLocked = !page.IsLocked;
@@ -1686,23 +1714,23 @@ namespace StradarioApp.UI
 
             // Overlay modalità aggiungi pagina
             if (_addPageMode)
-                DrawOverlayHint(e.Canvas, "Clicca sulla mappa per posizionare la pagina  (tasto destro = annulla)", h);
+                DrawOverlayHint(e.Canvas, Strings.Get("MainWindow_OverlayAggiungiPagina"), h);
 
             // Overlay modalità disegna percorso
             if (_addRouteMode)
-                DrawOverlayHint(e.Canvas, "Clicca per aggiungere punti al percorso  (shift+clic = fine, tasto destro = annulla ultimo punto, ESC = annulla)", h);
+                DrawOverlayHint(e.Canvas, Strings.Get("MainWindow_OverlayDisegnaPercorso"), h);
 
             // Overlay modalità aggiungi POI
             if (_addPoiMode)
-                DrawOverlayHint(e.Canvas, "Clicca sulla mappa per posizionare il nuovo POI  (tasto destro = annulla)", h);
+                DrawOverlayHint(e.Canvas, Strings.Get("MainWindow_OverlayAggiungiPoi"), h);
 
             // Overlay modalità estendi percorso esistente
             if (_addRoutePointsMode)
-                DrawOverlayHint(e.Canvas, "Clicca per estendere il percorso  (shift+clic = fine, tasto destro = annulla ultimo punto, ESC = annulla)", h);
+                DrawOverlayHint(e.Canvas, Strings.Get("MainWindow_OverlayEstendiPercorso"), h);
 
             // Overlay modalità identifica ("cosa c'è qui")
             if (_identifyMode)
-                DrawOverlayHint(e.Canvas, "Clicca sulla mappa per vedere cosa c'è in quel punto  (tasto destro/ESC = annulla)", h);
+                DrawOverlayHint(e.Canvas, Strings.Get("MainWindow_OverlayIdentifica"), h);
 
             // Overlay modalità righello (misura distanza)
             if (_rulerMode)
@@ -1736,16 +1764,21 @@ namespace StradarioApp.UI
 
                 DrawOverlayHint(e.Canvas,
                     _rulerPoints.Count == 0
-                        ? "Righello: clicca per iniziare a misurare  (tasto destro = annulla, ESC = esci)"
-                        : $"Righello: {distStr} su {_rulerPoints.Count} punti  —  clicca per continuare (tasto destro = annulla ultimo, ESC = esci)",
+                        ? Strings.Get("MainWindow_OverlayRighelloInizio")
+                        : string.Format(Strings.Get("MainWindow_OverlayRighelloProsegui"), distStr, _rulerPoints.Count),
                     h);
             }
 
             // Overlay modalità ricerca POI online: marker candidati cliccabili
             if (_poiSearchMode && _poiSearchResults.Count > 0)
             {
-                // Categoria/testuale (Nominatim/Overpass diretti, sempre
-                // Verified=true): pallino arancione, comportamento storico.
+                // Colore pallino: arancione di default (nessuna valutazione
+                // AI, comportamento storico); quando l'AI ha assegnato una
+                // confidence (vedi PoiSearchService.FilterAndScoreByQueryAsync)
+                // il colore va invece dal rosso (poco affidabile) al verde
+                // (molto affidabile) — l'utente sceglie a colpo d'occhio quali
+                // marker valutare per primi, il dettaglio numerico e il
+                // motivo restano comunque nel tooltip.
                 using var fillPaint   = new SKPaint { Color = new SKColor(255, 140, 0), IsAntialias = true, Style = SKPaintStyle.Fill };
                 using var borderPaint = new SKPaint { Color = SKColors.Black, IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f };
                 using var textPaint   = new SKPaint { Color = SKColors.Black, TextSize = 11, IsAntialias = true };
@@ -1755,6 +1788,7 @@ namespace StradarioApp.UI
                 {
                     var (px, py) = GeoUtils.GeoToPixel(r.Lon, r.Lat, _viewCenterLon, _viewCenterLat, _viewZoom, w, h);
 
+                    fillPaint.Color = r.Confidence.HasValue ? ConfidenceColor(r.Confidence.Value) : new SKColor(255, 140, 0);
                     e.Canvas.DrawCircle((float)px, (float)py, 9, fillPaint);
                     e.Canvas.DrawCircle((float)px, (float)py, 9, borderPaint);
 
@@ -1765,8 +1799,8 @@ namespace StradarioApp.UI
                 }
 
                 DrawOverlayHint(e.Canvas,
-                    $"{_poiSearchResults.Count} risultati: clicca un marker per aggiungerlo (ESC = annulla)" +
-                    (_poiSearchAreaClamped ? " — area troppo ampia: risultati solo intorno al centro della mappa" : ""),
+                    string.Format(Strings.Get("MainWindow_OverlayRisultatiRicerca"), _poiSearchResults.Count) +
+                    (_poiSearchAreaClamped ? Strings.Get("MainWindow_OverlayAreaTroppoAmpia") : ""),
                     h);
 
                 // Tooltip con più dettagli sul marker sotto il cursore
@@ -1776,6 +1810,15 @@ namespace StradarioApp.UI
                     var (hx, hy) = GeoUtils.GeoToPixel(hr.Lon, hr.Lat, _viewCenterLon, _viewCenterLat, _viewZoom, w, h);
                     DrawPoiSearchTooltip(e.Canvas, hr, (float)hx, (float)hy, w, h);
                 }
+            }
+
+            // Tooltip su un POI già piazzato (fuori dalla modalità ricerca,
+            // che ha il suo overlay sopra)
+            if (_hoveredPoi != null)
+            {
+                var (hGroup, hItem) = _hoveredPoi.Value;
+                var (hx, hy) = GeoUtils.GeoToPixel(hItem.Lon, hItem.Lat, _viewCenterLon, _viewCenterLat, _viewZoom, w, h);
+                DrawPlacedPoiTooltip(e.Canvas, hGroup, hItem, (float)hx, (float)hy, w, h);
             }
 
             // Marker "dove sono": pallino blu con alone bianco, stile mappa
@@ -1833,13 +1876,64 @@ namespace StradarioApp.UI
             else
                 lines.AddRange(WrapText(r.DisplayName, 40).Take(2));
 
+            // Details è un'unica stringa "chiave=valore;chiave=valore;..."
+            // (tutti i tag OSM grezzi dell'elemento, vedi
+            // PoiSearchService.BuildOsmTagsString): una riga per ogni ";",
+            // nessun campo prefissato da riconoscere.
+            if (!string.IsNullOrWhiteSpace(r.Details))
+                foreach (string detailLine in r.Details!.Split(';'))
+                    lines.AddRange(WrapText(detailLine.Trim(), 40));
+
+            if (r.Confidence.HasValue)
+            {
+                lines.Add(string.Format(Strings.Get("MainWindow_TooltipAffidabilita"), r.Confidence.Value));
+                if (!string.IsNullOrWhiteSpace(r.Motivo))
+                    lines.AddRange(WrapText(r.Motivo!, 40));
+            }
+
             lines.Add($"{r.Lat:F5}°N, {r.Lon:F5}°E");
 
+            DrawTooltipBox(canvas, lines, markerX, markerY, canvasW, canvasH, new SKColor(255, 140, 0));
+        }
+
+        // Tooltip sul marker di un POI già presente in un gruppo del progetto
+        // (a differenza di DrawPoiSearchTooltip, non un risultato di ricerca
+        // transitorio): nome, descrizione (multi-riga, spezzata su "\n" — sia
+        // testo libero scritto dall'utente sia quella generata dalla ricerca
+        // POI, vedi ConfirmPoiSearchResult) e coordinate. Bordo del colore
+        // del gruppo, come i marker stessi sulla mappa.
+        private void DrawPlacedPoiTooltip(SKCanvas canvas, PoiGroup group, PoiItem item, float markerX, float markerY, float canvasW, float canvasH)
+        {
+            var lines = new List<string> { item.Label };
+            if (!string.IsNullOrWhiteSpace(item.Description))
+                foreach (string descLine in item.Description.Split('\n'))
+                    lines.AddRange(WrapText(descLine.Trim(), 40));
+            lines.Add($"{item.Lat:F5}°N, {item.Lon:F5}°E");
+
+            SKColor borderColor = SKColor.TryParse(group.ColorHex, out var c) ? c : new SKColor(30, 136, 229);
+            DrawTooltipBox(canvas, lines, markerX, markerY, canvasW, canvasH, borderColor);
+        }
+
+        // Gradazione rosso (0, poco affidabile) → verde (100, molto
+        // affidabile) per colorare i marker dei risultati valutati dall'AI
+        // (Result.Confidence, vedi PoiSearchService.FilterAndScoreByQueryAsync).
+        private static SKColor ConfidenceColor(int confidence)
+        {
+            double t = Math.Clamp(confidence, 0, 100) / 100.0;
+            return new SKColor((byte)(255 * (1 - t)), (byte)(180 * t), 0);
+        }
+
+        // Riquadro bianco arrotondato con titolo (prima riga, in grassetto) +
+        // righe di corpo, posizionato accanto al marker evitando di uscire
+        // dal bordo del canvas: geometria condivisa fra tutti i tooltip della
+        // mappa (ricerca POI, POI già piazzati...).
+        private void DrawTooltipBox(SKCanvas canvas, List<string> lines, float markerX, float markerY, float canvasW, float canvasH, SKColor borderColor)
+        {
             using var titleFont = SKTypeface.FromFamilyName(null, SKFontStyleWeight.Bold, SKFontStyleWidth.Normal, SKFontStyleSlant.Upright);
             using var titlePaint = new SKPaint { TextSize = 13, IsAntialias = true, Typeface = titleFont, Color = SKColors.Black };
             using var bodyPaint  = new SKPaint { TextSize = 12, IsAntialias = true, Color = new SKColor(50, 50, 50) };
             using var bgPaint    = new SKPaint { Color = new SKColor(255, 255, 255, 240), IsAntialias = true };
-            using var borderPnt  = new SKPaint { Color = new SKColor(255, 140, 0), IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f };
+            using var borderPnt  = new SKPaint { Color = borderColor, IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f };
 
             const float lineHeight = 16f;
             const float padding    = 8f;
@@ -2211,7 +2305,7 @@ namespace StradarioApp.UI
 
             if (route.Points.Count < 2)
             {
-                ShowStatusMessage("Il percorso deve avere almeno 2 punti. Disegno annullato.", isError: true);
+                ShowStatusMessage(Strings.Get("MainWindow_PercorsoMinimoDuePuntiAnnullato"), isError: true);
                 return;
             }
 
@@ -2269,6 +2363,24 @@ namespace StradarioApp.UI
             else if (_hoveredPoiSearchResult != null)
             {
                 _hoveredPoiSearchResult = null;
+            }
+
+            // Stesso tooltip anche sui POI già piazzati (non solo sui
+            // risultati di ricerca transitori): niente durante il drag di un
+            // POI/vertice, per non sovrapporre un riquadro informativo a
+            // quello che si sta trascinando.
+            if (!_poiSearchMode && !_isDraggingPoi && !_isDraggingRoutePoint)
+            {
+                var hoveredPoi = FindAnyPoiAtPoint(pos, cw, ch);
+                if (!Equals(hoveredPoi, _hoveredPoi))
+                {
+                    _hoveredPoi = hoveredPoi;
+                    _mapCanvas?.InvalidateVisual();
+                }
+            }
+            else if (_hoveredPoi != null)
+            {
+                _hoveredPoi = null;
             }
 
             if (_isDraggingRoutePoint && _draggingRoute != null)
@@ -2492,6 +2604,28 @@ namespace StradarioApp.UI
             return null;
         }
 
+        // Come FindPoiAtPoint, ma per il tooltip al passaggio del mouse (non
+        // per il drag): include anche i gruppi bloccati, il blocco impedisce
+        // solo di spostare accidentalmente il POI, non di vederne i dettagli.
+        private (PoiGroup group, PoiItem item)? FindAnyPoiAtPoint(Point pt, float cw, float ch)
+        {
+            if (!_poiVisible) return null;
+
+            foreach (var group in _project.PoiGroups)
+            {
+                if (_hiddenPoiGroupIds.Contains(group.Id)) continue;
+                foreach (var item in group.Items)
+                {
+                    var (x, y) = GeoUtils.GeoToPixel(item.Lon, item.Lat,
+                        _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
+                    double dx = pt.X - x, dy = pt.Y - y;
+                    if (dx * dx + dy * dy <= PoiHitRadiusPx * PoiHitRadiusPx)
+                        return (group, item);
+                }
+            }
+            return null;
+        }
+
         // Trova il vertice di percorso più vicino al punto pixel (entro
         // RoutePointHitRadiusPx), fra i percorsi attualmente visibili sulla mappa
         private (Percorso route, int index)? FindRoutePointAtPoint(Point pt, float cw, float ch)
@@ -2587,7 +2721,7 @@ namespace StradarioApp.UI
             // vero e proprio (OnMyLocationStarted/Updated/Error la sostituisce
             // comunque prima), non sparire nel mentre lasciando la status bar
             // vuota mentre si è ancora in attesa di una risposta
-            ShowStatusMessage("Localizzazione: avvio il servizio di posizione…", seconds: 60);
+            ShowStatusMessage(Strings.Get("MainWindow_LocalizzazioneAvvio"), seconds: 60);
             _geoLocationSvc.Start();
         }
 
@@ -2601,7 +2735,7 @@ namespace StradarioApp.UI
             Dispatcher.UIThread.Post(() =>
             {
                 if (!_myLocationActive) return;
-                ShowStatusMessage("Localizzazione: servizio di sistema avviato, attendo la posizione…", seconds: 60);
+                ShowStatusMessage(Strings.Get("MainWindow_LocalizzazioneServizioAvviato"), seconds: 60);
             });
         }
 
@@ -2621,7 +2755,7 @@ namespace StradarioApp.UI
                     _myLocationCenteredOnce = true;
                     _viewCenterLon = fix.Lon;
                     _viewCenterLat = fix.Lat;
-                    ShowStatusMessage("Localizzazione riuscita: posizione trovata.");
+                    ShowStatusMessage(Strings.Get("MainWindow_LocalizzazioneRiuscita"));
                 }
 
                 _mapCanvas?.InvalidateVisual();
@@ -2632,7 +2766,7 @@ namespace StradarioApp.UI
         {
             Dispatcher.UIThread.Post(() =>
             {
-                ShowStatusMessage($"Localizzazione non riuscita: {message}", isError: true, seconds: 20);
+                ShowStatusMessage(string.Format(Strings.Get("MainWindow_LocalizzazioneFallita"), message), isError: true, seconds: 20);
                 // Nessun fix ricevuto finora: disattiva il modo, l'utente può
                 // riprovare col bottone. Un errore arrivato DOPO un fix valido
                 // (es. il servizio si interrompe più tardi) lascia invece
@@ -2669,7 +2803,7 @@ namespace StradarioApp.UI
         {
             string trimmed = (name ?? "").Trim();
             string label = trimmed.Length == 0
-                ? "Ricerca"
+                ? Strings.Get("MainWindow_RicercaLabelDefault")
                 : char.ToUpperInvariant(trimmed[0]) + trimmed.Substring(1);
 
             var group = new PoiGroup { Id = _poiSvc.GetNextGroupId(_project.PoiGroups), Name = label };
@@ -2728,9 +2862,9 @@ namespace StradarioApp.UI
             var selected = GetSelectedCategoryFilter();
             _poiSearchTextBox.Watermark = selected?.Key == PoiSearchService.SentinelCategoryKey
                 ? (selected.Value.Value == PoiSearchService.AddressSearchValue
-                    ? "Indirizzo: via, città... (obbligatorio)"
-                    : "Nome città, anche parziale (vuoto = quelle visibili)")
-                : "Testo libero (opzionale)";
+                    ? Strings.Get("MainWindow_IndirizzoWatermark")
+                    : Strings.Get("MainWindow_CittaWatermark"))
+                : Strings.Get("MainWindow_TestoLiberoWatermark");
         }
 
         // Riconosce una preposizione di luogo ("a", "in", "presso", "vicino a")
@@ -2793,6 +2927,16 @@ namespace StradarioApp.UI
             var (key, value, label) = selectedCategory.Value;
             var viewBounds = GetCurrentViewBounds();
 
+            // Ogni nuova ricerca parte "pulita": i marker della ricerca
+            // precedente vanno tolti subito, non solo quando la nuova ricerca
+            // trova a sua volta qualcosa. Altrimenti una nuova query che non
+            // trova nulla lascerebbe in giro (e selezionabili) i risultati
+            // della query precedente, mentre il messaggio dice "non trovato".
+            _poiSearchMode    = false;
+            _poiSearchResults = new List<PoiSearchService.Result>();
+            _poiSearchResultsAreAddresses = false;
+            _mapCanvas?.InvalidateVisual();
+
             _lastPoiSearchQuery = query;
             // Persistita per riproporla come default del combo alla
             // prossima apertura dell'app (vedi BuildToolbar/AppPreferencesService).
@@ -2813,7 +2957,8 @@ namespace StradarioApp.UI
             logWindow.CancelRequested += () => cts.Cancel();
             var dialogTask = logWindow.ShowDialog(this);
 
-            logWindow.Log($"Avvio ricerca \"{label}\"" + (nameFilter != null ? $" con testo \"{nameFilter}\"" : "") + "...");
+            logWindow.Log(string.Format(Strings.Get("MainWindow_LogAvvioRicerca"), label) +
+                (nameFilter != null ? string.Format(Strings.Get("MainWindow_LogConTesto"), nameFilter) : "") + "...");
             try
             {
                 // Le due voci "speciali" in testa al combo (vedi
@@ -2845,8 +2990,8 @@ namespace StradarioApp.UI
                     var (namePart, locationPart) = SplitNameAndLocation(nameFilter);
                     if (locationPart != null)
                     {
-                        logWindow.Log($"Rilevato un luogo nel testo: geocodifico \"{locationPart}\"...");
-                        ShowStatusMessage($"Cerco \"{locationPart}\" sulla mappa…", seconds: 15);
+                        logWindow.Log(string.Format(Strings.Get("MainWindow_LogGeocodificaLuogo"), locationPart));
+                        ShowStatusMessage(string.Format(Strings.Get("MainWindow_CercoSullaMappa"), locationPart), seconds: 15);
                         GeoRect? geocoded = null;
                         try { geocoded = await _poiSearchSvc.GeocodePlaceAsync(locationPart, logWindow.Log, cts.Token); }
                         catch (OperationCanceledException) { throw; }
@@ -2857,7 +3002,7 @@ namespace StradarioApp.UI
                             // visualizzata (vedi ramo "else" sotto), quindi solo Log, non
                             // LogError (che terrebbe la finestra aperta anche se la ricerca
                             // poi va comunque a buon fine).
-                            logWindow.Log($"Geocodifica fallita: {ex.Message}");
+                            logWindow.Log(string.Format(Strings.Get("MainWindow_LogGeocodificaFallita"), ex.Message));
                         }
 
                         if (geocoded != null)
@@ -2869,12 +3014,12 @@ namespace StradarioApp.UI
                             // resterebbero comunque fuori dallo schermo
                             _viewCenterLon = searchBounds.CenterLon;
                             _viewCenterLat = searchBounds.CenterLat;
-                            logWindow.Log($"Luogo trovato: ricentro la ricerca lì.");
+                            logWindow.Log(Strings.Get("MainWindow_LogLuogoTrovato"));
                         }
                         else
                         {
-                            logWindow.Log($"Luogo \"{locationPart}\" non trovato: cerco \"{query}\" nel nome, nell'area visualizzata.");
-                            ShowStatusMessage($"Luogo \"{locationPart}\" non trovato: cerco \"{query}\" nel nome, nell'area visualizzata.", isError: true, seconds: 6);
+                            logWindow.Log(string.Format(Strings.Get("MainWindow_LuogoNonTrovato"), locationPart, query));
+                            ShowStatusMessage(string.Format(Strings.Get("MainWindow_LuogoNonTrovato"), locationPart, query), isError: true, seconds: 6);
                         }
                     }
                 }
@@ -2884,8 +3029,8 @@ namespace StradarioApp.UI
             }
             catch (OperationCanceledException)
             {
-                logWindow.Log("Ricerca annullata dall'utente.");
-                ShowStatusMessage("Ricerca annullata.", seconds: 4);
+                logWindow.Log(Strings.Get("MainWindow_LogRicercaAnnullataUtente"));
+                ShowStatusMessage(Strings.Get("MainWindow_RicercaAnnullata"), seconds: 4);
             }
             finally
             {
@@ -2917,7 +3062,12 @@ namespace StradarioApp.UI
         // categoria si sceglie SOLO lì, mai da testo libero riconosciuto
         // automaticamente (nessuna ambiguità: se l'utente non la sceglie dal
         // combo, il testo va sempre alla ricerca in linguaggio naturale/
-        // Nominatim, mai qui).
+        // Nominatim, mai qui). Flusso lineare: 1) Overpass (SEMPRE l'elenco
+        // completo della categoria nell'area, nessun filtro sul nome lato
+        // Overpass); 2) se c'è del testo digitato, lo si usa per raffinare —
+        // con l'AI (se è configurata una chiave Groq: sceglie e valuta i
+        // candidati, vedi FilterAndScoreByQueryAsync) o, altrimenti, con un
+        // semplice filtro letterale sul nome (sottostringa, case-insensitive).
         private async Task RunCategorySearchAsync(string key, string value, string label, GeoRect viewBounds,
             IEnumerable<string>? subFilters, string? nameFilter = null,
             PoiSearchLogWindow? logWindow = null, CancellationToken ct = default)
@@ -2946,13 +3096,13 @@ namespace StradarioApp.UI
                     MinLat = viewBounds.CenterLat - half,
                     MaxLat = viewBounds.CenterLat + half,
                 };
-                log($"Area visualizzata troppo ampia ({origWidth:F1}° x {origHeight:F1}°): restringo la ricerca a {MaxCategorySearchDegrees}°x{MaxCategorySearchDegrees}° intorno al centro della mappa.");
+                log(string.Format(Strings.Get("MainWindow_LogAreaTroppoAmpiaRestringo"), origWidth.ToString("F1"), origHeight.ToString("F1"), MaxCategorySearchDegrees));
             }
 
-            string displayLabel = string.IsNullOrWhiteSpace(nameFilter) ? label : $"{label} \"{nameFilter}\"";
+            string displayLabel = string.IsNullOrWhiteSpace(nameFilter) ? label : string.Format(Strings.Get("MainWindow_LabelConTestoTraVirgolette"), label, nameFilter);
             ShowStatusMessage(areaClamped
-                ? $"Area troppo ampia: cerco {displayLabel} solo intorno al centro della mappa..."
-                : $"Cerco {displayLabel} nella zona...", seconds: 3);
+                ? string.Format(Strings.Get("MainWindow_AreaTroppoAmpiaCercoIntorno"), displayLabel)
+                : string.Format(Strings.Get("MainWindow_CercoNellaZona"), displayLabel), seconds: 3);
 
             var allSubFilters = (subFilters ?? Enumerable.Empty<string>())
                 .Concat(PoiSearchService.GetCategoryExcludeFilters(key, value));
@@ -2965,74 +3115,78 @@ namespace StradarioApp.UI
                 // in una città con molte fermate di metro taggate allo stesso
                 // modo, queste riempiono da sole il limite di risultati e le
                 // stazioni ferroviarie vere restano fuori — vedi
-                // PoiSearchService.CategoryExcludeFilters)
-                log($"Cerco \"{label}\" ({key}={value}) nell'area...");
-                results = await _poiSearchSvc.SearchCategoryAsync(key, value, viewBounds, allSubFilters, nameFilter, log, ct);
+                // PoiSearchService.CategoryExcludeFilters). Sempre l'elenco
+                // completo della categoria: nessun filtro sul nome qui.
+                log(string.Format(Strings.Get("MainWindow_LogCercoCategoriaArea"), label, key, value));
+                results = await _poiSearchSvc.SearchCategoryAsync(key, value, viewBounds, allSubFilters, log, ct);
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
-                logWindow?.LogError($"Errore ricerca per categoria (Overpass): {ex.Message}");
+                logWindow?.LogError(string.Format(Strings.Get("MainWindow_ErroreRicercaCategoria"), ex.Message));
                 return;
             }
 
+            // Se SearchCategoryAsync ha dovuto tagliare (più di CategoryResultCap
+            // elementi trovati su Overpass), l'elenco non è completo: lo si
+            // segnala sempre, non solo quando il testo digitato filtra ancora
+            // di più (vedi PoiSearchService.CategoryResultCap).
             bool possiblyTruncated = results.Count >= PoiSearchService.CategoryResultCap;
 
-            // Il filtro sul nome è una corrispondenza letterale (regex su
-            // "name"): per un vincolo che non è un nome ma una descrizione
-            // più ampia (es. "della linea firenze bologna" — nessuna
-            // stazione si chiama letteralmente così) non trova nulla. In
-            // quel caso, se è configurata una chiave Groq, si riprova SENZA
-            // filtro sul nome (tutti i {label} già presenti nell'area
-            // visualizzata) e si lascia scegliere all'AI quali sono
-            // pertinenti alla richiesta — sempre dentro l'elenco chiuso di
-            // luoghi OSM reali già trovati qui, MAI luoghi proposti dall'AI
-            // di sua iniziativa (vedi PoiSearchService.FilterCandidatesByQueryAsync).
-            // Nessun pan/zoom: resta l'area già visualizzata dall'utente.
-            bool usedAiFallback = false;
-            if (results.Count == 0 && !string.IsNullOrWhiteSpace(nameFilter) && !string.IsNullOrWhiteSpace(_project.Settings.GroqApiKey))
+            bool usedAi = false;
+            if (results.Count > 0 && !string.IsNullOrWhiteSpace(nameFilter))
             {
-                log($"Nessuna corrispondenza diretta per \"{nameFilter}\": ricarico tutti i {label} della zona per farli valutare dall'AI...");
-                ShowStatusMessage($"Nessuna corrispondenza diretta per \"{nameFilter}\": provo con l'AI su tutti i {label} della zona…", seconds: 15);
-                List<PoiSearchService.Result> allCandidates;
-                try
-                {
-                    allCandidates = await _poiSearchSvc.SearchCategoryAsync(key, value, viewBounds, allSubFilters, nameFilter: null, onProgress: log, ct: ct);
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex)
-                {
-                    logWindow?.LogError($"Errore ricerca per categoria (Overpass): {ex.Message}");
-                    return;
-                }
-                possiblyTruncated = allCandidates.Count >= PoiSearchService.CategoryResultCap;
-
-                if (allCandidates.Count > 0)
+                bool aiAvailable = !string.IsNullOrWhiteSpace(_project.Settings.GroqApiKey);
+                if (aiAvailable)
                 {
                     try
                     {
-                        results = await _poiSearchSvc.FilterCandidatesByQueryAsync(_project.Settings.GroqApiKey, nameFilter, allCandidates, log, ct);
-                        usedAiFallback = true;
+                        results = await _poiSearchSvc.FilterAndScoreByQueryAsync(
+                            _project.Settings.GroqApiKey, nameFilter, results,
+                            viewBounds, viewBounds.CenterLon, viewBounds.CenterLat, log, ct);
+                        usedAi = true;
                     }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex)
                     {
-                        logWindow?.LogError($"Selezione AI non riuscita: {ex.Message}");
-                        return;
+                        // Non fatale: una chiave Groq scaduta/non valida o un
+                        // errore di rete verso l'AI non deve lasciare l'utente
+                        // a mani vuote — si ripiega sullo stesso filtro
+                        // letterale usato quando l'AI non è configurata
+                        // affatto (vedi ramo "else" sotto), invece di
+                        // interrompere la ricerca con zero risultati. Loggato
+                        // come errore (resta visibile, rosso) ma la ricerca
+                        // prosegue.
+                        logWindow?.LogError(string.Format(Strings.Get("MainWindow_SelezioneAiNonRiuscita"), ex.Message));
+                        aiAvailable = false;
                     }
+                }
+
+                if (!aiAvailable)
+                {
+                    // Nessuna chiave AI configurata (o chiamata AI fallita,
+                    // vedi sopra): il testo digitato filtra comunque, ma con
+                    // un semplice confronto sul nome (sottostringa,
+                    // case-insensitive) invece dell'AI — meno capace di
+                    // richieste articolate ("della linea Firenze-Bologna"),
+                    // ma sempre meglio di ignorare il testo o di azzerare i
+                    // risultati.
+                    log(string.Format(Strings.Get("MainWindow_LogFiltroTestoLetterale"), nameFilter));
+                    results = results
+                        .Where(r => r.DisplayName.Contains(nameFilter, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
                 }
             }
 
             if (results.Count == 0)
             {
-                log($"Nessun risultato per \"{displayLabel}\".");
-                ShowStatusMessage(areaClamped
-                    ? $"Nessun risultato per \"{displayLabel}\" intorno al centro della mappa (area troppo ampia, ricerca ristretta): prova a spostare/zoomare la vista."
-                    : $"Nessun risultato per \"{displayLabel}\" nella zona visualizzata.", isError: true);
+                logWindow?.LogError(areaClamped
+                    ? string.Format(Strings.Get("MainWindow_NessunRisultatoAreaRistretta"), displayLabel)
+                    : string.Format(Strings.Get("MainWindow_NessunRisultatoZonaVisualizzata"), displayLabel));
                 return;
             }
 
-            log($"{results.Count} risultati trovati: li mostro sulla mappa.");
+            log(string.Format(Strings.Get("MainWindow_LogRisultatiTrovatiMostro"), results.Count));
             CancelAllAddModes();
             _poiSearchMode         = true;
             _poiSearchResults      = results;
@@ -3042,12 +3196,12 @@ namespace StradarioApp.UI
             // Se il conteggio tocca il limite della query, l'elenco
             // potrebbe non essere completo: l'utente deve saperlo invece
             // di credere che siano davvero tutti (vedi PoiSearchService.CategoryResultCap)
-            ShowStatusMessage(
-                $"{results.Count} risultati per \"{displayLabel}\"" + (usedAiFallback ? " (selezionati dall'AI)" : "") +
-                ": clicca i marker sulla mappa per aggiungerli, uno o più di uno (ESC = esci)." +
-                (possiblyTruncated ? " (potrebbero essercene altri: prova a restringere l'area)" : "") +
-                (areaClamped ? " (area visualizzata troppo ampia: mostrati solo i risultati intorno al centro)" : ""),
-                seconds: 8);
+            string resultMessage = string.Format(Strings.Get("MainWindow_ResRisultatiPer"), results.Count, displayLabel);
+            if (usedAi)             resultMessage += Strings.Get("MainWindow_ResSelezionatiAI");
+            resultMessage += Strings.Get("MainWindow_ResClickMarker");
+            if (possiblyTruncated)  resultMessage += Strings.Get("MainWindow_ResPossiblyTruncated");
+            if (areaClamped)        resultMessage += Strings.Get("MainWindow_ResAreaClamped");
+            ShowStatusMessage(resultMessage, seconds: 8);
         }
 
         // Voce "Ricerca un indirizzo" del combo categoria (sentinella, vedi
@@ -3063,13 +3217,12 @@ namespace StradarioApp.UI
 
             if (string.IsNullOrWhiteSpace(query))
             {
-                logWindow.Log("Nessun indirizzo digitato.");
-                ShowStatusMessage("Scrivi un indirizzo (via, città) nel campo di testo prima di cercare.", isError: true);
+                logWindow.LogError(Strings.Get("MainWindow_ScriviIndirizzoPrimaCercare"));
                 return;
             }
 
-            logWindow.Log($"Cerco l'indirizzo \"{query}\"...");
-            ShowStatusMessage($"Cerco l'indirizzo \"{query}\"...", seconds: 3);
+            logWindow.Log(string.Format(Strings.Get("MainWindow_LogCercoIndirizzo"), query));
+            ShowStatusMessage(string.Format(Strings.Get("MainWindow_LogCercoIndirizzo"), query), seconds: 3);
 
             List<PoiSearchService.Result> results;
             try
@@ -3079,18 +3232,17 @@ namespace StradarioApp.UI
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
-                logWindow.LogError($"Errore ricerca indirizzo: {ex.Message}");
+                logWindow.LogError(string.Format(Strings.Get("MainWindow_ErroreRicercaIndirizzo"), ex.Message));
                 return;
             }
 
             if (results.Count == 0)
             {
-                logWindow.Log($"Nessun indirizzo trovato per \"{query}\".");
-                ShowStatusMessage($"Nessun indirizzo trovato per \"{query}\".", isError: true);
+                logWindow.LogError(string.Format(Strings.Get("MainWindow_NessunIndirizzoTrovatoPer"), query));
                 return;
             }
 
-            logWindow.Log($"{results.Count} indirizzi trovati: li mostro sulla mappa.");
+            logWindow.Log(string.Format(Strings.Get("MainWindow_LogIndirizziTrovatiMostro"), results.Count));
             CancelAllAddModes();
             // Ricentra la mappa sul risultato più rilevante (il primo,
             // l'ordine di Nominatim è per pertinenza — non sulla media di
@@ -3105,11 +3257,12 @@ namespace StradarioApp.UI
             _viewCenterLat = results[0].Lat;
             _poiSearchMode        = true;
             _poiSearchResults     = results;
+            _poiSearchResultsAreAddresses = true;
             _poiSearchQueryLabel  = $"indirizzo \"{query}\"";
             _poiSearchAreaClamped = false;
             _mapCanvas?.InvalidateVisual();
             ShowStatusMessage(
-                $"{results.Count} risultati per l'indirizzo \"{query}\": clicca i marker sulla mappa per aggiungerli, uno o più di uno (ESC = esci).",
+                string.Format(Strings.Get("MainWindow_RisultatiPerIndirizzo"), results.Count, query),
                 seconds: 8);
         }
 
@@ -3136,42 +3289,41 @@ namespace StradarioApp.UI
 
             if (inViewMode)
             {
-                logWindow.Log("Nessun nome digitato: cerco le città più popolose nell'area visualizzata...");
-                ShowStatusMessage("Cerco le città visibili nell'area...", seconds: 3);
+                logWindow.Log(Strings.Get("MainWindow_LogNessunNomeCercoPopolose"));
+                ShowStatusMessage(Strings.Get("MainWindow_CercoCittaVisibili"), seconds: 3);
 
                 var cities = await Task.Run(() => CityDatabase.FindTopCities(viewBounds, CitiesInViewMax), ct);
                 ct.ThrowIfCancellationRequested();
 
                 if (cities.Count == 0)
                 {
-                    logWindow.Log($"Nessuna città trovata nell'area visualizzata ({CityDatabase.LoadStatus}).");
-                    ShowStatusMessage("Nessuna città trovata nell'area visualizzata.", isError: true);
+                    logWindow.LogError(string.Format(Strings.Get("MainWindow_NessunaCittaTrovataArea"), CityDatabase.LoadStatus));
                     return;
                 }
 
                 results = cities.Select(c => new PoiSearchService.Result(
-                    c.Name, c.Lon, c.Lat, "città", null, $"Popolazione: {c.Population:N0}")).ToList();
+                    c.Name, c.Lon, c.Lat, Strings.Get("MainWindow_CategoriaCitta"), null, string.Format(Strings.Get("MainWindow_Popolazione"), c.Population.ToString("N0")))).ToList();
             }
             else
             {
-                logWindow.Log($"Cerco città il cui nome contiene \"{query}\" in cities500.csv...");
-                ShowStatusMessage($"Cerco città \"{query}\"...", seconds: 3);
+                logWindow.Log(string.Format(Strings.Get("MainWindow_LogCercoCittaContiene"), query));
+                ShowStatusMessage(string.Format(Strings.Get("MainWindow_CercoCitta"), query), seconds: 3);
 
                 var cities = await Task.Run(() => CityDatabase.SearchByName(query), ct);
                 ct.ThrowIfCancellationRequested();
 
                 if (cities.Count == 0)
                 {
-                    logWindow.Log($"Nessuna città trovata per \"{query}\" ({CityDatabase.LoadStatus}).");
-                    ShowStatusMessage($"Nessuna città trovata per \"{query}\".", isError: true);
+                    int citiesInView = CityDatabase.CountInBounds(viewBounds);
+                    logWindow.LogError(string.Format(Strings.Get("MainWindow_NessunaCittaTrovataPer"), query, citiesInView));
                     return;
                 }
 
                 results = cities.Select(c => new PoiSearchService.Result(
-                    c.Name, c.Lon, c.Lat, "città", null, $"Popolazione: {c.Population:N0}")).ToList();
+                    c.Name, c.Lon, c.Lat, Strings.Get("MainWindow_CategoriaCitta"), null, string.Format(Strings.Get("MainWindow_Popolazione"), c.Population.ToString("N0")))).ToList();
             }
 
-            logWindow.Log($"{results.Count} città trovate: le mostro sulla mappa.");
+            logWindow.Log(string.Format(Strings.Get("MainWindow_LogCittaTrovateMostro"), results.Count));
             CancelAllAddModes();
             if (!inViewMode)
             {
@@ -3185,14 +3337,14 @@ namespace StradarioApp.UI
             }
             _poiSearchMode        = true;
             _poiSearchResults     = results;
-            _poiSearchQueryLabel  = inViewMode ? "città nell'area visualizzata" : $"città \"{query}\"";
+            _poiSearchQueryLabel  = inViewMode ? Strings.Get("MainWindow_CittaNellAreaVisualizzata") : string.Format(Strings.Get("MainWindow_CittaTraVirgolette"), query);
             _poiSearchAreaClamped = false;
             _mapCanvas?.InvalidateVisual();
             ShowStatusMessage(
                 (inViewMode
-                    ? $"{results.Count} città nell'area visualizzata"
-                    : $"{results.Count} città trovate per \"{query}\"") +
-                ": clicca i marker sulla mappa per aggiungerli, uno o più di uno (ESC = esci).",
+                    ? string.Format(Strings.Get("MainWindow_CittaNellAreaVisualizzataConteggio"), results.Count)
+                    : string.Format(Strings.Get("MainWindow_CittaTrovatePerConteggio"), results.Count, query)) +
+                Strings.Get("MainWindow_ClicMarkerAggiungerli"),
                 seconds: 8);
         }
 
@@ -3203,27 +3355,27 @@ namespace StradarioApp.UI
         // qui il gruppo si crea solo alla conferma, non prima)
         private async Task OnReverseGeocodeAsync(double lon, double lat)
         {
-            ShowStatusMessage("Ricerca di cosa si trova in questo punto...", seconds: 3);
+            ShowStatusMessage(Strings.Get("MainWindow_RicercaCosaSiTrova"), seconds: 3);
             try
             {
                 var result = await _poiSearchSvc.ReverseAsync(lon, lat);
                 if (result == null)
                 {
-                    ShowStatusMessage("Nessuna informazione trovata per questo punto.", isError: true);
+                    ShowStatusMessage(Strings.Get("MainWindow_NessunaInfoTrovataPunto"), isError: true);
                     return;
                 }
 
                 CancelAllAddModes();
                 _poiSearchMode       = true;
                 _poiSearchResults    = new List<PoiSearchService.Result> { result };
-                _poiSearchQueryLabel = "Ricerca GPS";
+                _poiSearchQueryLabel = Strings.Get("MainWindow_RicercaGps");
                 _poiSearchAreaClamped = false;
                 _mapCanvas?.InvalidateVisual();
-                ShowStatusMessage($"Trovato: {SanitizeSearchLabel(result.DisplayName)}. Clicca il marker per aggiungerlo (ESC = esci).", seconds: 8);
+                ShowStatusMessage(string.Format(Strings.Get("MainWindow_TrovatoClicMarker"), SanitizeSearchLabel(result.DisplayName)), seconds: 8);
             }
             catch (Exception ex)
             {
-                ShowStatusMessage($"Errore ricerca inversa: {ex.Message}", isError: true);
+                ShowStatusMessage(string.Format(Strings.Get("MainWindow_ErroreRicercaInversa"), ex.Message), isError: true);
             }
         }
 
@@ -3237,7 +3389,7 @@ namespace StradarioApp.UI
             var flyout = new MenuFlyout();
             if (recents.Count == 0)
             {
-                flyout.Items.Add(new MenuItem { Header = "Nessun file recente", IsEnabled = false });
+                flyout.Items.Add(new MenuItem { Header = Strings.Get("MainWindow_NessunFileRecente"), IsEnabled = false });
             }
             else
             {
@@ -3307,8 +3459,8 @@ namespace StradarioApp.UI
             int count = _multiSelectedPageIds.Count;
             if (count == 0) return;
 
-            bool confirmed = await AskYesNo("Elimina pagine",
-                $"Eliminare le {count} pagine selezionate?");
+            bool confirmed = await AskYesNo(Strings.Get("MainWindow_EliminaPagineTitolo"),
+                string.Format(Strings.Get("MainWindow_EliminarePagineSelezionate"), count));
             if (!confirmed) return;
 
             // Cattura pagine + indice originale (ordinati) per poterle reinserire
@@ -3333,7 +3485,7 @@ namespace StradarioApp.UI
                 redo: () => _project.Pages.RemoveAll(p => removed.Any(t => t.page == p)));
             RefreshNavigationTree();
             _mapCanvas?.InvalidateVisual();
-            ShowStatusMessage($"Eliminate {count} pagine.");
+            ShowStatusMessage(string.Format(Strings.Get("MainWindow_EliminatePagine"), count));
         }
 
         // Dialog di conferma generico Sì/Annulla (per operazioni distruttive
@@ -3362,8 +3514,8 @@ namespace StradarioApp.UI
                             Spacing = 10,
                             Children =
                             {
-                                DialogUi.MakeDialogButton("Sì", primary: true),
-                                DialogUi.MakeDialogButton("Annulla")
+                                DialogUi.MakeDialogButton(Strings.Get("MainWindow_Si"), primary: true),
+                                DialogUi.MakeDialogButton(Strings.Get("MainWindow_Annulla"))
                             }
                         }
                     }
@@ -3419,8 +3571,8 @@ namespace StradarioApp.UI
                             Spacing = 10,
                             Children =
                             {
-                                DialogUi.MakeDialogButton("Sposta", primary: true),
-                                DialogUi.MakeDialogButton("Annulla")
+                                DialogUi.MakeDialogButton(Strings.Get("MainWindow_Sposta"), primary: true),
+                                DialogUi.MakeDialogButton(Strings.Get("MainWindow_Annulla"))
                             }
                         }
                     }
@@ -3445,12 +3597,12 @@ namespace StradarioApp.UI
             var candidates = _project.PoiGroups.ToList();
             if (candidates.Count < 2)
             {
-                ShowStatusMessage("Serve almeno un altro gruppo POI per spostare i punti selezionati.", isError: true);
+                ShowStatusMessage(Strings.Get("MainWindow_ServeAltroGruppoPoi"), isError: true);
                 return;
             }
 
-            var target = await ShowGroupPickerDialogAsync("Sposta POI",
-                $"Sposta i {_multiSelectedPoiKeys.Count} POI selezionati nel gruppo:", candidates);
+            var target = await ShowGroupPickerDialogAsync(Strings.Get("MainWindow_SpostaPoiTitolo"),
+                string.Format(Strings.Get("MainWindow_SpostaPoiSelezionatiMessaggio"), _multiSelectedPoiKeys.Count), candidates);
             if (target == null) return;
 
             int moved = 0;
@@ -3474,7 +3626,7 @@ namespace StradarioApp.UI
             _isDirty = true;
             RefreshNavigationTree();
             _mapCanvas?.InvalidateVisual();
-            ShowStatusMessage($"Spostati {moved} POI nel gruppo \"{target.Name}\".");
+            ShowStatusMessage(string.Format(Strings.Get("MainWindow_SpostatiPoiNelGruppo"), moved, target.Name));
         }
 
         // Apre EditPageWindow per modificare etichetta, descrizione e coordinate
@@ -3568,7 +3720,7 @@ namespace StradarioApp.UI
             }
 
             // Crea nuovo progetto vuoto centrato su Roma
-            _project         = new StradarioProject { ProjectName = "Nuovo Stradario" };
+            _project         = new StradarioProject { ProjectName = Strings.Get("MainWindow_NuovoStradarioProjectName") };
             _currentFilePath = null;
             _isDirty         = false;
             _selectedPageId  = null;
@@ -3592,13 +3744,13 @@ namespace StradarioApp.UI
         {
             var files = await StorageProvider.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions
             {
-                Title          = "Apri progetto stradario",
+                Title          = Strings.Get("MainWindow_ApriProgettoTitolo"),
                 AllowMultiple  = false,
                 FileTypeFilter = new[]
                 {
-                    new Avalonia.Platform.Storage.FilePickerFileType("Stradario")
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroStradario"))
                         { Patterns = new[] { "*.stradario" } },
-                    new Avalonia.Platform.Storage.FilePickerFileType("Tutti i file")
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroTuttiFile"))
                         { Patterns = new[] { "*.*" } }
                 }
             });
@@ -3644,7 +3796,7 @@ namespace StradarioApp.UI
             }
             catch (Exception ex)
             {
-                await ShowError($"Errore apertura file:\n{ex.Message}");
+                await ShowError(string.Format(Strings.Get("MainWindow_ErroreAperturaFile"), ex.Message));
             }
         }
 
@@ -3662,12 +3814,12 @@ namespace StradarioApp.UI
         {
             var file = await StorageProvider.SaveFilePickerAsync(new Avalonia.Platform.Storage.FilePickerSaveOptions
             {
-                Title                  = "Salva progetto stradario",
+                Title                  = Strings.Get("MainWindow_SalvaProgettoTitolo"),
                 DefaultExtension       = "stradario",
                 SuggestedFileName      = _project.ProjectName,
                 FileTypeChoices = new[]
                 {
-                    new Avalonia.Platform.Storage.FilePickerFileType("Stradario")
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroStradario"))
                         { Patterns = new[] { "*.stradario" } }
                 }
             });
@@ -3694,7 +3846,7 @@ namespace StradarioApp.UI
             }
             catch (Exception ex)
             {
-                await ShowError($"Errore salvataggio:\n{ex.Message}");
+                await ShowError(string.Format(Strings.Get("MainWindow_ErroreSalvataggio"), ex.Message));
             }
         }
 
@@ -3704,7 +3856,7 @@ namespace StradarioApp.UI
             bool save = false;
             var dlg = new Window
             {
-                Title   = "Modifiche non salvate",
+                Title   = Strings.Get("MainWindow_ModificheNonSalvateTitolo"),
                 Width   = 420,
                 Height  = 170,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
@@ -3716,7 +3868,7 @@ namespace StradarioApp.UI
                     {
                         new TextBlock
                         {
-                            Text = "Il progetto ha modifiche non salvate.\nVuoi salvarlo prima di continuare?",
+                            Text = Strings.Get("MainWindow_ProgettoHaModifiche"),
                             TextWrapping = TextWrapping.Wrap
                         },
                         new StackPanel
@@ -3726,9 +3878,9 @@ namespace StradarioApp.UI
                             Spacing = 10,
                             Children =
                             {
-                                DialogUi.MakeDialogButton("💾 Salva", primary: true),
-                                DialogUi.MakeDialogButton("🗑 Scarta"),
-                                DialogUi.MakeDialogButton("Annulla")
+                                DialogUi.MakeDialogButton(Strings.Get("MainWindow_SalvaEmoji"), primary: true),
+                                DialogUi.MakeDialogButton(Strings.Get("MainWindow_ScartaEmoji")),
+                                DialogUi.MakeDialogButton(Strings.Get("MainWindow_Annulla"))
                             }
                         }
                     }
@@ -3754,13 +3906,13 @@ namespace StradarioApp.UI
         {
             if (_project.Pages.Count == 0)
             {
-                await ShowError("Nessuna pagina definita. Aggiungi almeno una pagina prima di generare il PDF.");
+                await ShowError(Strings.Get("MainWindow_NessunaPaginaDefinita"));
                 return;
             }
 
             string tempPath = Path.Combine(Path.GetTempPath(), $"stradario_preview_{Guid.NewGuid():N}.pdf");
 
-            var progressWin = new ProgressWindow("Generazione PDF in corso...");
+            var progressWin = new ProgressWindow(Strings.Get("MainWindow_GenerazionePdfInCorso"));
             progressWin.Show(this);
 
             var generator = new PdfGenerator();
@@ -3774,7 +3926,7 @@ namespace StradarioApp.UI
             catch (Exception ex)
             {
                 progressWin.Close();
-                await ShowError($"Errore generazione PDF:\n{ex.Message}");
+                await ShowError(string.Format(Strings.Get("MainWindow_ErroreGenerazionePdf"), ex.Message));
                 return;
             }
 
@@ -3796,7 +3948,7 @@ namespace StradarioApp.UI
 
             var dlg = new Window
             {
-                Title  = "Anteprima PDF",
+                Title  = Strings.Get("MainWindow_AnteprimaPdfTitolo"),
                 Width  = 440,
                 Height = 180,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
@@ -3809,7 +3961,7 @@ namespace StradarioApp.UI
                     {
                         new TextBlock
                         {
-                            Text = "Il PDF è stato generato e aperto nel visualizzatore di sistema per l'anteprima.\nVuoi salvarlo in una posizione definitiva?",
+                            Text = Strings.Get("MainWindow_PdfGeneratoMessaggio"),
                             TextWrapping = TextWrapping.Wrap
                         },
                         new StackPanel
@@ -3819,8 +3971,8 @@ namespace StradarioApp.UI
                             Spacing = 10,
                             Children =
                             {
-                                DialogUi.MakeDialogButton("💾 Salva", primary: true),
-                                DialogUi.MakeDialogButton("✕ Chiudi")
+                                DialogUi.MakeDialogButton(Strings.Get("MainWindow_SalvaEmoji"), primary: true),
+                                DialogUi.MakeDialogButton(Strings.Get("MainWindow_ChiudiEmoji"))
                             }
                         }
                     }
@@ -3837,12 +3989,12 @@ namespace StradarioApp.UI
             {
                 var file = await StorageProvider.SaveFilePickerAsync(new Avalonia.Platform.Storage.FilePickerSaveOptions
                 {
-                    Title             = "Salva PDF stradario",
+                    Title             = Strings.Get("MainWindow_SalvaPdfTitolo"),
                     DefaultExtension  = "pdf",
                     SuggestedFileName = _project.ProjectName,
                     FileTypeChoices   = new[]
                     {
-                        new Avalonia.Platform.Storage.FilePickerFileType("PDF")
+                        new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroPdf"))
                             { Patterns = new[] { "*.pdf" } }
                     }
                 });
@@ -3852,11 +4004,11 @@ namespace StradarioApp.UI
                     try
                     {
                         File.Copy(tempPath, file.Path.LocalPath, overwrite: true);
-                        ShowStatusMessage($"PDF salvato: {file.Path.LocalPath}");
+                        ShowStatusMessage(string.Format(Strings.Get("MainWindow_PdfSalvato"), file.Path.LocalPath));
                     }
                     catch (Exception ex)
                     {
-                        await ShowError($"Errore salvataggio:\n{ex.Message}");
+                        await ShowError(string.Format(Strings.Get("MainWindow_ErroreSalvataggio"), ex.Message));
                     }
                 }
             }
@@ -3977,11 +4129,25 @@ namespace StradarioApp.UI
             bool groupWasCreated = !existingGroupIds.Contains(target.Id);
 
             string label = SanitizeSearchLabel(result.DisplayName);
+            // Descrizione su più righe: nome, poi (per città) la popolazione
+            // in Address, poi tutti i tag OSM grezzi di Details (uno per
+            // riga, spezzati a ogni ";" — vedi PoiSearchService.
+            // BuildOsmTagsString) quando la ricerca li ha trovati. Non per la
+            // ricerca indirizzo: lì DisplayName è già l'indirizzo completo di
+            // Nominatim, riaggiungere Address ripeterebbe la stessa
+            // informazione due volte.
+            var descriptionLines = new List<string> { result.DisplayName };
+            if (!_poiSearchResultsAreAddresses && !string.IsNullOrWhiteSpace(result.Address))
+                descriptionLines.Add(result.Address!);
+            if (!string.IsNullOrWhiteSpace(result.Details))
+                descriptionLines.AddRange(result.Details!.Split(';').Select(s => s.Trim()));
+            string description = string.Join("\n", descriptionLines);
+
             var item = new PoiItem
             {
                 Id          = _poiSvc.GetNextItemId(target),
                 Label       = label,
-                Description = result.DisplayName,
+                Description = description,
                 Lon         = result.Lon,
                 Lat         = result.Lat
             };
@@ -4014,8 +4180,8 @@ namespace StradarioApp.UI
             _suppressPoiSearchAutoExit = false;
 
             _mapCanvas?.InvalidateVisual();
-            ShowStatusMessage($"Aggiunto \"{label}\" al gruppo \"{target.Name}\"." +
-                (moreLeft ? $" Altri {_poiSearchResults.Count} risultati sulla mappa: continua a cliccarli, ESC per uscire." : ""));
+            ShowStatusMessage(string.Format(Strings.Get("MainWindow_AggiuntoAlGruppo"), label, target.Name) +
+                (moreLeft ? string.Format(Strings.Get("MainWindow_AltriRisultatiSullaMappa"), _poiSearchResults.Count) : ""));
         }
 
         // Estrae dal display_name di Nominatim (es. "Macelleria Rossi, Via Roma
@@ -4024,7 +4190,7 @@ namespace StradarioApp.UI
         {
             string first = (displayName ?? "").Split(',')[0].Trim();
             if (first.Length > 40) first = first.Substring(0, 40).TrimEnd() + "…";
-            return string.IsNullOrWhiteSpace(first) ? "POI" : first;
+            return string.IsNullOrWhiteSpace(first) ? Strings.Get("MainWindow_PoiLabelDefault") : first;
         }
 
         // Trova il numero progressivo successivo per l'etichetta automatica
@@ -4078,20 +4244,20 @@ namespace StradarioApp.UI
         {
             if (_project.PoiGroups.Count == 0)
             {
-                ShowStatusMessage("Nessun gruppo da esportare.", isError: true);
+                ShowStatusMessage(Strings.Get("MainWindow_NessunGruppoDaEsportare"), isError: true);
                 return;
             }
 
             var file = await StorageProvider.SaveFilePickerAsync(new Avalonia.Platform.Storage.FilePickerSaveOptions
             {
-                Title             = "Esporta POI",
+                Title             = Strings.Get("MainWindow_EsportaPoiTitolo"),
                 DefaultExtension  = "kmz",
                 SuggestedFileName = "poi",
                 FileTypeChoices   = new[]
                 {
-                    new Avalonia.Platform.Storage.FilePickerFileType("KMZ (zip, con icone)") { Patterns = new[] { "*.kmz" } },
-                    new Avalonia.Platform.Storage.FilePickerFileType("KML")                  { Patterns = new[] { "*.kml" } },
-                    new Avalonia.Platform.Storage.FilePickerFileType("GPX")                  { Patterns = new[] { "*.gpx" } }
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroKmzIcone")) { Patterns = new[] { "*.kmz" } },
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroKml"))                  { Patterns = new[] { "*.kml" } },
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroGpx"))                  { Patterns = new[] { "*.gpx" } }
                 }
             });
             if (file == null) return;
@@ -4105,11 +4271,11 @@ namespace StradarioApp.UI
                     case ".gpx": await _poiSvc.ExportGpxAsync(_project.PoiGroups, path); break;
                     default:     await _poiSvc.ExportKmzAsync(_project.PoiGroups, path); break;
                 }
-                ShowStatusMessage($"Esportato: {path}");
+                ShowStatusMessage(string.Format(Strings.Get("MainWindow_Esportato"), path));
             }
             catch (Exception ex)
             {
-                await ShowError($"Errore esportazione:\n{ex.Message}");
+                await ShowError(string.Format(Strings.Get("MainWindow_ErroreEsportazione"), ex.Message));
             }
         }
 
@@ -4192,11 +4358,9 @@ namespace StradarioApp.UI
                 if (attempt < 2) await Task.Delay(150);
             }
 
-            throw new InvalidDataException(
-                "Il file selezionato risulta vuoto (0 byte letti) anche dopo alcuni tentativi.\n" +
-                $"Diagnostica — Name: \"{file.Name}\", TryGetLocalPath: \"{localPath ?? "null"}\", " +
-                $"stream.CanSeek: {streamSeekable}, stream.Length: {streamLength}, " +
-                $"FileInfo.Length su path locale: {fileInfoLength}.");
+            throw new InvalidDataException(string.Format(
+                Strings.Get("MainWindow_FileVuotoDiagnostica"),
+                file.Name, localPath ?? "null", streamSeekable, streamLength, fileInfoLength));
         }
 
         // Import unico da KMZ/KML/GPX (menu principale, non più duplicato per
@@ -4211,12 +4375,12 @@ namespace StradarioApp.UI
         {
             var files = await StorageProvider.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions
             {
-                Title          = "Importa POI e/o percorsi da KMZ/KML/GPX",
+                Title          = Strings.Get("MainWindow_ImportaPoiPercorsiTitolo"),
                 AllowMultiple  = false,
                 FileTypeFilter = new[]
                 {
-                    new Avalonia.Platform.Storage.FilePickerFileType("KMZ/KML/GPX") { Patterns = new[] { "*.kmz", "*.kml", "*.gpx" } },
-                    new Avalonia.Platform.Storage.FilePickerFileType("Tutti i file") { Patterns = new[] { "*.*" } }
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroKmzKmlGpx")) { Patterns = new[] { "*.kmz", "*.kml", "*.gpx" } },
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroTuttiFile")) { Patterns = new[] { "*.*" } }
                 }
             });
             if (files.Count == 0) return;
@@ -4244,7 +4408,7 @@ namespace StradarioApp.UI
 
                 if (importedGroups.Count == 0 && importedRoutes.Count == 0)
                 {
-                    ShowStatusMessage("Nessun gruppo POI o percorso trovato nel file.", isError: true);
+                    ShowStatusMessage(Strings.Get("MainWindow_NessunGruppoPercorsoTrovato"), isError: true);
                     return;
                 }
 
@@ -4273,17 +4437,17 @@ namespace StradarioApp.UI
 
                 var parts = new List<string>();
                 if (importedGroups.Count > 0)
-                    parts.Add($"{importedGroups.Count} gruppi POI ({importedGroups.Sum(g => g.Items.Count)} POI)");
+                    parts.Add(string.Format(Strings.Get("MainWindow_ImportatiGruppiPoiConteggio"), importedGroups.Count, importedGroups.Sum(g => g.Items.Count)));
                 if (importedRoutes.Count > 0)
-                    parts.Add($"{importedRoutes.Count} percorsi");
-                ShowStatusMessage($"Importati: {string.Join(", ", parts)}.");
+                    parts.Add(string.Format(Strings.Get("MainWindow_ImportatiPercorsiConteggio"), importedRoutes.Count));
+                ShowStatusMessage(string.Format(Strings.Get("MainWindow_ImportatiRiepilogo"), string.Join(", ", parts)));
             }
             catch (Exception ex)
             {
                 string detail = ex.InnerException != null
                     ? $"{ex.GetType().Name}: {ex.Message}\n({ex.InnerException.GetType().Name}: {ex.InnerException.Message})"
                     : $"{ex.GetType().Name}: {ex.Message}";
-                await ShowError($"Errore importazione di \"{fileName}\":\n{detail}");
+                await ShowError(string.Format(Strings.Get("MainWindow_ErroreImportazioneDi"), fileName, detail));
             }
         }
 
@@ -4322,20 +4486,20 @@ namespace StradarioApp.UI
         {
             if (_project.Percorsi.Count == 0)
             {
-                ShowStatusMessage("Nessun percorso da esportare.", isError: true);
+                ShowStatusMessage(Strings.Get("MainWindow_NessunPercorsoDaEsportare"), isError: true);
                 return;
             }
 
             var file = await StorageProvider.SaveFilePickerAsync(new Avalonia.Platform.Storage.FilePickerSaveOptions
             {
-                Title             = "Esporta percorsi",
+                Title             = Strings.Get("MainWindow_EsportaPercorsiTitolo"),
                 DefaultExtension  = "kmz",
                 SuggestedFileName = "percorsi",
                 FileTypeChoices   = new[]
                 {
-                    new Avalonia.Platform.Storage.FilePickerFileType("KMZ (zip)") { Patterns = new[] { "*.kmz" } },
-                    new Avalonia.Platform.Storage.FilePickerFileType("KML")       { Patterns = new[] { "*.kml" } },
-                    new Avalonia.Platform.Storage.FilePickerFileType("GPX")       { Patterns = new[] { "*.gpx" } }
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroKmzZip")) { Patterns = new[] { "*.kmz" } },
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroKml"))       { Patterns = new[] { "*.kml" } },
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroGpx"))       { Patterns = new[] { "*.gpx" } }
                 }
             });
             if (file == null) return;
@@ -4349,11 +4513,11 @@ namespace StradarioApp.UI
                     case ".gpx": await _percorsoSvc.ExportGpxAsync(_project.Percorsi, path); break;
                     default:     await _percorsoSvc.ExportKmzAsync(_project.Percorsi, path); break;
                 }
-                ShowStatusMessage($"Esportato: {path}");
+                ShowStatusMessage(string.Format(Strings.Get("MainWindow_Esportato"), path));
             }
             catch (Exception ex)
             {
-                await ShowError($"Errore esportazione:\n{ex.Message}");
+                await ShowError(string.Format(Strings.Get("MainWindow_ErroreEsportazione"), ex.Message));
             }
         }
 
@@ -4380,6 +4544,14 @@ namespace StradarioApp.UI
                 _appPrefsSvc.SaveCustomPoiCategories(win.ResultCustomCategories);
                 PoiSearchService.SetCustomCategories(win.ResultCustomCategories);
                 RefreshCategoryCombo();
+
+                // Lingua interfaccia: persistita subito così resta effettiva
+                // anche se l'utente chiude l'app senza toccare altro, ma non
+                // applicata a caldo (l'intera UI già costruita ha le stringhe
+                // "cotte" nei controlli esistenti) — richiede un riavvio,
+                // segnalato nella nota sotto il combo in SettingsWindow.
+                _appPrefsSvc.SaveLanguage(win.ResultLanguage);
+                StradarioApp.Resources.Strings.SetLanguage(win.ResultLanguage);
 
                 foreach (var p in _project.Pages)
                     p.GeoBounds = GeoUtils.CalcPageBounds(
@@ -4422,16 +4594,16 @@ namespace StradarioApp.UI
         // (il chiamante collega ancora Click a dlg.Close())
         private Button CenteredOkButton()
         {
-            var btn = DialogUi.MakeDialogButton("OK", primary: true);
+            var btn = DialogUi.MakeDialogButton(Strings.Get("MainWindow_Ok"), primary: true);
             btn.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center;
             return btn;
         }
 
         private void UpdateTitle()
         {
-            string file   = _currentFilePath != null ? Path.GetFileName(_currentFilePath) : "Senza titolo";
+            string file   = _currentFilePath != null ? Path.GetFileName(_currentFilePath) : Strings.Get("MainWindow_SenzaTitolo");
             string dirty  = _isDirty ? " •" : "";
-            Title = $"Stradario - {_project.ProjectName} [{file}]{dirty}";
+            Title = string.Format(Strings.Get("MainWindow_TitoloConProgetto"), _project.ProjectName, file, dirty);
             UpdateStatusBarSummary();
         }
 
@@ -4439,7 +4611,7 @@ namespace StradarioApp.UI
         {
             var dlg = new Window
             {
-                Title   = "Errore",
+                Title   = Strings.Get("MainWindow_ErroreTitolo"),
                 Width   = 420,
                 Height  = 190,
                 Content = new StackPanel

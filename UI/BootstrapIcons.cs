@@ -89,6 +89,16 @@ namespace StradarioApp.UI
         public const string Locate =
             "M 8 16 s 6 -5.686 6 -10 A 6 6 0 0 0 2 6 c 0 4.314 6 10 6 10 z m 0 -7 a 3 3 0 1 1 0 -6 3 3 0 0 1 0 6 z";
 
+        // Foglio/documento semplice (senza il "+"), usato per l'intestazione
+        // del ramo "Pagine" nell'albero di navigazione, al posto dell'emoji 📄.
+        public const string Document =
+            "M 14 4.5 V 14 a 2 2 0 0 1 -2 2 H 4 a 2 2 0 0 1 -2 -2 V 2 a 2 2 0 0 1 2 -2 h 5.5 z m -3 0 A 1.5 1.5 0 0 1 9.5 3 V 1 H 4 a 1 1 0 0 0 -1 1 v 12 a 1 1 0 0 0 1 1 h 8 a 1 1 0 0 0 1 -1 V 4.5 z";
+
+        // Sagoma di un percorso di montagna (due cime), usata per l'intestazione
+        // del ramo "Percorsi" nell'albero di navigazione, al posto dell'emoji 🥾.
+        public const string Route =
+            "M 1 13 L 5 6 L 7 9 L 10 3 L 15 13 Z";
+
         public const string ChevronUp =
             "M 7.646 4.646 a .5 .5 0 0 1 .708 0 l 6 6 a .5 .5 0 0 1 -.708 .708 L 8 5.707 l -5.646 5.647 a .5 .5 0 0 1 -.708 -.708 z";
 

@@ -47,6 +47,11 @@ namespace StradarioApp.Services
             // PoiSearchService.Categories), gestite dalla tab "Categorie POI"
             // delle Impostazioni.
             public List<CustomPoiCategoryPref> CustomPoiCategories = new();
+            // "" = non ancora scelta esplicitamente dall'utente: LoadLanguage
+            // la rileva dalla lingua di sistema invece di forzare l'italiano
+            // (vedi LoadLanguage). Una volta che l'utente sceglie dalle
+            // Impostazioni, il valore esplicito qui prevale sempre.
+            public string Language = "";
         }
 
         private static string StorageFilePath =>
@@ -130,6 +135,30 @@ namespace StradarioApp.Services
             data.CustomPoiCategories = categories
                 .Select(c => new CustomPoiCategoryPref { Key = c.Key, Value = c.Value, Label = c.Label })
                 .ToList();
+            SaveData(data);
+        }
+
+        // Lingua dell'interfaccia ("it"/"en"). Al primissimo avvio (nessuna
+        // preferenza ancora salvata) la deduce dalla lingua del sistema
+        // operativo invece di forzare l'italiano: solo "it" resta italiano,
+        // qualunque altra lingua di sistema ricade sull'inglese (le uniche
+        // due supportate oggi, vedi Resources/Strings.cs). Da quel momento
+        // in poi la scelta esplicita dell'utente (via Impostazioni) prevale
+        // sempre sulla lingua di sistema.
+        public string LoadLanguage()
+        {
+            var data = LoadData();
+            if (!string.IsNullOrWhiteSpace(data.Language))
+                return data.Language;
+
+            string systemLang = System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
+            return systemLang.Equals("it", StringComparison.OrdinalIgnoreCase) ? "it" : "en";
+        }
+
+        public void SaveLanguage(string language)
+        {
+            var data = LoadData();
+            data.Language = language ?? "it";
             SaveData(data);
         }
     }

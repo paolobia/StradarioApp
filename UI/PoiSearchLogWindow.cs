@@ -18,6 +18,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
+using StradarioApp.Resources;
 
 namespace StradarioApp.UI
 {
@@ -38,7 +39,7 @@ namespace StradarioApp.UI
 
         public PoiSearchLogWindow()
         {
-            Title         = "Ricerca POI in corso...";
+            Title         = Strings.Get("PoiSearchLogWindow_Titolo");
             Width         = 560;
             Height        = 380;
             CanResize     = true;
@@ -62,7 +63,7 @@ namespace StradarioApp.UI
 
             var cancelBtn = new Button
             {
-                Content = "Annulla",
+                Content = Strings.Get("PoiSearchLogWindow_Annulla"),
                 HorizontalAlignment = HorizontalAlignment.Right,
                 Margin  = new Thickness(10)
             };

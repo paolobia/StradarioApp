@@ -5,16 +5,19 @@
 //   visualizzata sulla mappa. La categoria si sceglie SEMPRE dal combo della
 //   toolbar (mai da parola chiave riconosciuta nel testo libero: nessuna
 //   ambiguità) — vedi MainWindow.OnPoiSearchAsync/RunCategorySearchAsync.
-//   Il testo digitato accanto al combo è un raffinamento all'interno della
-//   categoria scelta: di norma un filtro letterale sul nome (regex su "name"
-//   via SearchCategoryAsync), oppure — quando quel filtro letterale non
-//   trova nulla ed è configurata una chiave Groq — un vincolo più ampio che
-//   un'AI seleziona dentro l'elenco chiuso di candidati reali già trovati
-//   nell'area (FilterCandidatesByQueryAsync, es. "della linea firenze
+//   SearchCategoryAsync recupera SEMPRE l'elenco completo della categoria
+//   nell'area (nessun filtro sul nome lato Overpass): il testo digitato
+//   accanto al combo è un raffinamento valutato SEMPRE dopo, lato
+//   applicazione — se è configurata una chiave Groq, un'AI sceglie (per
+//   indice, mai riscrivendo i dati) dentro l'elenco chiuso di candidati
+//   reali quali soddisfano la richiesta, assegnando anche una confidence
+//   0-100 e un motivo (FilterAndScoreByQueryAsync, es. "della linea firenze
 //   bologna" su categoria "stazioni ferroviarie": nessuna stazione si chiama
 //   così, ma l'AI riconosce quali stazioni dell'elenco appartengono a quella
-//   linea). L'AI non propone MAI luoghi di sua iniziativa in questo file:
-//   sceglie solo dentro dati OSM reali già recuperati.
+//   linea); senza chiave configurata, un semplice filtro letterale
+//   (sottostringa sul nome) fa lo stesso lavoro senza AI. L'AI non propone
+//   MAI luoghi di sua iniziativa in questo file: sceglie solo dentro dati
+//   OSM reali già recuperati.
 //   Un solo HttpClient/richiesta per ricerca interattiva avviata dall'utente
 //   (Overpass/Nominatim): rispetta la policy d'uso dei server pubblici
 //   (User-Agent identificativo — stesso header usato dal resto dell'app per
@@ -35,6 +38,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using StradarioApp.Models;
+using StradarioApp.Resources;
 
 namespace StradarioApp.Services
 {
@@ -47,16 +51,13 @@ namespace StradarioApp.Services
         // pubblico è sotto carico
         private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(25) };
 
-        // Limite di SICUREZZA (non un limite "normale") passato a Overpass
-        // ("out center N"): per categorie molto dense (es. "caffetterie" in
-        // una grande città) l'utente vuole vederle TUTTE, non un sottoinsieme
-        // arbitrario troncato a poche centinaia — quindi questo valore è
-        // volutamente alto, pensato solo per evitare risposte patologiche
-        // (centinaia di migliaia di elementi) che bloccherebbero client e
-        // server, non per limitare l'uso normale. Pubblico così il chiamante
-        // può confrontarlo con Result.Count e avvisare nel raro caso in cui
-        // anche questo tetto molto alto venga raggiunto.
-        public const int CategoryResultCap = 5000;
+        // Tetto sul numero di risultati mostrati per una ricerca a categoria:
+        // oltre questo valore SearchCategoryAsync ordina per distanza dal
+        // centro della vista e tiene solo i CategoryResultCap più vicini,
+        // segnalando che ce n'erano altri (mai un numero "bugiardo" — la
+        // query Overpass stessa chiede CategoryResultCap+1, così sapere se
+        // "ce n'erano di più" è un fatto verificato, non una supposizione).
+        public const int CategoryResultCap = 500;
 
         static PoiSearchService()
         {
@@ -91,8 +92,22 @@ namespace StradarioApp.Services
 
         // Category/Type = tag OSM grezzi (es. "shop"/"butcher", "amenity"/"restaurant"),
         // usati per una riga descrittiva nel tooltip. Address = via+civico,
-        // CAP+città formattati su una riga, quando Nominatim li fornisce.
-        public record Result(string DisplayName, double Lon, double Lat, string? Category, string? Type, string? Address);
+        // CAP+città formattati su una riga, quando Nominatim li fornisce
+        // (sempre null per i risultati da ricerca a categoria: lì l'eventuale
+        // indirizzo finisce dentro Details insieme a tutto il resto, vedi
+        // sotto). Details = TUTTI gli altri tag OSM grezzi dell'elemento
+        // trovato da SearchCategoryAsync (indirizzo, telefono, sito, orari,
+        // qualunque altra cosa OSM abbia), come stringa unica
+        // "chiave=valore;chiave=valore;..." — vedi BuildOsmTagsString. Sempre
+        // null per i risultati Nominatim (indirizzo/geocodifica/città), che
+        // non passano da lì. Confidence/Motivo = valorizzati SOLO quando il
+        // risultato è passato dal filtro AI su testo libero (vedi
+        // FilterAndScoreByQueryAsync): 0-100, quanto l'AI ritiene il POI
+        // pertinente alla richiesta, con una frase che lo spiega. Null quando
+        // non è stata usata l'AI (nessun testo digitato, o nessuna chiave
+        // Groq configurata — filtro letterale sul nome, vedi
+        // MainWindow.RunCategorySearchAsync).
+        public record Result(string DisplayName, double Lon, double Lat, string? Category, string? Type, string? Address, string? Details = null, int? Confidence = null, string? Motivo = null);
 
         // Geocodifica un nome di luogo (città/paese/regione, es. "Pechino" o
         // "Prato") nel suo riquadro geografico su Nominatim, SENZA restringere
@@ -103,7 +118,7 @@ namespace StradarioApp.Services
         // più sotto. Ritorna null se il luogo non viene trovato.
         public async Task<GeoRect?> GeocodePlaceAsync(string placeName, Action<string>? onProgress = null, CancellationToken ct = default)
         {
-            onProgress?.Invoke($"Attendo il turno per interrogare Nominatim (max 1 richiesta/secondo)...");
+            onProgress?.Invoke(Strings.Get("PoiSearchService_AttendoNominatim"));
             await ThrottleNominatimAsync(ct);
 
             string url =
@@ -111,7 +126,7 @@ namespace StradarioApp.Services
                 $"?q={Uri.EscapeDataString(placeName)}" +
                 "&format=jsonv2&limit=1&accept-language=it,en";
 
-            onProgress?.Invoke($"Interrogo Nominatim per il luogo \"{placeName}\"...");
+            onProgress?.Invoke(string.Format(Strings.Get("PoiSearchService_InterrogoNominatimLuogo"), placeName));
             using var resp = await Http.GetAsync(url, ct);
             resp.EnsureSuccessStatusCode();
             string json = await resp.Content.ReadAsStringAsync(ct);
@@ -119,7 +134,7 @@ namespace StradarioApp.Services
             var arr = JArray.Parse(json);
             if (arr.Count == 0)
             {
-                onProgress?.Invoke($"Nominatim non ha trovato nessun luogo per \"{placeName}\".");
+                onProgress?.Invoke(string.Format(Strings.Get("PoiSearchService_NominatimNessunLuogo"), placeName));
                 return null;
             }
 
@@ -148,7 +163,7 @@ namespace StradarioApp.Services
         public async Task<List<Result>> SearchAddressAsync(string query, GeoRect? viewBounds = null, int limit = 15,
             Action<string>? onProgress = null, CancellationToken ct = default)
         {
-            onProgress?.Invoke("Attendo il turno per interrogare Nominatim (max 1 richiesta/secondo)...");
+            onProgress?.Invoke(Strings.Get("PoiSearchService_AttendoNominatim"));
             await ThrottleNominatimAsync(ct);
 
             string url =
@@ -158,7 +173,7 @@ namespace StradarioApp.Services
             if (viewBounds != null)
                 url += $"&viewbox={Fmt(viewBounds.MinLon)},{Fmt(viewBounds.MaxLat)},{Fmt(viewBounds.MaxLon)},{Fmt(viewBounds.MinLat)}";
 
-            onProgress?.Invoke($"Interrogo Nominatim per l'indirizzo \"{query}\"...");
+            onProgress?.Invoke(string.Format(Strings.Get("PoiSearchService_InterrogoNominatimIndirizzo"), query));
             using var resp = await Http.GetAsync(url, ct);
             resp.EnsureSuccessStatusCode();
             string json = await resp.Content.ReadAsStringAsync(ct);
@@ -171,7 +186,7 @@ namespace StradarioApp.Services
                 if (r != null) results.Add(r);
             }
 
-            onProgress?.Invoke($"Trovati {results.Count} indirizzi corrispondenti.");
+            onProgress?.Invoke(string.Format(Strings.Get("PoiSearchService_IndirizziTrovati"), results.Count));
             return results;
         }
 
@@ -229,6 +244,73 @@ namespace StradarioApp.Services
             string joined = string.Join(", ", new[] { line1, line2 }.Where(s => !string.IsNullOrWhiteSpace(s)));
 
             return string.IsNullOrWhiteSpace(joined) ? null : joined;
+        }
+
+        // Tutti i tag OSM di un elemento (nodo/way trovato da
+        // SearchCategoryAsync) tranne il nome (già usato per DisplayName),
+        // serializzati come "chiave=valore;chiave=valore;...": nessun elenco
+        // prefissato di campi "importanti" da riconoscere uno per uno (indirizzo,
+        // telefono, orari...) — semplicemente TUTTO quello che OSM ha per quel
+        // punto, un formato libero. Chi lo mostra (tooltip sulla mappa,
+        // descrizione del POI creato) spezza una riga a ogni ";" per renderlo
+        // leggibile, vedi MainWindow.
+        private static string? BuildOsmTagsString(JObject? tags)
+        {
+            if (tags == null) return null;
+
+            var parts = tags.Properties()
+                .Where(p => p.Name != "name" && p.Name != "name:it" && p.Name != "name:en")
+                .Select(p => $"{p.Name}={p.Value}")
+                .ToList();
+
+            return parts.Count == 0 ? null : string.Join(";", parts);
+        }
+
+        // Tag OSM puramente tecnici/editoriali (provenienza del dato,
+        // riferimenti a database esterni, dettagli di geometria/edificio):
+        // non aiutano l'AI a valutare la pertinenza di un POI rispetto a una
+        // richiesta testuale, occupano solo spazio nella richiesta. Non
+        // tocca BuildOsmTagsString/Details (quello che finisce nella
+        // descrizione del POI e nel tooltip resta completo) — solo cosa
+        // viene mandato all'AI, vedi TruncateTagsForAi.
+        private static readonly HashSet<string> NoiseTagKeysForAi = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "source", "check_date", "survey:date", "fixme", "created_by", "attribution",
+            "wikidata", "wikipedia", "ref", "layer", "level", "image", "mapillary", "panoramax",
+            "building", "start_date", "old_name", "not:name", "addr:country",
+        };
+        private static readonly string[] NoiseTagPrefixesForAi =
+        {
+            "source:", "wikidata:", "wikipedia:", "ref:", "gnis:", "building:", "roof:",
+            "mapillary:", "panoramax:", "old_", "was:", "disused:", "razed:", "demolished:",
+        };
+
+        private static string? StripNoiseTagsForAi(string? tags)
+        {
+            if (string.IsNullOrEmpty(tags)) return tags;
+
+            var kept = tags.Split(';').Where(part =>
+            {
+                int eq = part.IndexOf('=');
+                string key = (eq > 0 ? part.Substring(0, eq) : part).Trim();
+                if (NoiseTagKeysForAi.Contains(key)) return false;
+                return !NoiseTagPrefixesForAi.Any(p => key.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+            });
+
+            string joined = string.Join(";", kept);
+            return joined.Length == 0 ? null : joined;
+        }
+
+        // Come BuildOsmTagsString, ma ripulita dai tag "rumore" (vedi
+        // StripNoiseTagsForAi) e tagliata a MaxTagsCharsForAi caratteri per
+        // tenere sotto controllo la dimensione della richiesta a Groq (vedi
+        // FilterAndScoreByQueryAsync) — non cambia il Details salvato sul
+        // Result finale, solo cosa viene mandato all'AI per valutarlo.
+        private static string TruncateTagsForAi(string? tags)
+        {
+            string? cleaned = StripNoiseTagsForAi(tags);
+            if (string.IsNullOrEmpty(cleaned)) return "";
+            return cleaned.Length <= MaxTagsCharsForAi ? cleaned : cleaned.Substring(0, MaxTagsCharsForAi) + "...";
         }
 
         private static string Fmt(double v) => v.ToString("F7", CultureInfo.InvariantCulture);
@@ -323,6 +405,23 @@ namespace StradarioApp.Services
         public static IReadOnlyList<(string Key, string Value, string Label)> CustomCategories =>
             _customCategories.Select(c => (c.Key, c.Value, c.Label)).ToList();
 
+        // Etichetta da mostrare nel combo per una categoria built-in
+        // (Key/Value fissi nel codice, vedi Categories/AllCategories sotto):
+        // tradotta via Strings.Get con chiave "PoiCategory_<key>_<value>" se
+        // esiste una voce per la lingua corrente, altrimenti l'italiano di
+        // Categories resta il fallback (mai una chiave grezza a video). Le
+        // categorie personalizzate dell'utente (_customCategories) NON
+        // passano da qui: sono testo libero digitato dall'utente stesso,
+        // niente da tradurre — Strings.Get non trova comunque la chiave e
+        // restituisce fallbackLabel invariata, quindi non serve nessun
+        // controllo esplicito per escluderle.
+        private static string LocalizedCategoryLabel(string key, string value, string fallbackLabel)
+        {
+            string lookupKey = $"PoiCategory_{key}_{value}";
+            string translated = Strings.Get(lookupKey);
+            return translated == lookupKey ? fallbackLabel : translated;
+        }
+
         // Vista pubblica di sola lettura di Categories, per il selettore a
         // combobox nella toolbar (MainWindow): solo Key/Value/Label, non le
         // parole chiave (quelle servono solo al riconoscimento testuale di
@@ -331,10 +430,10 @@ namespace StradarioApp.Services
         public static IReadOnlyList<(string Key, string Value, string Label)> AllCategories =>
             new List<(string Key, string Value, string Label)>
             {
-                (SentinelCategoryKey, AddressSearchValue, "Ricerca un indirizzo"),
-                (SentinelCategoryKey, CitySearchValue,     "Ricerca una città (anche parziale)"),
+                (SentinelCategoryKey, AddressSearchValue, LocalizedCategoryLabel(SentinelCategoryKey, AddressSearchValue, "Ricerca un indirizzo")),
+                (SentinelCategoryKey, CitySearchValue,     LocalizedCategoryLabel(SentinelCategoryKey, CitySearchValue, "Ricerca una città (anche parziale)")),
             }
-            .Concat(Categories.Select(c => (c.Key, c.Value, c.Label)))
+            .Concat(Categories.Select(c => (c.Key, c.Value, LocalizedCategoryLabel(c.Key, c.Value, c.Label))))
             .Concat(_customCategories.Select(c => (c.Key, c.Value, c.Label)))
             .ToList();
 
@@ -379,27 +478,34 @@ namespace StradarioApp.Services
         // nell'area geografica `viewBounds`. A differenza di SearchAsync non
         // cerca per nome: trova quindi anche elementi il cui nome è scritto in
         // una lingua/alfabeto diverso da quello della parola chiave digitata.
-        // subFilters (opzionale): altri tag "chiave=valore" in AND, usati dalla
-        // ricerca in linguaggio naturale (Fase A) per restringere il tag
-        // principale (es. amenity=restaurant + cuisine=pizza). nameFilter
-        // (opzionale): sottostringa (case-insensitive) da cercare nel tag
-        // "name", per richieste che identificano un luogo specifico per nome
-        // oltre che per categoria (es. "stazione CENTRALE" → railway=station
-        // + nameFilter="centrale": senza questo, "stazioni a Prato e Pistoia"
-        // troverebbe TUTTE le stazioni/fermate nell'area, non solo quelle
-        // centrali — un tag OSM da solo non basta a distinguerle, serve il
-        // nome). Cache in memoria per bbox+tag+sottofiltri+nameFilter, per non
-        // richiamare Overpass più volte per la stessa identica ricerca (es.
-        // l'utente che riprova o pan minimi).
+        // Nessun filtro sul nome qui (lato Overpass) — un eventuale testo
+        // digitato dall'utente è un raffinamento che avviene SEMPRE dopo,
+        // lato applicazione (filtro letterale o AI, vedi
+        // MainWindow.RunCategorySearchAsync), mai dentro la query Overpass:
+        // così l'elenco completo della categoria resta cache-abile una sola
+        // volta per area, indipendentemente da cosa l'utente digita.
+        // subFilters (opzionale): altri tag "chiave=valore" in AND, usati per
+        // restringere il tag principale (es. amenity=restaurant +
+        // cuisine=pizza, o le esclusioni fisse di CategoryExcludeFilters).
+        // Overpass stesso è interrogato con un tetto di sicurezza
+        // (CategoryResultCap + 1, mai "bugiardo": se tornano davvero
+        // CategoryResultCap+1 elementi, se ne mostrano CategoryResultCap più
+        // vicini al centro della vista e lo si segnala, non si finge che
+        // siano tutti); il taglio effettivo (CategoryResultCap) e
+        // l'ordinamento per distanza dal centro avvengono qui, non su
+        // Overpass (che tronca in un ordine arbitrario, non per vicinanza).
+        // Cache in memoria per bbox+tag+sottofiltri, per non richiamare
+        // Overpass più volte per la stessa identica ricerca (es. l'utente che
+        // riprova o pan minimi, o che cambia solo il testo digitato).
         public async Task<List<Result>> SearchCategoryAsync(string key, string value, GeoRect viewBounds,
-            IEnumerable<string>? subFilters = null, string? nameFilter = null, Action<string>? onProgress = null, CancellationToken ct = default)
+            IEnumerable<string>? subFilters = null, Action<string>? onProgress = null, CancellationToken ct = default)
         {
             var subList = (subFilters ?? Enumerable.Empty<string>()).ToList();
 
-            string cacheKey = BuildCategoryCacheKey(key, value, viewBounds, subList, nameFilter);
+            string cacheKey = BuildCategoryCacheKey(key, value, viewBounds, subList);
             if (_categoryCache.TryGetValue(cacheKey, out var cached) && cached.Expiry > DateTime.UtcNow)
             {
-                onProgress?.Invoke($"Trovata in cache la stessa ricerca ({key}={value}) per quest'area: nessuna nuova richiesta a Overpass.");
+                onProgress?.Invoke(string.Format(Strings.Get("PoiSearchService_TrovataInCache"), key, value));
                 return cached.Results;
             }
 
@@ -421,8 +527,6 @@ namespace StradarioApp.Services
                 if (sk.Length == 0 || sv.Length == 0) continue;
                 extraFilters += negate ? $"[\"{sk}\"!=\"{sv}\"]" : $"[\"{sk}\"=\"{sv}\"]";
             }
-            if (!string.IsNullOrWhiteSpace(nameFilter))
-                extraFilters += $"[\"name\"~\"{EscapeOverpassRegex(nameFilter.Trim())}\",i]";
 
             string bbox = $"{Fmt(viewBounds.MinLat)},{Fmt(viewBounds.MinLon)},{Fmt(viewBounds.MaxLat)},{Fmt(viewBounds.MaxLon)}";
             string ql =
@@ -431,14 +535,14 @@ namespace StradarioApp.Services
                 $"node[\"{key}\"=\"{value}\"]{extraFilters}({bbox});" +
                 $"way[\"{key}\"=\"{value}\"]{extraFilters}({bbox});" +
                 ");" +
-                $"out center {CategoryResultCap};";
+                $"out center {CategoryResultCap + 1};";
 
-            onProgress?.Invoke($"Costruita la query Overpass per \"{key}={value}\" nell'area {Fmt(viewBounds.MinLat)},{Fmt(viewBounds.MinLon)} – {Fmt(viewBounds.MaxLat)},{Fmt(viewBounds.MaxLon)}.");
-            onProgress?.Invoke("Invio la richiesta al server pubblico Overpass (overpass-api.de)...");
+            onProgress?.Invoke(string.Format(Strings.Get("PoiSearchService_QueryOverpassCostruita"), key, value, Fmt(viewBounds.MinLat), Fmt(viewBounds.MinLon), Fmt(viewBounds.MaxLat), Fmt(viewBounds.MaxLon)));
+            onProgress?.Invoke(Strings.Get("PoiSearchService_InvioRichiestaOverpass"));
             using var content = new FormUrlEncodedContent(new[] { new KeyValuePair<string, string>("data", ql) });
             using var resp = await Http.PostAsync("https://overpass-api.de/api/interpreter", content, ct);
             resp.EnsureSuccessStatusCode();
-            onProgress?.Invoke("Risposta ricevuta da Overpass, analizzo gli elementi trovati...");
+            onProgress?.Invoke(Strings.Get("PoiSearchService_RispostaOverpassRicevuta"));
             string json = await resp.Content.ReadAsStringAsync(ct);
 
             var root = JObject.Parse(json);
@@ -459,10 +563,25 @@ namespace StradarioApp.Services
                 results.Add(new Result(
                     string.IsNullOrWhiteSpace(name) ? $"{value} (senza nome)" : name!,
                     lon.Value, lat.Value,
-                    key, value, null));
+                    key, value, null, BuildOsmTagsString(tags)));
             }
 
-            onProgress?.Invoke($"Trovati {results.Count} elementi validi (con coordinate) su Overpass.");
+            onProgress?.Invoke(string.Format(Strings.Get("PoiSearchService_ElementiValidiTrovati"), results.Count));
+
+            // Overpass tronca in un ordine arbitrario, non per vicinanza: se
+            // ha restituito più del tetto "onesto" (CategoryResultCap), si
+            // ordina per distanza dal centro della vista e si tiene solo
+            // CategoryResultCap — così quello che si mostra è sempre "i più
+            // vicini", non un sottoinsieme casuale.
+            if (results.Count > CategoryResultCap)
+            {
+                double centerLon = viewBounds.CenterLon, centerLat = viewBounds.CenterLat;
+                results = results
+                    .OrderBy(r => GeoUtils.DistanceKm(r.Lon, r.Lat, centerLon, centerLat))
+                    .Take(CategoryResultCap)
+                    .ToList();
+                onProgress?.Invoke(string.Format(Strings.Get("PoiSearchService_TroncatoAlTetto"), CategoryResultCap));
+            }
 
             if (_categoryCache.Count >= CategoryCacheMaxEntries) _categoryCache.Clear();
             _categoryCache[cacheKey] = (DateTime.UtcNow.AddSeconds(CategoryCacheTtlSeconds), results);
@@ -474,71 +593,109 @@ namespace StradarioApp.Services
         private const int CategoryCacheTtlSeconds = 300;
         private const int CategoryCacheMaxEntries = 200;
 
-        private static string BuildCategoryCacheKey(string key, string value, GeoRect b, List<string> subFilters, string? nameFilter)
+        private static string BuildCategoryCacheKey(string key, string value, GeoRect b, List<string> subFilters)
         {
             string sf = string.Join("|", subFilters.OrderBy(s => s, StringComparer.Ordinal));
             // Arrotonda il bbox (~100 m) così piccoli pan/richieste quasi
             // identiche ricadono sulla stessa voce di cache
             string bbox = $"{Math.Round(b.MinLat, 3)},{Math.Round(b.MinLon, 3)},{Math.Round(b.MaxLat, 3)},{Math.Round(b.MaxLon, 3)}";
-            return $"{key}={value}|{sf}|{nameFilter ?? ""}|{bbox}";
+            return $"{key}={value}|{sf}|{bbox}";
         }
 
         private static string EscapeOverpassValue(string s) => s.Replace("\"", "").Replace("\\", "");
 
-        // Come sopra ma per un valore che finirà dentro un pattern regex
-        // Overpass ("~"): oltre alle virgolette, va neutralizzato ogni
-        // metacarattere regex (il testo viene da un nome di luogo scritto
-        // dall'utente/estratto dall'LLM, non da un pattern scritto apposta)
-        private static string EscapeOverpassRegex(string s) =>
-            System.Text.RegularExpressions.Regex.Escape(s.Replace("\"", "").Replace("\\", ""));
+        // ---------------------------------------------------------------
+        // Filtro + punteggio AI su candidati reali: DOPO aver scelto una
+        // categoria dal combo (unico modo di scegliere una categoria:
+        // nessuna ambiguità) ed esserci SEMPRE fatti dare da Overpass
+        // l'elenco completo della categoria nell'area (SearchCategoryAsync,
+        // nessun filtro sul nome lato Overpass), quando l'utente ha anche
+        // digitato del testo l'AI lo interpreta: sceglie SOLO dentro
+        // l'elenco chiuso di candidati OSM reali già trovati (mai luoghi di
+        // sua iniziativa) e assegna a ciascuno un punteggio di pertinenza.
+        // La selezione è SEMPRE per indice nell'elenco fornito: anche se il
+        // prompt le mostra nome/coordinate/tag di ogni candidato (utili per
+        // ragionarci, es. "vicino al mare"), non ci si fida di un'eventuale
+        // ri-trascrizione nella risposta — i dati del POI restituito sono
+        // sempre quelli originali del candidato all'indice scelto, mai
+        // quanto l'AI possa aver riscritto. confidence (0-100)/motivo
+        // guidano poi la colorazione del marker e il tooltip in MainWindow.
+        // Nessun web search integrato (DefaultModel, non CompoundModel): qui
+        // il compito è valutare un elenco dato, non cercare informazioni
+        // nuove.
+        // ---------------------------------------------------------------
+        // Tetto ai candidati effettivamente inviati in una singola richiesta
+        // Groq: il piano gratuito/on-demand ha un limite di token AL MINUTO
+        // (non solo per richiesta) piuttosto basso — 500 candidati con tutti
+        // i tag OSM grezzi (Details) può da solo superarlo in un colpo solo
+        // (visto in pratica: 413 "tokens per minute" con ~15000 token
+        // richiesti contro un limite di 12000). Non è un limite di qualità
+        // (l'app potrebbe gestirne di più), è un vincolo dell'account Groq
+        // dell'utente: si tagliano i candidati più lontani dal centro vista
+        // PRIMA di costruire la richiesta, segnalandolo.
+        private const int MaxCandidatesForAi = 100;
 
-        // ---------------------------------------------------------------
-        // Filtro AI su candidati reali (alternativa a GenerateHypothesesAsync
-        // per richieste che, DOPO aver scelto una categoria dal combo (unico
-        // modo di scegliere una categoria: nessuna ambiguità), aggiungono nel
-        // testo un vincolo che un filtro sul nome letterale non può
-        // esprimere, es. categoria "stazioni ferroviarie" + testo "della
-        // linea firenze bologna" — nessuna stazione si chiama letteralmente
-        // così. A differenza della Fase A, l'LLM non propone luoghi dalla
-        // propria conoscenza — sceglie SOLO dentro un elenco chiuso di
-        // candidati già trovati su OpenStreetMap (SearchCategoryAsync, stessa
-        // query della ricerca a categoria esatta, sull'area attualmente
-        // visualizzata). Per questo
-        // non serve una fase di verifica successiva: ogni elemento scelto è
-        // per definizione un luogo OSM reale, come nella ricerca a categoria
-        // pura. Nessun web search integrato (DefaultModel, non CompoundModel):
-        // qui il compito è scegliere dentro un elenco dato, non cercare
-        // informazioni nuove.
-        // ---------------------------------------------------------------
-        public async Task<List<Result>> FilterCandidatesByQueryAsync(string apiKey, string query, List<Result> candidates, Action<string>? onProgress = null, CancellationToken ct = default)
+        // Lunghezza massima (caratteri) del campo "tags" per candidato
+        // mandato all'AI: alcuni tag OSM (opening_hours con più fasce,
+        // description lunghe) possono da soli pesare quanto un intero altro
+        // candidato — troncarli tiene la dimensione della richiesta
+        // prevedibile senza perdere l'informazione più utile (che di norma
+        // sta nei primi tag, non in fondo a una stringa lunga).
+        private const int MaxTagsCharsForAi = 150;
+
+        public async Task<List<Result>> FilterAndScoreByQueryAsync(string apiKey, string query, List<Result> candidates,
+            GeoRect viewBounds, double centerLon, double centerLat, Action<string>? onProgress = null, CancellationToken ct = default)
         {
             if (candidates.Count == 0) return new List<Result>();
 
-            var indexed = new JArray(candidates.Select((c, i) => new JObject
+            // "index" nel JSON mandato all'AI è sempre la posizione nell'elenco
+            // ORIGINALE "candidates" (non in quello eventualmente troncato
+            // sotto): così la lettura della risposta (candidates[index]) resta
+            // valida senza bisogno di una mappa di conversione separata.
+            var withIndex = candidates.Select((c, i) => (Index: i, Result: c)).ToList();
+            if (withIndex.Count > MaxCandidatesForAi)
             {
-                ["index"] = i,
-                ["name"]  = c.DisplayName
+                withIndex = withIndex
+                    .OrderBy(t => GeoUtils.DistanceKm(t.Result.Lon, t.Result.Lat, centerLon, centerLat))
+                    .Take(MaxCandidatesForAi)
+                    .ToList();
+                onProgress?.Invoke(string.Format(Strings.Get("PoiSearchService_TroppiCandidatiAi"), candidates.Count, MaxCandidatesForAi));
+            }
+
+            var indexed = new JArray(withIndex.Select(t => new JObject
+            {
+                ["index"] = t.Index,
+                ["name"]  = t.Result.DisplayName,
+                ["lat"]   = t.Result.Lat,
+                ["lon"]   = t.Result.Lon,
+                ["tags"]  = TruncateTagsForAi(t.Result.Details)
             }));
 
             string systemPrompt =
-                "Ti viene fornito un elenco CHIUSO di luoghi reali (trovati su OpenStreetMap nell'area " +
-                "attualmente visualizzata sulla mappa) e una richiesta dell'utente. Il tuo compito è SOLO scegliere " +
-                "quali elementi dell'elenco soddisfano la richiesta, usando la tua conoscenza geografica — NON " +
-                "proporre luoghi che non sono nell'elenco, anche se li conosci: se un luogo pertinente non è tra i " +
-                "candidati forniti, va semplicemente omesso, non inventato. Se la richiesta menziona una " +
-                "linea/tratta/percorso (es. una linea ferroviaria tra due città), scegli i luoghi dell'elenco che vi " +
-                "appartengono in base al nome/alla tua conoscenza geografica; se nessun elemento dell'elenco è " +
-                "pertinente, restituisci una lista vuota. " +
+                "Sei un assistente specializzato esclusivamente nel filtrare e ordinare una lista di Punti di " +
+                "Interesse (POI) forniti dall'utente. REGOLE ASSOLUTE (NON VIOLABILI): " +
+                "1) Restituisci SOLO indici di POI presenti nell'elenco fornito: non inventare, non aggiungere " +
+                "POI, non modificare coordinate o nomi (l'app riprende sempre i dati originali dall'indice scelto, " +
+                "ignora qualunque altro dato tu scriva nella risposta). " +
+                "2) Se un POI non soddisfa la richiesta dell'utente, escludilo (non includerlo nella risposta). " +
+                "3) Per ogni POI incluso fornisci un punteggio di affidabilità (confidence) da 0 a 100 che indica " +
+                "quanto quel POI corrisponde alla richiesta, e una breve motivazione (una frase) del perché è " +
+                "stato selezionato e del punteggio dato. " +
                 "Rispondi SOLO con un oggetto JSON con esattamente questo campo: " +
-                "{\"selected_indices\": [number, ...]}, usando i valori \"index\" esattamente come forniti " +
-                "nell'elenco candidati.";
+                "{\"risultati\": [{\"index\": number, \"confidence\": number, \"motivo\": \"...\"}, ...]}, " +
+                "usando i valori \"index\" esattamente come forniti nell'elenco candidati. Niente altro testo.";
 
-            string userPrompt = $"Richiesta: \"{query}\"\n\nElenco candidati:\n{indexed.ToString(Formatting.None)}";
+            string userPrompt =
+                $"Richiesta dell'utente: \"{query}\"\n" +
+                $"Limite geografico (area visualizzata, min_lat,min_lon,max_lat,max_lon): " +
+                $"{viewBounds.MinLat:F6},{viewBounds.MinLon:F6},{viewBounds.MaxLat:F6},{viewBounds.MaxLon:F6}\n" +
+                $"Posizione corrente (centro mappa): {centerLat:F6},{centerLon:F6}\n\n" +
+                $"Elenco candidati:\n{indexed.ToString(Formatting.None)}";
 
-            onProgress?.Invoke($"Invio a Groq/AI {candidates.Count} candidati OSM da filtrare per \"{query}\"...");
+            onProgress?.Invoke(string.Format(Strings.Get("PoiSearchService_InvioGroq"), candidates.Count, query));
             string raw = await _groq.ChatJsonAsync(apiKey, systemPrompt, userPrompt, ct,
-                model: GroqClient.DefaultModel, enableJsonMode: true).ConfigureAwait(false);
-            onProgress?.Invoke("Risposta AI ricevuta, analizzo la selezione...");
+                model: GroqClient.DefaultModel, enableJsonMode: true);
+            onProgress?.Invoke(Strings.Get("PoiSearchService_RispostaAiRicevuta"));
 
             JObject obj;
             try { obj = ExtractJsonObject(raw); }
@@ -548,18 +705,25 @@ namespace StradarioApp.Services
                 throw new GroqException($"Risposta di selezione candidati non in formato JSON valido: {ex.Message}", ex);
             }
 
-            var indices = (obj["selected_indices"] as JArray)?
-                .Select(t => t.Type == JTokenType.Integer ? t.Value<int?>() : null)
-                .Where(i => i.HasValue && i.Value >= 0 && i.Value < candidates.Count)
-                .Select(i => i!.Value)
-                .Distinct()
-                .ToList() ?? new List<int>();
+            var results = new List<Result>();
+            var seenIndices = new HashSet<int>();
+            foreach (var item in (obj["risultati"] as JArray) ?? new JArray())
+            {
+                int? index = item["index"]?.Type == JTokenType.Integer ? item["index"]?.Value<int?>() : null;
+                if (!index.HasValue || index.Value < 0 || index.Value >= candidates.Count) continue;
+                if (!seenIndices.Add(index.Value)) continue;
 
-            onProgress?.Invoke($"L'AI ha selezionato {indices.Count} luoghi pertinenti su {candidates.Count} candidati.");
-            return indices.Select(i => candidates[i]).ToList();
+                int confidence = Math.Clamp(item["confidence"]?.Value<int?>() ?? 0, 0, 100);
+                string? motivo = item["motivo"]?.Value<string>();
+
+                results.Add(candidates[index.Value] with { Confidence = confidence, Motivo = motivo });
+            }
+
+            onProgress?.Invoke(string.Format(Strings.Get("PoiSearchService_AiSelezionati"), results.Count, candidates.Count));
+            return results;
         }
 
-        // Client Groq condiviso: usato da FilterCandidatesByQueryAsync sopra.
+        // Client Groq condiviso: usato da FilterAndScoreByQueryAsync sopra.
         private readonly GroqClient _groq = new();
 
         // ---------------------------------------------------------------
@@ -650,7 +814,7 @@ namespace StradarioApp.Services
 
         // Estrae il primo oggetto JSON presente nel testo (o, se già JSON
         // puro, lo restituisce direttamente, provato per primo) — usata da
-        // FilterCandidatesByQueryAsync come parsing tollerante della risposta.
+        // FilterAndScoreByQueryAsync come parsing tollerante della risposta.
         private static JObject ExtractJsonObject(string text)
         {
             try { return JObject.Parse(text); }

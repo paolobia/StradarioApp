@@ -87,6 +87,21 @@ namespace StradarioApp.Services
                 .ToList();
         }
 
+        // Conta quante città del database cadono nell'area geografica
+        // indicata (senza limite/ordinamento, a differenza di FindTopCities):
+        // usato per dare un riferimento utile ("nella mappa visualizzata
+        // c'erano N città") quando una ricerca per nome non trova nulla,
+        // invece del solo conteggio totale del database mondiale.
+        public static int CountInBounds(GeoRect bounds)
+        {
+            EnsureLoaded();
+            if (_cities == null || _cities.Count == 0)
+                return 0;
+
+            return _cities.Count(c => c.Lon >= bounds.MinLon && c.Lon <= bounds.MaxLon &&
+                                       c.Lat >= bounds.MinLat && c.Lat <= bounds.MaxLat);
+        }
+
         // Cerca città per nome (anche parziale, case-insensitive, in
         // qualunque punto del nome — non solo "inizia con"), su tutto il
         // database mondiale, ordinate per popolazione decrescente. Usata

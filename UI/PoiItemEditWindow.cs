@@ -16,6 +16,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using StradarioApp.Models;
+using StradarioApp.Resources;
 
 namespace StradarioApp.UI
 {
@@ -41,7 +42,7 @@ namespace StradarioApp.UI
             _currentViewLon = currentViewLon;
             _currentViewLat = currentViewLat;
 
-            Title  = item.Id == 0 ? "Nuovo POI" : $"Modifica POI  {item.Label}";
+            Title  = item.Id == 0 ? Strings.Get("PoiItemEditWindow_TitoloNuovo") : string.Format(Strings.Get("PoiItemEditWindow_TitoloModifica"), item.Label);
             Width  = 400;
             Height = 400;
             CanResize = false;
@@ -62,19 +63,19 @@ namespace StradarioApp.UI
             int row = 0;
             bool isNew = p.Id == 0 && p.Lon == 0 && p.Lat == 0;
 
-            AddLabel(grid, "Etichetta:", row);
+            AddLabel(grid, Strings.Get("PoiItemEditWindow_Etichetta"), row);
             _tbLabel = new TextBox { Text = p.Label };
             AddControl(grid, _tbLabel, row++);
 
-            AddLabel(grid, "Longitudine:", row);
+            AddLabel(grid, Strings.Get("PoiItemEditWindow_Longitudine"), row);
             _tbLon = new TextBox { Text = isNew ? $"{_currentViewLon:F6}" : $"{p.Lon:F6}" };
             AddControl(grid, _tbLon, row++);
 
-            AddLabel(grid, "Latitudine:", row);
+            AddLabel(grid, Strings.Get("PoiItemEditWindow_Latitudine"), row);
             _tbLat = new TextBox { Text = isNew ? $"{_currentViewLat:F6}" : $"{p.Lat:F6}" };
             AddControl(grid, _tbLat, row++);
 
-            AddLabel(grid, "Descrizione:", row);
+            AddLabel(grid, Strings.Get("PoiItemEditWindow_Descrizione"), row);
             _tbDescription = new TextBox
             {
                 Text          = p.Description,
@@ -85,17 +86,14 @@ namespace StradarioApp.UI
             };
             AddControl(grid, _tbDescription, row++);
 
-            var btnCenter = new Button
-            {
-                Content = "📍 Usa centro vista mappa",
-                Margin  = new Thickness(0, 4, 0, 0),
-                HorizontalAlignment = HorizontalAlignment.Stretch
-            };
+            var btnCenter = DialogUi.MakeIconTextButton(BootstrapIcons.Locate, Strings.Get("PoiItemEditWindow_UsaCentroVistaMappa"));
+            btnCenter.Margin = new Thickness(0, 4, 0, 0);
+            btnCenter.HorizontalAlignment = HorizontalAlignment.Stretch;
             btnCenter.Click += (_, _) =>
             {
                 if (_tbLon != null) _tbLon.Text = $"{_currentViewLon:F6}";
                 if (_tbLat != null) _tbLat.Text = $"{_currentViewLat:F6}";
-                SetStatus("Coordinate impostate dal centro della vista mappa.", false);
+                SetStatus(Strings.Get("PoiItemEditWindow_CoordinateImpostate"), false);
             };
             Grid.SetRow(btnCenter, row);
             Grid.SetColumn(btnCenter, 0);
@@ -123,8 +121,8 @@ namespace StradarioApp.UI
                 Spacing             = 10,
                 Margin              = new Thickness(0, 10, 0, 0)
             };
-            var btnOk     = DialogUi.MakeDialogButton("OK", primary: true);
-            var btnCancel = DialogUi.MakeDialogButton("Annulla");
+            var btnOk     = DialogUi.MakeDialogButton(Strings.Get("PoiItemEditWindow_Ok"), primary: true);
+            var btnCancel = DialogUi.MakeDialogButton(Strings.Get("PoiItemEditWindow_Annulla"));
             btnOk.Click     += OnOkClick;
             btnCancel.Click += (_, _) => Close();
             btnRow.Children.Add(btnOk);
@@ -172,12 +170,12 @@ namespace StradarioApp.UI
         {
             if (!TryParseCoords(out double lon, out double lat))
             {
-                SetStatus("Coordinate non valide.", true);
+                SetStatus(Strings.Get("PoiItemEditWindow_CoordinateNonValide"), true);
                 return;
             }
 
             string label = _tbLabel?.Text?.Trim() ?? "";
-            if (string.IsNullOrEmpty(label)) label = "POI";
+            if (string.IsNullOrEmpty(label)) label = Strings.Get("PoiItemEditWindow_LabelDefault");
 
             ResultItem = new PoiItem
             {

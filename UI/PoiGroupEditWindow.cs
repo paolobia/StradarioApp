@@ -14,6 +14,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using StradarioApp.Models;
+using StradarioApp.Resources;
 using StradarioApp.Services;
 
 namespace StradarioApp.UI
@@ -39,7 +40,7 @@ namespace StradarioApp.UI
             _selectedIcon  = group.Icon;
             _selectedColor = group.ColorHex;
 
-            Title  = group.Id == 0 ? "Nuovo gruppo POI" : $"Modifica gruppo  {group.Name}";
+            Title  = group.Id == 0 ? Strings.Get("PoiGroupEditWindow_TitoloNuovo") : string.Format(Strings.Get("PoiGroupEditWindow_TitoloModifica"), group.Name);
             Width  = 430;
             Height = 500;
             CanResize = false;
@@ -59,11 +60,11 @@ namespace StradarioApp.UI
 
             int row = 0;
 
-            AddLabel(grid, "Nome:", row);
+            AddLabel(grid, Strings.Get("PoiGroupEditWindow_Nome"), row);
             _tbName = new TextBox { Text = g.Name };
             AddControl(grid, _tbName, row++);
 
-            AddLabel(grid, "Descrizione:", row);
+            AddLabel(grid, Strings.Get("PoiGroupEditWindow_Descrizione"), row);
             _tbDescription = new TextBox
             {
                 Text          = g.Description,
@@ -74,12 +75,12 @@ namespace StradarioApp.UI
             };
             AddControl(grid, _tbDescription, row++);
 
-            AddLabel(grid, "Colore:", row);
+            AddLabel(grid, Strings.Get("PoiGroupEditWindow_Colore"), row);
             _colorPanel = new WrapPanel { Orientation = Orientation.Horizontal };
             AddControl(grid, _colorPanel, row++);
             BuildColorSwatches();
 
-            AddLabel(grid, "Icona:", row);
+            AddLabel(grid, Strings.Get("PoiGroupEditWindow_Icona"), row);
             var iconScroll = new ScrollViewer { MaxHeight = 190 };
             _iconPanel = new WrapPanel { Orientation = Orientation.Horizontal };
             iconScroll.Content = _iconPanel;
@@ -94,8 +95,8 @@ namespace StradarioApp.UI
                 Spacing             = 10,
                 Margin              = new Thickness(0, 10, 0, 0)
             };
-            var btnOk     = DialogUi.MakeDialogButton("OK", primary: true);
-            var btnCancel = DialogUi.MakeDialogButton("Annulla");
+            var btnOk     = DialogUi.MakeDialogButton(Strings.Get("PoiGroupEditWindow_Ok"), primary: true);
+            var btnCancel = DialogUi.MakeDialogButton(Strings.Get("PoiGroupEditWindow_Annulla"));
             btnOk.Click     += OnOkClick;
             btnCancel.Click += (_, _) => Close();
             btnRow.Children.Add(btnOk);
@@ -197,7 +198,7 @@ namespace StradarioApp.UI
         private void OnOkClick(object? sender, RoutedEventArgs e)
         {
             string name = _tbName?.Text?.Trim() ?? "";
-            if (string.IsNullOrEmpty(name)) name = "Nuovo gruppo";
+            if (string.IsNullOrEmpty(name)) name = Strings.Get("PoiGroupEditWindow_NomeDefault");
 
             ResultGroup = new PoiGroup
             {

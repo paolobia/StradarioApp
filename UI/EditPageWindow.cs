@@ -6,7 +6,7 @@
 //     - Etichetta
 //     - Descrizione (TextBox multilinea, 4 righe visibili)
 //     - Centro geografico (Longitudine, Latitudine) in gradi decimali
-//   Bottone "📍 Città principali":
+//   Bottone "Città principali":
 //     - Cerca nel database cities500.csv le città dentro il bounding box
 //     - Ordina per popolazione decrescente, prende le prime 3
 //     - Inserisce i nomi nel campo Descrizione (es. "Roma, Tivoli, Palestrina")
@@ -20,6 +20,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using StradarioApp.Models;
+using StradarioApp.Resources;
 using StradarioApp.Services;
 
 namespace StradarioApp.UI
@@ -44,7 +45,7 @@ namespace StradarioApp.UI
             _settings  = settings;
             ResultPage = page;
 
-            Title  = $"Modifica pagina  {page.Label}";
+            Title  = string.Format(Strings.Get("EditPageWindow_Titolo"), page.Label);
             Width  = 420;
             Height = 390;
             CanResize = false;
@@ -65,22 +66,22 @@ namespace StradarioApp.UI
             int row = 0;
 
             // ---- Etichetta ----
-            AddLabel(grid, "Etichetta:", row);
+            AddLabel(grid, Strings.Get("EditPageWindow_Etichetta"), row);
             _tbLabel = new TextBox { Text = p.Label };
             AddControl(grid, _tbLabel, row++);
 
             // ---- Longitudine ----
-            AddLabel(grid, "Longitudine:", row);
+            AddLabel(grid, Strings.Get("EditPageWindow_Longitudine"), row);
             _tbLon = new TextBox { Text = $"{p.GeoBounds.CenterLon:F6}" };
             AddControl(grid, _tbLon, row++);
 
             // ---- Latitudine ----
-            AddLabel(grid, "Latitudine:", row);
+            AddLabel(grid, Strings.Get("EditPageWindow_Latitudine"), row);
             _tbLat = new TextBox { Text = $"{p.GeoBounds.CenterLat:F6}" };
             AddControl(grid, _tbLat, row++);
 
             // ---- Descrizione multilinea ----
-            AddLabel(grid, "Descrizione:", row);
+            AddLabel(grid, Strings.Get("EditPageWindow_Descrizione"), row);
             _tbDescription = new TextBox
             {
                 Text          = p.Description,
@@ -93,15 +94,10 @@ namespace StradarioApp.UI
             AddControl(grid, _tbDescription, row++);
 
             // ---- Bottone "Città principali" ----
-            var btnCities = new Button
-            {
-                Content = "📍 Città principali",
-                Margin  = new Thickness(0, 4, 0, 0),
-                HorizontalAlignment = HorizontalAlignment.Stretch
-            };
-            ToolTip.SetTip(btnCities,
-                "Inserisce nella descrizione le 3 città più popolose nell'area.\n" +
-                "Richiede cities500.csv nella stessa cartella dell'eseguibile.");
+            var btnCities = DialogUi.MakeIconTextButton(BootstrapIcons.Locate, Strings.Get("EditPageWindow_CittaPrincipali"));
+            btnCities.Margin = new Thickness(0, 4, 0, 0);
+            btnCities.HorizontalAlignment = HorizontalAlignment.Stretch;
+            ToolTip.SetTip(btnCities, Strings.Get("EditPageWindow_CittaPrincipaliTooltip"));
             btnCities.Click += OnCitiesClick;
             Grid.SetRow(btnCities, row);
             Grid.SetColumn(btnCities, 0);
@@ -118,7 +114,7 @@ namespace StradarioApp.UI
                 Margin       = new Thickness(0, 2, 0, 0),
                 // Mostra già quante città sono disponibili
                 Text         = CityDatabase.CityCount > 0
-                    ? $"Database: {CityDatabase.CityCount:N0} città disponibili"
+                    ? string.Format(Strings.Get("EditPageWindow_DatabaseCittaDisponibili"), CityDatabase.CityCount.ToString("N0"))
                     : CityDatabase.LoadStatus
             };
             Grid.SetRow(_tbStatus, row);
@@ -135,8 +131,8 @@ namespace StradarioApp.UI
                 Spacing             = 10,
                 Margin              = new Thickness(0, 10, 0, 0)
             };
-            var btnOk     = DialogUi.MakeDialogButton("OK", primary: true);
-            var btnCancel = DialogUi.MakeDialogButton("Annulla");
+            var btnOk     = DialogUi.MakeDialogButton(Strings.Get("EditPageWindow_Ok"), primary: true);
+            var btnCancel = DialogUi.MakeDialogButton(Strings.Get("EditPageWindow_Annulla"));
             btnOk.Click     += OnOkClick;
             btnCancel.Click += (_, _) => Close();
             btnRow.Children.Add(btnOk);
@@ -184,7 +180,7 @@ namespace StradarioApp.UI
         {
             if (!TryParseCoords(out double lon, out double lat))
             {
-                SetStatus("Inserisci coordinate valide prima.", true);
+                SetStatus(Strings.Get("EditPageWindow_CoordinateValidePrima"), true);
                 return;
             }
 
@@ -202,7 +198,7 @@ namespace StradarioApp.UI
 
             if (string.IsNullOrEmpty(desc))
             {
-                SetStatus("Nessuna città trovata nell'area.", false);
+                SetStatus(Strings.Get("EditPageWindow_NessunaCittaTrovata"), false);
                 return;
             }
 
@@ -210,14 +206,14 @@ namespace StradarioApp.UI
                 _tbDescription.Text = desc;
 
             int found = CityDatabase.FindTopCities(bounds, 3).Count;
-            SetStatus($"✅ {found} città trovate.", false);
+            SetStatus(string.Format(Strings.Get("EditPageWindow_CittaTrovate"), found), false);
         }
 
         private void OnOkClick(object? sender, RoutedEventArgs e)
         {
             if (!TryParseCoords(out double lon, out double lat))
             {
-                SetStatus("Coordinate non valide.", true);
+                SetStatus(Strings.Get("EditPageWindow_CoordinateNonValide"), true);
                 return;
             }
             ResultPage = new MapPage

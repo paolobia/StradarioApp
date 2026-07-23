@@ -3,10 +3,11 @@
 //
 // SINOSSI: Client minimo per l'endpoint chat completions di Groq
 //   (compatibile OpenAI, https://api.groq.com/openai/v1/chat/completions),
-//   usato da PoiSearchService.FilterCandidatesByQueryAsync per scegliere,
+//   usato da PoiSearchService.FilterAndScoreByQueryAsync per scegliere,
 //   dentro un elenco chiuso di POI reali già trovati su OpenStreetMap, quali
 //   soddisfano un vincolo espresso in linguaggio naturale (es. "della linea
-//   firenze bologna"). JSON mode (response_format=json_object) per ottenere
+//   firenze bologna"), assegnando anche un punteggio di affidabilità e un
+//   motivo. JSON mode (response_format=json_object) per ottenere
 //   una risposta parsabile senza estrazione tollerante. Un solo retry per
 //   errori transitori (timeout / 5xx / rete): un errore 4xx (chiave non
 //   valida, richiesta malformata) non viene ritentato, perché ripetere la

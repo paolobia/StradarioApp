@@ -21,6 +21,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using StradarioApp.Models;
+using StradarioApp.Resources;
 using StradarioApp.Services;
 
 namespace StradarioApp.UI
@@ -52,7 +53,7 @@ namespace StradarioApp.UI
             _selectedColor  = string.IsNullOrWhiteSpace(route.ColorHex) ? PercorsoRenderer.DefaultColorHex : route.ColorHex;
             _workingPoints  = route.Points.Select(p => new GeoPoint { Lon = p.Lon, Lat = p.Lat }).ToList();
 
-            Title  = route.Id == 0 ? "Nuovo percorso" : $"Modifica percorso  {route.Label}";
+            Title  = route.Id == 0 ? Strings.Get("RouteEditWindow_TitoloNuovo") : string.Format(Strings.Get("RouteEditWindow_TitoloModifica"), route.Label);
             Width  = 460;
             Height = 620;
             MinWidth  = 400;
@@ -74,11 +75,11 @@ namespace StradarioApp.UI
             };
 
             int row = 0;
-            AddLabel(top, "Etichetta:", row);
+            AddLabel(top, Strings.Get("RouteEditWindow_Etichetta"), row);
             _tbLabel = new TextBox { Text = r.Label };
             AddControl(top, _tbLabel, row++);
 
-            AddLabel(top, "Descrizione:", row);
+            AddLabel(top, Strings.Get("RouteEditWindow_Descrizione"), row);
             _tbDescription = new TextBox
             {
                 Text          = r.Description,
@@ -89,7 +90,7 @@ namespace StradarioApp.UI
             };
             AddControl(top, _tbDescription, row++);
 
-            AddLabel(top, "Colore:", row);
+            AddLabel(top, Strings.Get("RouteEditWindow_Colore"), row);
             _colorPanel = new WrapPanel { Orientation = Orientation.Horizontal };
             AddControl(top, _colorPanel, row++);
             BuildColorSwatches();
@@ -111,8 +112,8 @@ namespace StradarioApp.UI
                 Spacing             = 10,
                 Margin              = new Thickness(0, 10, 0, 0)
             };
-            var btnOk     = DialogUi.MakeDialogButton("OK", primary: true);
-            var btnCancel = DialogUi.MakeDialogButton("Annulla");
+            var btnOk     = DialogUi.MakeDialogButton(Strings.Get("RouteEditWindow_Ok"), primary: true);
+            var btnCancel = DialogUi.MakeDialogButton(Strings.Get("RouteEditWindow_Annulla"));
             btnOk.Click     += OnOkClick;
             btnCancel.Click += (_, _) => Close();
             btnRow.Children.Add(btnOk);
@@ -137,8 +138,10 @@ namespace StradarioApp.UI
                 Spacing     = 8,
                 Margin      = new Thickness(0, 10, 0, 4)
             };
-            pointsHeader.Children.Add(new TextBlock { Text = "Punti del percorso:", FontWeight = FontWeight.Bold, VerticalAlignment = VerticalAlignment.Center });
-            var btnAddPoint = new Button { Content = "📍 Aggiungi punto (centro vista mappa)", Padding = new Thickness(8, 4), FontSize = 11 };
+            pointsHeader.Children.Add(new TextBlock { Text = Strings.Get("RouteEditWindow_PuntiDelPercorso"), FontWeight = FontWeight.Bold, VerticalAlignment = VerticalAlignment.Center });
+            var btnAddPoint = DialogUi.MakeIconTextButton(BootstrapIcons.Locate, Strings.Get("RouteEditWindow_AggiungiPunto"));
+            btnAddPoint.Padding = new Thickness(8, 4);
+            btnAddPoint.FontSize = 11;
             btnAddPoint.Click += (_, _) =>
             {
                 _workingPoints.Add(new GeoPoint { Lon = _currentViewLon, Lat = _currentViewLat });
@@ -192,7 +195,7 @@ namespace StradarioApp.UI
             {
                 _pointsPanel.Children.Add(new TextBlock
                 {
-                    Text         = "Nessun punto. Usa \"Aggiungi punto\" per iniziare (oppure disegna il percorso sulla mappa).",
+                    Text         = Strings.Get("RouteEditWindow_NessunPunto"),
                     FontSize     = 11,
                     Foreground   = Brushes.Gray,
                     Margin       = new Thickness(2, 8),
@@ -210,7 +213,7 @@ namespace StradarioApp.UI
                     _workingPoints[i].Lon,     _workingPoints[i].Lat);
 
             if (_summaryText != null)
-                _summaryText.Text = $"{_workingPoints.Count} punti  ·  lunghezza {lengthKm:0.##} km";
+                _summaryText.Text = string.Format(Strings.Get("RouteEditWindow_PuntiLunghezza"), _workingPoints.Count, lengthKm.ToString("0.##"));
         }
 
         private Control BuildPointRow(int index)
@@ -247,7 +250,7 @@ namespace StradarioApp.UI
             row.Children.Add(tbLon);
             row.Children.Add(tbLat);
 
-            var btnUp = DialogUi.MakeTreeIconButton(BootstrapIcons.ChevronUp, "Sposta su", Brushes.SteelBlue, () =>
+            var btnUp = DialogUi.MakeTreeIconButton(BootstrapIcons.ChevronUp, Strings.Get("RouteEditWindow_SpostaSu"), Brushes.SteelBlue, () =>
             {
                 if (index == 0) return;
                 (_workingPoints[index - 1], _workingPoints[index]) = (_workingPoints[index], _workingPoints[index - 1]);
@@ -256,7 +259,7 @@ namespace StradarioApp.UI
             Grid.SetColumn(btnUp, 3);
             row.Children.Add(btnUp);
 
-            var btnDown = DialogUi.MakeTreeIconButton(BootstrapIcons.ChevronDown, "Sposta giù", Brushes.SteelBlue, () =>
+            var btnDown = DialogUi.MakeTreeIconButton(BootstrapIcons.ChevronDown, Strings.Get("RouteEditWindow_SpostaGiu"), Brushes.SteelBlue, () =>
             {
                 if (index == _workingPoints.Count - 1) return;
                 (_workingPoints[index + 1], _workingPoints[index]) = (_workingPoints[index], _workingPoints[index + 1]);
@@ -265,7 +268,7 @@ namespace StradarioApp.UI
             Grid.SetColumn(btnDown, 4);
             row.Children.Add(btnDown);
 
-            var btnDel = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, "Elimina punto", Brushes.Crimson, () =>
+            var btnDel = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("RouteEditWindow_EliminaPunto"), Brushes.Crimson, () =>
             {
                 _workingPoints.RemoveAt(index);
                 RefreshPoints();
@@ -292,7 +295,7 @@ namespace StradarioApp.UI
                     _workingPoints[i - 1].Lon, _workingPoints[i - 1].Lat,
                     _workingPoints[i].Lon,     _workingPoints[i].Lat);
             if (_summaryText != null)
-                _summaryText.Text = $"{_workingPoints.Count} punti  ·  lunghezza {lengthKm:0.##} km";
+                _summaryText.Text = string.Format(Strings.Get("RouteEditWindow_PuntiLunghezza"), _workingPoints.Count, lengthKm.ToString("0.##"));
         }
 
         private void AddLabel(Grid grid, string text, int row)
@@ -320,12 +323,12 @@ namespace StradarioApp.UI
         {
             if (_workingPoints.Count < 2)
             {
-                SetStatus("Il percorso deve avere almeno 2 punti.");
+                SetStatus(Strings.Get("RouteEditWindow_MinimoDuePunti"));
                 return;
             }
 
             string label = _tbLabel?.Text?.Trim() ?? "";
-            if (string.IsNullOrEmpty(label)) label = "Percorso";
+            if (string.IsNullOrEmpty(label)) label = Strings.Get("RouteEditWindow_LabelDefault");
 
             ResultRoute = new Percorso
             {

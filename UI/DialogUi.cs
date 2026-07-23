@@ -70,5 +70,36 @@ namespace StradarioApp.UI
             btn.Click += (_, _) => onClick();
             return btn;
         }
+
+        // Icona vettoriale puramente decorativa (non cliccabile), usata al
+        // posto di un glifo emoji davanti a un'etichetta di testo (es. titoli
+        // dei rami nell'albero di navigazione).
+        public static Path MakeIconGlyph(string svgPathData, IBrush foreground, double size = 16)
+        {
+            return new Path
+            {
+                Data    = Geometry.Parse(svgPathData),
+                Fill    = foreground,
+                Width   = size,
+                Height  = size,
+                Stretch = Stretch.Uniform,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+        }
+
+        // Bottone con icona vettoriale + etichetta di testo, stesso trattamento
+        // (Path da BootstrapIcons) delle altre icone dell'app al posto
+        // dell'emoji usata in precedenza per bottoni tipo "Usa centro vista mappa".
+        public static Button MakeIconTextButton(string svgPathData, string text)
+        {
+            var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, HorizontalAlignment = HorizontalAlignment.Center };
+            panel.Children.Add(MakeIconGlyph(svgPathData, Brushes.SteelBlue, 15));
+            panel.Children.Add(new TextBlock { Text = text, VerticalAlignment = VerticalAlignment.Center });
+            return new Button
+            {
+                Content = panel,
+                HorizontalContentAlignment = HorizontalAlignment.Center
+            };
+        }
     }
 }

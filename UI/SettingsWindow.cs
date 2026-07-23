@@ -18,6 +18,7 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using StradarioApp.Models;
+using StradarioApp.Resources;
 using StradarioApp.Services;
 
 namespace StradarioApp.UI
@@ -50,6 +51,19 @@ namespace StradarioApp.UI
         private TextBox?   _tbAutoLockSeconds;
         private TextBox?   _tbGroqApiKey;
         private TextBlock? _tbPreview;
+        private ComboBox?  _cbLanguage;
+
+        // "it"/"en", nello stesso ordine del ComboBox _cbLanguage — i nomi
+        // restano nella propria lingua nativa (non tradotti), come nella
+        // maggior parte dei selettori di lingua.
+        private static readonly string[] LanguageCodes = { "it", "en" };
+        private static readonly string[] LanguageNames = { "Italiano", "English" };
+
+        // Lingua corrente al momento dell'apertura (Strings.CurrentLanguage,
+        // già allineata alla preferenza salvata/rilevata da Program.cs):
+        // usata per preselezionare il combo, non richiede un parametro
+        // separato nel costruttore.
+        public string ResultLanguage { get; private set; } = Strings.CurrentLanguage;
 
         // Scale in ordine crescente per il ComboBox (l'ordine dell'enum MapScale
         // è invece fissato dalla persistenza in .stradario, vedi Models/StradarioModels.cs).
@@ -72,15 +86,15 @@ namespace StradarioApp.UI
         {
             ResultSettings   = current;
             _customCategories = (customCategories ?? Enumerable.Empty<(string, string, string)>()).ToList();
-            Title          = "Impostazioni stradario";
+            Title          = Strings.Get("SettingsWindow_Titolo");
             Width          = 460;
-            Height         = 600;
+            Height         = 650;
             CanResize      = false;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
             var tabs = new TabControl();
-            tabs.Items.Add(new TabItem { Header = "Generale",     Content = BuildGeneralTab(current) });
-            tabs.Items.Add(new TabItem { Header = "Categorie POI", Content = BuildCategoriesTab() });
+            tabs.Items.Add(new TabItem { Header = Strings.Get("SettingsWindow_TabGenerale"),     Content = BuildGeneralTab(current) });
+            tabs.Items.Add(new TabItem { Header = Strings.Get("SettingsWindow_TabCategoriePoi"), Content = BuildCategoriesTab() });
 
             // Pulsanti condivisi da entrambe le tab (OK conferma tutto,
             // impostazioni generali E categorie personalizzate insieme).
@@ -91,8 +105,8 @@ namespace StradarioApp.UI
                 Spacing             = 10,
                 Margin              = new Thickness(16, 8, 16, 12)
             };
-            var btnOk     = DialogUi.MakeDialogButton("OK", primary: true);
-            var btnCancel = DialogUi.MakeDialogButton("Annulla");
+            var btnOk     = DialogUi.MakeDialogButton(Strings.Get("SettingsWindow_Ok"), primary: true);
+            var btnCancel = DialogUi.MakeDialogButton(Strings.Get("SettingsWindow_Annulla"));
             btnOk.Click     += OnOkClick;
             btnCancel.Click += (_, _) => Close();
             btnRow.Children.Add(btnOk);
@@ -111,12 +125,12 @@ namespace StradarioApp.UI
             var grid = new Grid
             {
                 Margin            = new Thickness(16),
-                RowDefinitions    = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto"),
+                RowDefinitions    = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto"),
                 ColumnDefinitions = new ColumnDefinitions("140,*")
             };
 
             // ---- Formato pagina ----
-            AddLabel(grid, "Formato pagina:", 0);
+            AddLabel(grid, Strings.Get("SettingsWindow_FormatoPagina"), 0);
             _cbPageSize = new ComboBox
             {
                 ItemsSource   = new[] { "A5", "A4", "A3" },
@@ -127,10 +141,10 @@ namespace StradarioApp.UI
             AddControl(grid, _cbPageSize, 0);
 
             // ---- Orientamento ----
-            AddLabel(grid, "Orientamento:", 1);
+            AddLabel(grid, Strings.Get("SettingsWindow_Orientamento"), 1);
             _cbOrientation = new ComboBox
             {
-                ItemsSource   = new[] { "Portrait", "Landscape" },
+                ItemsSource   = new[] { Strings.Get("SettingsWindow_Portrait"), Strings.Get("SettingsWindow_Landscape") },
                 SelectedIndex = s.Orientation == PageOrientation.Portrait ? 0 : 1,
                 HorizontalAlignment = HorizontalAlignment.Stretch
             };
@@ -138,7 +152,7 @@ namespace StradarioApp.UI
             AddControl(grid, _cbOrientation, 1);
 
             // ---- DPI ----
-            AddLabel(grid, "DPI:", 2);
+            AddLabel(grid, Strings.Get("SettingsWindow_Dpi"), 2);
             _cbDpi = new ComboBox
             {
                 ItemsSource   = new[] { "72", "96", "150", "300" },
@@ -148,7 +162,7 @@ namespace StradarioApp.UI
             AddControl(grid, _cbDpi, 2);
 
             // ---- Scala ----
-            AddLabel(grid, "Scala:", 3);
+            AddLabel(grid, Strings.Get("SettingsWindow_Scala"), 3);
             _cbScale = new ComboBox
             {
                 ItemsSource   = ScaleComboItems,
@@ -159,7 +173,7 @@ namespace StradarioApp.UI
             AddControl(grid, _cbScale, 3);
 
             // ---- Blocco automatico ----
-            AddLabel(grid, "Blocco automatico dopo (secondi, 0=mai):", 4);
+            AddLabel(grid, Strings.Get("SettingsWindow_BloccoAutomatico"), 4);
             _tbAutoLockSeconds = new TextBox
             {
                 Text = s.AutoLockSeconds.ToString(),
@@ -168,10 +182,16 @@ namespace StradarioApp.UI
             AddControl(grid, _tbAutoLockSeconds, 4);
 
             // ---- Contrasto mappe nel PDF ----
-            AddLabel(grid, "Contrasto mappe (solo PDF):", 5);
+            AddLabel(grid, Strings.Get("SettingsWindow_ContrastoMappe"), 5);
             _cbPdfContrast = new ComboBox
             {
-                ItemsSource   = new[] { "Nessuno", "Contrasta colore", "Contrasta B/N", "Enfatizza strade" },
+                ItemsSource   = new[]
+                {
+                    Strings.Get("SettingsWindow_ContrastoNessuno"),
+                    Strings.Get("SettingsWindow_ContrastoColore"),
+                    Strings.Get("SettingsWindow_ContrastoBN"),
+                    Strings.Get("SettingsWindow_ContrastoStrade")
+                },
                 SelectedIndex = s.PdfContrastMode switch
                 {
                     PdfContrastMode.None         => 0,
@@ -197,7 +217,7 @@ namespace StradarioApp.UI
             UpdatePreview();
 
             // ---- Tile server (ultima impostazione: subito seguita dalla sua descrizione) ----
-            AddLabel(grid, "Mappa (tile server):", 7);
+            AddLabel(grid, Strings.Get("SettingsWindow_MappaTileServer"), 7);
             var serverNames = new string[TileServers.All.Length];
             int selectedServerIdx = TileServers.All.Length - 1; // default: ultimo
             for (int i = 0; i < TileServers.All.Length; i++)
@@ -217,7 +237,7 @@ namespace StradarioApp.UI
             // ---- API key tile server (solo se il server scelto la richiede) ----
             _lblTileApiKey = new TextBlock
             {
-                Text              = "API key tile server:",
+                Text              = Strings.Get("SettingsWindow_ApiKeyTileServer"),
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin            = new Thickness(0, 4),
                 TextWrapping      = Avalonia.Media.TextWrapping.Wrap
@@ -229,7 +249,7 @@ namespace StradarioApp.UI
             _tbTileApiKey = new TextBox
             {
                 Text                = s.TileServerApiKey,
-                Watermark           = "Chiave gratuita da thunderforest.com o stadiamaps.com",
+                Watermark           = Strings.Get("SettingsWindow_ChiaveTileServerWatermark"),
                 HorizontalAlignment = HorizontalAlignment.Stretch
             };
             AddControl(grid, _tbTileApiKey, 8);
@@ -258,23 +278,45 @@ namespace StradarioApp.UI
             void UpdateTileServerInfo()
             {
                 var entry = TileServers.All[_cbTileServer.SelectedIndex];
-                _tbTileServerInfo.Text =
-                    $"Copertura: {entry.Coverage}\n" +
-                    $"Caratteristiche: {entry.Characteristics}\n" +
-                    $"Consigliato per: {entry.Suggestion}";
+                _tbTileServerInfo.Text = string.Format(
+                    Strings.Get("SettingsWindow_InfoTileServer"),
+                    entry.Coverage, entry.Characteristics, entry.Suggestion);
             }
             _cbTileServer.SelectionChanged += (_, _) => UpdateTileServerInfo();
             UpdateTileServerInfo();
 
             // ---- Chiave API Groq (ricerca luoghi in linguaggio naturale, facoltativa) ----
-            AddLabel(grid, "Chiave API Groq (ricerca luoghi AI):", 10);
+            AddLabel(grid, Strings.Get("SettingsWindow_ChiaveGroq"), 10);
             _tbGroqApiKey = new TextBox
             {
                 Text                = s.GroqApiKey,
-                Watermark           = "Facoltativa, da console.groq.com — abilita la ricerca POI in linguaggio naturale",
+                Watermark           = Strings.Get("SettingsWindow_ChiaveGroqWatermark"),
                 HorizontalAlignment = HorizontalAlignment.Stretch
             };
             AddControl(grid, _tbGroqApiKey, 10);
+
+            // ---- Lingua interfaccia ----
+            AddLabel(grid, Strings.Get("SettingsWindow_Lingua"), 11);
+            int langIdx = Array.IndexOf(LanguageCodes, Strings.CurrentLanguage);
+            _cbLanguage = new ComboBox
+            {
+                ItemsSource   = LanguageNames,
+                SelectedIndex = langIdx >= 0 ? langIdx : 0,
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            AddControl(grid, _cbLanguage, 11);
+
+            var lblLanguageNote = new TextBlock
+            {
+                Text         = Strings.Get("SettingsWindow_RiavvioLingua"),
+                Margin       = new Thickness(0, 0, 0, 0),
+                FontSize     = 11,
+                Foreground   = Brushes.DimGray,
+                TextWrapping = Avalonia.Media.TextWrapping.Wrap
+            };
+            Grid.SetRow(lblLanguageNote, 12);
+            Grid.SetColumnSpan(lblLanguageNote, 2);
+            grid.Children.Add(lblLanguageNote);
 
             return grid;
         }
@@ -290,9 +332,7 @@ namespace StradarioApp.UI
 
             var intro = new TextBlock
             {
-                Text = "Categorie aggiuntive per la ricerca POI per categoria, oltre a quelle predefinite " +
-                       "(ristoranti, farmacie, ecc.). Specifica il tag OSM (chiave e valore, es. amenity / vending_machine) " +
-                       "e l'etichetta da mostrare nel menu di ricerca.",
+                Text = Strings.Get("SettingsWindow_IntroCategoriePoi"),
                 TextWrapping = Avalonia.Media.TextWrapping.Wrap,
                 FontSize     = 11,
                 Foreground   = Brushes.DimGray,
@@ -306,10 +346,10 @@ namespace StradarioApp.UI
                 ColumnDefinitions = new ColumnDefinitions("*,*,*,Auto"),
                 Margin            = new Thickness(0, 0, 0, 4)
             };
-            _tbCustomLabel = new TextBox { Watermark = "Etichetta (es. distributori acqua)", Margin = new Thickness(0, 0, 4, 0) };
-            _tbCustomKey   = new TextBox { Watermark = "Chiave OSM (es. amenity)",            Margin = new Thickness(0, 0, 4, 0) };
-            _tbCustomValue = new TextBox { Watermark = "Valore OSM (es. vending_machine)",     Margin = new Thickness(0, 0, 4, 0) };
-            var btnAdd = DialogUi.MakeDialogButton("➕ Aggiungi");
+            _tbCustomLabel = new TextBox { Watermark = Strings.Get("SettingsWindow_EtichettaWatermark"), Margin = new Thickness(0, 0, 4, 0) };
+            _tbCustomKey   = new TextBox { Watermark = Strings.Get("SettingsWindow_ChiaveOsmWatermark"),            Margin = new Thickness(0, 0, 4, 0) };
+            _tbCustomValue = new TextBox { Watermark = Strings.Get("SettingsWindow_ValoreOsmWatermark"),     Margin = new Thickness(0, 0, 4, 0) };
+            var btnAdd = DialogUi.MakeDialogButton(Strings.Get("SettingsWindow_AggiungiCategoria"));
             btnAdd.Click += (_, _) => OnAddCustomCategory();
 
             Grid.SetColumn(_tbCustomLabel, 0);
@@ -358,7 +398,7 @@ namespace StradarioApp.UI
 
             if (label.Length == 0 || key.Length == 0 || value.Length == 0)
             {
-                SetCustomError("Compila etichetta, chiave e valore prima di aggiungere.");
+                SetCustomError(Strings.Get("SettingsWindow_CompilaTuttiICampi"));
                 return;
             }
 
@@ -367,7 +407,7 @@ namespace StradarioApp.UI
                 PoiSearchService.AllCategories.Any(c => c.Key.Equals(key, StringComparison.OrdinalIgnoreCase) && c.Value.Equals(value, StringComparison.OrdinalIgnoreCase));
             if (alreadyExists)
             {
-                SetCustomError($"Esiste già una categoria con il tag \"{key}={value}\".");
+                SetCustomError(string.Format(Strings.Get("SettingsWindow_CategoriaGiaEsistente"), key, value));
                 return;
             }
 
@@ -388,7 +428,7 @@ namespace StradarioApp.UI
             {
                 _customCategoriesPanel.Children.Add(new TextBlock
                 {
-                    Text       = "Nessuna categoria personalizzata.",
+                    Text       = Strings.Get("SettingsWindow_NessunaCategoriaPersonalizzata"),
                     FontSize   = 11,
                     Foreground = Brushes.DimGray
                 });
@@ -400,11 +440,11 @@ namespace StradarioApp.UI
                 var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
                 var lbl = new TextBlock
                 {
-                    Text              = $"{cat.Label}  ({cat.Key}={cat.Value})",
+                    Text              = string.Format(Strings.Get("SettingsWindow_CategoriaRiga"), cat.Label, cat.Key, cat.Value),
                     VerticalAlignment = VerticalAlignment.Center
                 };
                 var btnRemove = new Button { Content = "🗑", Padding = new Thickness(6, 2) };
-                ToolTip.SetTip(btnRemove, "Rimuovi questa categoria personalizzata");
+                ToolTip.SetTip(btnRemove, Strings.Get("SettingsWindow_RimuoviCategoriaTooltip"));
                 btnRemove.Click += (_, _) =>
                 {
                     _customCategories.Remove(cat);
@@ -445,14 +485,17 @@ namespace StradarioApp.UI
         {
             var tmp = BuildSettingsFromControls();
             if (_tbPreview != null)
-                _tbPreview.Text =
-                    $"Ogni pagina copre circa {tmp.GetPageWidthKm():F1} × {tmp.GetPageHeightKm():F1} km";
+                _tbPreview.Text = string.Format(
+                    Strings.Get("SettingsWindow_PreviewPagina"),
+                    tmp.GetPageWidthKm().ToString("F1"), tmp.GetPageHeightKm().ToString("F1"));
         }
 
         private void OnOkClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
         {
             ResultSettings         = BuildSettingsFromControls();
             ResultCustomCategories = _customCategories.ToList();
+            int langIdx            = _cbLanguage?.SelectedIndex ?? 0;
+            ResultLanguage          = LanguageCodes[Math.Clamp(langIdx, 0, LanguageCodes.Length - 1)];
             Confirmed              = true;
             Close();
         }
