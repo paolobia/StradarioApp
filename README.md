@@ -1,3 +1,5 @@
+🇮🇹 **Italiano** | 🇬🇧 [English](README.en.md)
+
 # StradarioApp
 
 Applicazione desktop C# per la creazione di stradari cartografici (atlanti
