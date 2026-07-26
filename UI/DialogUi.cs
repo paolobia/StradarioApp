@@ -87,6 +87,38 @@ namespace StradarioApp.UI
             };
         }
 
+        // Badge "C→W" / "W→C" per la correzione GCJ-02/WGS84 dei punti che
+        // ricadono in Cina (v. Services/GcjTransform): stessa identica
+        // dimensione/sfondo trasparente/stile di MakeTreeIconButton (niente
+        // box colorato) — solo testo al posto di un Path, non essendoci un
+        // glifo SVG sensato per "conversione di sistema di coordinate".
+        public static Button MakeGcjBadgeButton(string text, string tooltip, IBrush foreground, Action onClick, double size = 24)
+        {
+            var label = new TextBlock
+            {
+                Text                = text,
+                FontSize            = size * 0.34,
+                FontWeight          = FontWeight.Bold,
+                Foreground          = foreground,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment   = VerticalAlignment.Center
+            };
+            var btn = new Button
+            {
+                Content    = label,
+                Width      = size,
+                Height     = size,
+                Padding    = new Avalonia.Thickness(0),
+                Background = Brushes.Transparent,
+                HorizontalContentAlignment = HorizontalAlignment.Center,
+                VerticalContentAlignment   = VerticalAlignment.Center,
+                Cursor     = new Cursor(StandardCursorType.Hand)
+            };
+            ToolTip.SetTip(btn, tooltip);
+            btn.Click += (_, _) => onClick();
+            return btn;
+        }
+
         // Bottone con icona vettoriale + etichetta di testo, stesso trattamento
         // (Path da BootstrapIcons) delle altre icone dell'app al posto
         // dell'emoji usata in precedenza per bottoni tipo "Usa centro vista mappa".

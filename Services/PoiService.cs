@@ -61,7 +61,11 @@ namespace StradarioApp.Services
         // controlla se lo stile referenzia un'icona PNG incorporata (solo
         // possibile dentro un contenitore zip) oppure solo il colore del
         // gruppo (per l'export .kml grezzo, che non ha dove incorporare i PNG).
-        private XDocument BuildKmlDocument(List<PoiGroup> groups, bool embedIcons)
+        // internal (non private): riusato da MainWindow per l'export combinato
+        // POI+percorsi in un unico KML/KMZ (OnExportAll), che assembla i
+        // <Style>/<Folder> di questo documento insieme a quelli prodotti da
+        // PercorsoService.BuildKmlDocument sotto un solo <Document>.
+        internal XDocument BuildKmlDocument(List<PoiGroup> groups, bool embedIcons)
         {
             XNamespace kml = KmlNamespace;
 
@@ -133,6 +137,14 @@ namespace StradarioApp.Services
                 await writer.WriteAsync(kmlDoc.Declaration + Environment.NewLine + kmlDoc.Root);
             }
 
+            await WriteIconEntriesAsync(zip, groups);
+        }
+
+        // Scrive le icone PNG dei gruppi ("files/icon_{id}.png") in uno zip
+        // già aperto: estratto da ExportKmzAsync per essere riusato anche
+        // dall'export combinato POI+percorsi in un unico KMZ (v. MainWindow.OnExportAll).
+        internal async Task WriteIconEntriesAsync(ZipArchive zip, List<PoiGroup> groups)
+        {
             foreach (var g in groups)
             {
                 using var bmp   = PoiIconRenderer.RenderToBitmap(g.Icon, PoiIconRenderer.ParseColor(g.ColorHex), IconPixelSize);
@@ -165,6 +177,22 @@ namespace StradarioApp.Services
                 new XAttribute("creator", "StradarioApp"),
                 new XAttribute("xmlns", GpxNamespace));
 
+            foreach (var wpt in BuildGpxWaypoints(groups))
+                root.Add(wpt);
+
+            var gpxDoc = new XDocument(new XDeclaration("1.0", "UTF-8", null), root);
+            await using var writer = new StreamWriter(path, false, new UTF8Encoding(false));
+            await writer.WriteAsync(gpxDoc.Declaration + Environment.NewLine + gpxDoc.Root);
+        }
+
+        // Estratto da ExportGpxAsync: riusato dall'export combinato
+        // POI+percorsi in un unico GPX (v. MainWindow.OnExportAll), dove
+        // waypoint e tracce finiscono nello stesso <gpx> root.
+        internal List<XElement> BuildGpxWaypoints(List<PoiGroup> groups)
+        {
+            XNamespace gpx = GpxNamespace;
+            var result = new List<XElement>();
+
             foreach (var g in groups)
             {
                 foreach (var item in g.Items)
@@ -177,13 +205,11 @@ namespace StradarioApp.Services
                         wpt.Add(new XElement(gpx + "name", item.Label));
                     if (!string.IsNullOrWhiteSpace(item.Description))
                         wpt.Add(new XElement(gpx + "desc", item.Description));
-                    root.Add(wpt);
+                    result.Add(wpt);
                 }
             }
 
-            var gpxDoc = new XDocument(new XDeclaration("1.0", "UTF-8", null), root);
-            await using var writer = new StreamWriter(path, false, new UTF8Encoding(false));
-            await writer.WriteAsync(gpxDoc.Declaration + Environment.NewLine + gpxDoc.Root);
+            return result;
         }
 
         // ---------------------------------------------------------------
@@ -237,12 +263,17 @@ namespace StradarioApp.Services
         }
 
         // Ritorna il nome KML/GPX sanificato (vedi KmlIo.SanitizeName), o il
-        // fallback se assente/vuoto (anche dopo la sanificazione)
-        private static string ResolveName(string? raw, string fallback)
+        // fallback se assente/vuoto (anche dopo la sanificazione). Applica
+        // anche la preferenza ASCII (v. Services/AsciiText): un nome di
+        // cartella in script non latino viene sostituito con una variante
+        // ASCII trovata nella description, o ripulito, non lasciato passare
+        // illeggibile.
+        private static string ResolveName(string? raw, string? description, string fallback)
         {
             if (string.IsNullOrWhiteSpace(raw)) return fallback;
             string sanitized = KmlIo.SanitizeName(raw);
-            return sanitized.Length > 0 ? sanitized : fallback;
+            if (sanitized.Length == 0) return fallback;
+            return AsciiText.PickAsciiLabel(sanitized, description, fallback);
         }
 
         private static List<PoiGroup> ParseKmlGroups(XDocument xdoc, XElement root, string fallbackName)
@@ -255,11 +286,12 @@ namespace StradarioApp.Services
 
             foreach (var folder in documentEl.Elements(ns + "Folder"))
             {
+                string folderDesc = folder.Element(ns + "description")?.Value?.Trim() ?? "";
                 var group = new PoiGroup
                 {
                     Id          = nextGroupId++,
-                    Name        = ResolveName(folder.Element(ns + "name")?.Value, fallbackName),
-                    Description = folder.Element(ns + "description")?.Value?.Trim() ?? "",
+                    Name        = ResolveName(folder.Element(ns + "name")?.Value, folderDesc, fallbackName),
+                    Description = AsciiText.SanitizeMultilineAscii(folderDesc),
                     Icon        = PoiIconType.Pin,
                     ColorHex    = PoiIconRenderer.DefaultColorHex
                 };
@@ -296,10 +328,13 @@ namespace StradarioApp.Services
                 if (!double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double lat)) continue;
                 (lat, lon) = GcjTransform.Gcj02ToWgs84(lat, lon);
 
+                string rawLabel = KmlIo.SanitizeName(pm.Element(ns + "name")?.Value ?? "");
+                string rawDesc  = pm.Element(ns + "description")?.Value?.Trim() ?? "";
+
                 group.Items.Add(new PoiItem
                 {
-                    Label       = KmlIo.SanitizeName(pm.Element(ns + "name")?.Value ?? ""),
-                    Description = pm.Element(ns + "description")?.Value?.Trim() ?? "",
+                    Label       = AsciiText.PickAsciiLabel(rawLabel, rawDesc, ""),
+                    Description = AsciiText.SanitizeMultilineAscii(rawDesc),
                     Lon         = lon,
                     Lat         = lat
                 });
@@ -329,13 +364,16 @@ namespace StradarioApp.Services
                 if (!double.TryParse(latAttr, NumberStyles.Float, CultureInfo.InvariantCulture, out double lat)) continue;
                 (lat, lon) = GcjTransform.Gcj02ToWgs84(lat, lon);
 
+                string rawLabel = KmlIo.SanitizeName(wpt.Element(ns + "name")?.Value ?? "");
+                string rawDesc  = wpt.Element(ns + "desc")?.Value?.Trim()
+                                  ?? wpt.Element(ns + "cmt")?.Value?.Trim() ?? "";
+
                 group.Items.Add(new PoiItem
                 {
-                    Label       = KmlIo.SanitizeName(wpt.Element(ns + "name")?.Value ?? ""),
-                    Description = wpt.Element(ns + "desc")?.Value?.Trim()
-                                  ?? wpt.Element(ns + "cmt")?.Value?.Trim() ?? "",
-                    Lon = lon,
-                    Lat = lat
+                    Label       = AsciiText.PickAsciiLabel(rawLabel, rawDesc, ""),
+                    Description = AsciiText.SanitizeMultilineAscii(rawDesc),
+                    Lon         = lon,
+                    Lat         = lat
                 });
             }
 

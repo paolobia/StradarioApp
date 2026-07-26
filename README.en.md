@@ -10,12 +10,14 @@ Avalonia UI.
 
 ## Features
 
-1. **Settings** – Two tabs: "General" (page size A5/A4/A3, orientation,
+1. **Settings** – Three tabs: "General" (page size A5/A4/A3, orientation,
    DPI 72/96/150/300, map scale from 1:1,000 up to 1:1,000,000 — see the
    list below, tile server with or without an API key, auto-lock for
-   inactive objects, map contrast in the PDF) and "POI categories" (add
+   inactive objects, map contrast in the PDF), "POI categories" (add
    custom search categories, alongside the built-in ones, by specifying a
-   label and an OSM tag `key=value`)
+   label and an OSM tag `key=value`), and "Offline POI database" (optional,
+   per-continent download of a local POI database for instant, network-free,
+   area-unrestricted search instead of live Overpass)
 2. **Interactive map** – Pan (drag), zoom (scroll wheel) centered on the
    cursor
 3. **Pages** – Right-click to add a page; drag to move it; automatic
@@ -38,17 +40,29 @@ Avalonia UI.
 5. **Routes** – Point-by-point route drawing directly on the map,
    extendable afterwards, with drag on individual vertices
 6. **KMZ/KML/GPX Import/Export** – Unified import (POIs and routes in the
-   same file), separate export for POI groups and routes; points falling
-   in China are automatically corrected from GCJ-02 to WGS84 on import and
-   vice versa on export (Chinese public maps obfuscate real coordinates
-   with a deterministic offset)
-7. **PDF generation** – Preview before saving, complete stradario with
+   same file); export either separate (POI groups, routes) or combined
+   into a single file ("Export all"). Names/descriptions in a non-Latin
+   script (e.g. Chinese characters) are replaced with an ASCII variant when
+   available in the tags, or stripped otherwise. Points in China may be in
+   GCJ-02 rather than real WGS84 (a deterministic offset used by Chinese
+   maps, including Google Maps for locations inside China): for KML/KMZ
+   (always WGS84 by specification) nothing is asked, for GPX you can choose
+   to correct or leave as-is (auto-detected from the file name if it
+   contains "wgs84"/"gcj02"); "C→W"/"W→C" icons in the tree let you manually
+   correct/convert any single POI or route point that falls in China, at
+   any time
+7. **Hybrid POI search** – Live Overpass by default; if at least one
+   continent has been downloaded from the offline POI database (see
+   Settings), the same category search answers instantly and offline
+8. **PDF generation** – Preview before saving, complete stradario with
    index, overview map, optional POI gazetteer pages, map pages with
    references to adjacent pages (N/S/E/W) and a graphic scale bar;
    optional contrast tuned for black-and-white printing
-8. **Project saving** – `.stradario` file (JSON), readable and editable by
+9. **Project saving** – `.stradario` file (JSON), readable and editable by
    hand; API keys (tile server, Groq) are **never** saved in the project,
-   only in the application preferences
+   only in the application preferences. Every file picker (open/save
+   project, import, export, PDF) starts from the last folder actually
+   used, not the system's "Recent" list
 
 ---
 

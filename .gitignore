@@ -29,3 +29,9 @@ cities500.csv
 
 # Debug-only diagnostic log (Services/DebugLog.cs)
 debug.log
+
+# osm/ (OsmExtractor, vedi osm/CLAUDE.md): dati scaricati/generati, fino a
+# centinaia di GB (.osm.pbf per continente, CSV estratti, zip di release) —
+# solo il codice sorgente di OsmExtractor va in git, mai questi dati
+osm/osm_data/
+osm/OsmExtractor/extract_all.log

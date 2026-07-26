@@ -42,7 +42,9 @@ namespace StradarioApp.Services
         // ---------------------------------------------------------------
         // EXPORT
         // ---------------------------------------------------------------
-        private XDocument BuildKmlDocument(List<Percorso> routes)
+        // internal (non private): riusato da MainWindow per l'export
+        // combinato POI+percorsi in un unico KML/KMZ (v. MainWindow.OnExportAll).
+        internal XDocument BuildKmlDocument(List<Percorso> routes)
         {
             XNamespace kml = KmlNamespace;
 
@@ -121,6 +123,21 @@ namespace StradarioApp.Services
                 new XAttribute("creator", "StradarioApp"),
                 new XAttribute("xmlns", GpxNamespace));
 
+            foreach (var trk in BuildGpxTracks(routes))
+                root.Add(trk);
+
+            var gpxDoc = new XDocument(new XDeclaration("1.0", "UTF-8", null), root);
+            await using var writer = new StreamWriter(path, false, new UTF8Encoding(false));
+            await writer.WriteAsync(gpxDoc.Declaration + Environment.NewLine + gpxDoc.Root);
+        }
+
+        // Estratto da ExportGpxAsync: riusato dall'export combinato
+        // POI+percorsi in un unico GPX (v. MainWindow.OnExportAll).
+        internal List<XElement> BuildGpxTracks(List<Percorso> routes)
+        {
+            XNamespace gpx = GpxNamespace;
+            var result = new List<XElement>();
+
             foreach (var r in routes)
             {
                 var trk = new XElement(gpx + "trk");
@@ -139,12 +156,10 @@ namespace StradarioApp.Services
                 }
                 trk.Add(trkseg);
 
-                root.Add(trk);
+                result.Add(trk);
             }
 
-            var gpxDoc = new XDocument(new XDeclaration("1.0", "UTF-8", null), root);
-            await using var writer = new StreamWriter(path, false, new UTF8Encoding(false));
-            await writer.WriteAsync(gpxDoc.Declaration + Environment.NewLine + gpxDoc.Root);
+            return result;
         }
 
         // ---------------------------------------------------------------
@@ -228,12 +243,13 @@ namespace StradarioApp.Services
                 string? styleUrl = pm.Element(ns + "styleUrl")?.Value?.Trim().TrimStart('#');
                 string colorHex = (styleUrl != null && styleColors.TryGetValue(styleUrl, out var c))
                     ? c : PercorsoRenderer.DefaultColorHex;
+                string rawDesc = pm.Element(ns + "description")?.Value?.Trim() ?? "";
 
                 imported.Add(new Percorso
                 {
                     Id          = cursor,
-                    Label       = ResolveLabel(pm.Element(ns + "name")?.Value, $"Percorso {cursor}"),
-                    Description = pm.Element(ns + "description")?.Value?.Trim() ?? "",
+                    Label       = ResolveLabel(pm.Element(ns + "name")?.Value, rawDesc, $"Percorso {cursor}"),
+                    Description = AsciiText.SanitizeMultilineAscii(rawDesc),
                     ColorHex    = colorHex,
                     Points      = points
                 });
@@ -244,12 +260,16 @@ namespace StradarioApp.Services
         }
 
         // Ritorna il nome KML/GPX sanificato (vedi KmlIo.SanitizeName), o il
-        // fallback se assente/vuoto (anche dopo la sanificazione)
-        private static string ResolveLabel(string? raw, string fallback)
+        // fallback se assente/vuoto (anche dopo la sanificazione). Applica
+        // anche la preferenza ASCII (v. Services/AsciiText): un'etichetta in
+        // script non latino viene sostituita con una variante ASCII trovata
+        // nella description, o ripulita, non lasciata passare illeggibile.
+        private static string ResolveLabel(string? raw, string? description, string fallback)
         {
             if (string.IsNullOrWhiteSpace(raw)) return fallback;
             string sanitized = KmlIo.SanitizeName(raw);
-            return sanitized.Length > 0 ? sanitized : fallback;
+            if (sanitized.Length == 0) return fallback;
+            return AsciiText.PickAsciiLabel(sanitized, description, fallback);
         }
 
         // GPX: ogni <trk> (con uno o più <trkseg>) e ogni <rte> diventano un
@@ -281,11 +301,12 @@ namespace StradarioApp.Services
                     if (TryReadPoint(trkpt, out var p)) points.Add(p);
                 if (points.Count < 2) continue;
 
+                string rawTrkDesc = trk.Element(ns + "desc")?.Value?.Trim() ?? "";
                 imported.Add(new Percorso
                 {
                     Id          = cursor,
-                    Label       = ResolveLabel(trk.Element(ns + "name")?.Value, $"Percorso {cursor}"),
-                    Description = trk.Element(ns + "desc")?.Value?.Trim() ?? "",
+                    Label       = ResolveLabel(trk.Element(ns + "name")?.Value, rawTrkDesc, $"Percorso {cursor}"),
+                    Description = AsciiText.SanitizeMultilineAscii(rawTrkDesc),
                     ColorHex    = PercorsoRenderer.DefaultColorHex,
                     Points      = points
                 });
@@ -299,11 +320,12 @@ namespace StradarioApp.Services
                     if (TryReadPoint(rtept, out var p)) points.Add(p);
                 if (points.Count < 2) continue;
 
+                string rawRteDesc = rte.Element(ns + "desc")?.Value?.Trim() ?? "";
                 imported.Add(new Percorso
                 {
                     Id          = cursor,
-                    Label       = ResolveLabel(rte.Element(ns + "name")?.Value, $"Percorso {cursor}"),
-                    Description = rte.Element(ns + "desc")?.Value?.Trim() ?? "",
+                    Label       = ResolveLabel(rte.Element(ns + "name")?.Value, rawRteDesc, $"Percorso {cursor}"),
+                    Description = AsciiText.SanitizeMultilineAscii(rawRteDesc),
                     ColorHex    = PercorsoRenderer.DefaultColorHex,
                     Points      = points
                 });

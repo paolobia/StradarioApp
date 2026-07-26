@@ -278,6 +278,32 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   is invisible outside an IDE/Debug build, so it couldn't have been used to
   get that diagnosis from a bug report.
 
+- **Offline POI database, as an alternative to live Overpass search.**
+  `Services/PoiOfflineDatabase` reads per-continent CSV files (id, lat, lon,
+  name, `key=value;...` tags — same serialization as `PoiSearchService.
+  BuildOsmTagsString`) produced by the separate `osm/OsmExtractor` console
+  tool (see `osm/CLAUDE.md`: streams a Geofabrik `.osm.pbf` planet extract
+  via `OsmSharp`, one CSV per OSM tag category in `osm/OsmExtractor/
+  CategoriePOI.txt`, way/relation POI — polygons — are skipped, only
+  `Node`s). CSVs are zipped per continent (`PoiOfflineDatabase.Continents`:
+  africa/antarctica/asia/australia-oceania/central-america/europe/
+  north-america/south-america) and published to a **separate** GitHub
+  Release tagged `osm-data-<date>` (`DataTagPrefix`, deliberately distinct
+  from the app's own `v1.0.x` version tags read by `UpdateChecker`, so the
+  two release streams never get confused scrolling the repo's release
+  list). Same `BaseSearchDirs` lookup family as `CityDatabase`'s
+  `cities500.csv` (repo root / executable folder / `~`, under
+  `osm_data/csv/<continente>/`) plus an `AppData` download cache — but
+  **no silent automatic download**: continents are large (up to ~320 MB
+  for Europe), so fetching one is always an explicit action from
+  Settings → "Database POI offline" (`UI/SettingsWindow.BuildOfflineDataTab`,
+  one row per continent with status — not downloaded / local version /
+  update available — and a download/update button).
+  `MainWindow.RunCategorySearchAsync` prefers this offline path over
+  Overpass whenever `PoiOfflineDatabase.HasAnyLocalData()` is true (instant,
+  no need to clamp an over-wide view since there's no public server to
+  protect), falling back to the live Overpass query otherwise.
+
 - **Percorsi (routes).** `Models/StradarioModels.cs` defines `Percorso`
   (label, description, color, ordered `List<GeoPoint>`), stored flat in
   `StradarioProject.Percorsi` (no grouping — each route is its own entity)
@@ -352,6 +378,89 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   with a real Beijing point (Tiananmen, WGS84 39.9055,116.3976 →
   exported GCJ-02 39.9069,116.4038, ~555 m offset, round-trip back to
   within 6 cm).
+
+- **GCJ-02/WGS84 is never assumed silently for KML/KMZ — only for GPX.**
+  The OGC KML 2.2 specification mandates WGS84 coordinates always, so
+  import/export of `.kml`/`.kmz` never asks and never applies the GCJ-02
+  correction (`GcjTransform.CorrectionEnabled` forced `false`). GPX has no
+  such guarantee in practice (some Chinese apps reuse the GPX container
+  with GCJ-02 data), so for `.gpx` only, `MainWindow.ImportFromFileAsync`/
+  `OnExportKmz`/`OnExportPercorsiKmz`/`OnExportAll` ask via `AskYesNo`
+  — default/primary button is **"Already WGS84"/"Keep WGS84"**, not
+  "Apply correction": a KML/GPX being WGS84 is the norm, not the exception,
+  and defaulting to "apply" corrupted at least one real WGS84 point placed
+  by hand (see `DetectGcjHintFromFileName`, an escape hatch checking the
+  file name for `wgs84`/`gcj02`/`gcj-02` to skip the question when it's
+  unambiguous). `GcjTransform.ImportCorrectedCount`/`ExportConvertedCount`
+  (reset via `ResetCounters()`) let the status bar report how many points
+  were actually touched.
+
+- **The China GCJ-02 ambiguity is NOT specific to imported data** — a POI
+  typed/edited by hand can be affected too, if its source coordinate came
+  from a Chinese map (including Google Maps, which by PRC regulation shows
+  GCJ-02 for any point inside mainland China, unlike everywhere else in the
+  world). Real case that shaped this design: a hand-entered coordinate for
+  Xi'an's Bell Tower (钟楼), taken from Google Maps and believed to be
+  WGS84, rendered ~700 m off; `GcjTransform.Gcj02ToWgs84` on it landed
+  within ~4 m of OSM's own coordinate for the same landmark. Because of
+  this, the manual "C→W"/"W→C" fix badges below are shown for **any** point
+  falling inside `GcjTransform.IsInChina`'s bounding box regardless of how
+  it was created (manual, search, or import) — provenance does not predict
+  correctness, only geography is a reliable signal here.
+
+- **Manual per-point GCJ-02 fix: "C→W"/"W→C" badges in the nav tree**
+  (`DialogUi.MakeGcjBadgeButton`, 24×24 text badges matching
+  `MakeTreeIconButton`'s size/transparent style, not a colored box). Shown
+  next to a `PoiItem` (`MainWindow.BuildPoiItemLeaf`) or a `Percorso` point
+  (`BuildRoutePointGcjLeaf`, a leaf added under the route only for points
+  currently in China) whenever `GcjTransform.IsInChina(lat, lon)` is true.
+  Clicking applies `Gcj02ToWgs84` (C→W) or `Wgs84ToGcj02ForExport` (W→C)
+  immediately (map + nav tree refresh), through `PushUndo` like any other
+  coordinate edit, with a status-bar confirmation
+  (`ApplyGcjToPoi`/`ApplyGcjToRoutePoint`).
+
+- **Export can combine POI groups and routes into a single file**
+  (`MainWindow.OnExportAll`, toolbar icon right after "Importa", mirrors
+  `OnImportKmzUnified` reading a mixed KML in one pass). For KML/KMZ,
+  `BuildCombinedKmlDocument` merges the `<Style>`/`<Folder>` fragments from
+  `PoiService.BuildKmlDocument`/`PercorsoService.BuildKmlDocument` (both
+  `internal`, not `private`, specifically for this reuse) under one
+  `<Document>` — `RenameKmlStyleIds` prefixes every `<Style id="...">` and
+  matching `<styleUrl>` with `poi_`/`route_` first, because `PoiGroup.Id`
+  and `Percorso.Id` are independent per-project sequences that both start
+  at 1 and would otherwise collide once merged (verified with a standalone
+  reflection-based smoke test before shipping). For GPX, waypoints and
+  tracks just go in the same `<gpx>` root (the format supports both
+  natively, no id collision possible). `BootstrapIcons.Export` is the same
+  cloud/arrow glyph as `Import` with the arrow vertically mirrored about
+  its own bounding-box center (verified by rendering both with `cairosvg`
+  before committing the path data), used for both the new toolbar action
+  and the two "Esporta" tree buttons (previously the generic `Save` icon).
+
+- **OSM tag values in an unfamiliar script are ASCII-only, never left
+  garbled.** `Services/AsciiText.cs` centralizes this (used by both the
+  live Overpass search in `PoiSearchService.PickBestName`/
+  `BuildOsmTagsString` and by `PoiService`/`PercorsoService`'s KML/GPX
+  import, where extra tags often arrive as free-text lines inside
+  `<description>` rather than real XML elements). Name resolution tries
+  `name:it`/`name:en` (whichever matches the current UI language first,
+  `AsciiText.NamePriorityKeys`) then `int_name` then the raw `name`,
+  returning the first candidate that's already ASCII; if none are, it
+  strips non-ASCII characters from the best candidate found rather than
+  falling back to garbled/口-square text. Other tag values (in
+  `BuildOsmTagsString`/`SanitizeMultilineAscii`) get the same per-line
+  treatment, and a `key=value` line whose value goes empty after stripping
+  is dropped entirely instead of showing a dangling `key=`.
+
+- **File pickers (open/save project, import, export, PDF) start in the
+  last folder actually used**, not the OS/portal's own "Recent" default.
+  `AppPreferencesService.LoadLastUsedFolder`/`SaveLastUsedFolder` persist a
+  single global path; `MainWindow.GetSuggestedStartFolderAsync`/
+  `RememberLastUsedFolder` wire it into every `FilePickerOpenOptions`/
+  `FilePickerSaveOptions.SuggestedStartLocation` and update it after every
+  successful pick. Falls back silently to the OS default if the saved
+  folder no longer exists (`TryGetFolderFromPathAsync` returning `null`,
+  e.g. an unmounted external drive).
 
 - **Fallback POI group naming uses the file name.** When a KML has no
   `<Folder><name>` (or the Placemark/`<wpt>` isn't inside any Folder), the

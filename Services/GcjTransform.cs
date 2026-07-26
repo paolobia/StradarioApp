@@ -34,12 +34,39 @@ namespace StradarioApp.Services
             return lon >= 72.004 && lon <= 137.8347 && lat >= 0.8293 && lat <= 55.8271;
         }
 
+        // Contatori dei punti effettivamente trasformati (IsInChina == true)
+        // nell'ultima operazione di import/export, usati da MainWindow per
+        // avvisare in status bar quanti punti sono stati corretti/convertiti
+        // e in che direzione, senza dover cambiare le firme di
+        // PoiService/PercorsoService per farli restituire un conteggio.
+        public static int ImportCorrectedCount { get; private set; }
+        public static int ExportConvertedCount { get; private set; }
+
+        public static void ResetCounters()
+        {
+            ImportCorrectedCount = 0;
+            ExportConvertedCount = 0;
+        }
+
+        // Interruttore globale, impostato da MainWindow per la singola
+        // operazione di import/export in corso in base alla risposta
+        // dell'utente ("i punti sono già WGS84" → false): quando disattivato,
+        // Gcj02ToWgs84/Wgs84ToGcj02ForExport diventano no-op anche dentro il
+        // bounding box della Cina. Di default true (comportamento storico:
+        // corregge sempre l'area Cina). Va rimesso a true subito dopo
+        // l'operazione (try/finally lato chiamante): è uno stato globale
+        // valido solo per la durata di quella singola chiamata.
+        public static bool CorrectionEnabled { get; set; } = true;
+
         // Corregge un punto GCJ-02 (letto da un KML/GPX di origine cinese) nel
-        // corrispondente punto WGS84 reale. No-op se il punto è fuori dalla Cina.
+        // corrispondente punto WGS84 reale. No-op se il punto è fuori dalla Cina
+        // o se l'utente ha indicato che la fonte è già WGS84 (CorrectionEnabled = false).
         public static (double Lat, double Lon) Gcj02ToWgs84(double gcjLat, double gcjLon)
         {
-            if (!IsInChina(gcjLat, gcjLon))
+            if (!CorrectionEnabled || !IsInChina(gcjLat, gcjLon))
                 return (gcjLat, gcjLon);
+
+            ImportCorrectedCount++;
 
             const double initDelta  = 0.01;
             const double threshold  = 0.000001;
@@ -75,9 +102,10 @@ namespace StradarioApp.Services
         // bounding box di IsInChina/Gcj02ToWgs84.
         public static (double Lat, double Lon) Wgs84ToGcj02ForExport(double wgsLat, double wgsLon)
         {
-            if (!IsInChina(wgsLat, wgsLon))
+            if (!CorrectionEnabled || !IsInChina(wgsLat, wgsLon))
                 return (wgsLat, wgsLon);
 
+            ExportConvertedCount++;
             return Wgs84ToGcj02(wgsLat, wgsLon);
         }
 

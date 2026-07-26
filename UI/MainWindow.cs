@@ -14,10 +14,13 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -567,6 +570,7 @@ namespace StradarioApp.UI
                             Title            = Strings.Get("MainWindow_SalvaProgettoTitolo"),
                             DefaultExtension = "stradario",
                             SuggestedFileName = _project.ProjectName,
+                            SuggestedStartLocation = await GetSuggestedStartFolderAsync(),
                             FileTypeChoices  = new[]
                             {
                                 new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroStradario"))
@@ -576,6 +580,7 @@ namespace StradarioApp.UI
                     if (file != null)
                     {
                         _currentFilePath = file.Path.LocalPath;
+                        RememberLastUsedFolder(_currentFilePath);
                         await SaveCurrentProject(_currentFilePath);
                     }
                     else
@@ -874,6 +879,7 @@ namespace StradarioApp.UI
 
             toolbar.Children.Add(ToolbarSeparator());
             toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Import, Strings.Get("MainWindow_ImportaTooltip"), OnImportKmzUnified));
+            toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.Export, Strings.Get("MainWindow_EsportaTuttoTooltip"), async (_, _) => await OnExportAll()));
             toolbar.Children.Add(MakeToolbarIcon(BootstrapIcons.ExportPdf, Strings.Get("MainWindow_GeneraPdf"), OnGeneratePdf));
 
             toolbar.Children.Add(ToolbarSeparator());
@@ -978,7 +984,23 @@ namespace StradarioApp.UI
             // sempre del testo, a differenza delle categorie vere (dove il
             // testo è un filtro opzionale sul nome): aggiorna il watermark
             // per non far credere che si possa cercare a vuoto anche lì.
-            _categoryFilterComboBox.SelectionChanged += (s, e) => UpdatePoiSearchWatermark();
+            _categoryFilterComboBox.SelectionChanged += (s, e) =>
+            {
+                UpdatePoiSearchWatermark();
+
+                // Suggerimento non invasivo (mai un blocco/popup): se la
+                // categoria scelta è una vera categoria OSM (non le voci
+                // sentinella indirizzo/città) e non è stato scaricato
+                // nessun continente da Impostazioni, la ricerca funzionerà
+                // comunque (fallback Overpass, vedi RunCategorySearchAsync)
+                // ma solo online — vale la pena saperlo prima di lanciarla.
+                var selected = GetSelectedCategoryFilter();
+                if (selected != null && selected.Value.Key != PoiSearchService.SentinelCategoryKey
+                    && !PoiOfflineDatabase.HasAnyLocalData())
+                {
+                    ShowStatusMessage(Strings.Get("MainWindow_SuggerimentoDatiOfflineNonScaricati"), seconds: 4);
+                }
+            };
             toolbar.Children.Add(_categoryFilterComboBox);
             UpdatePoiSearchWatermark();
 
@@ -1162,7 +1184,7 @@ namespace StradarioApp.UI
             bool allPoiLocked = _project.PoiGroups.Count > 0 && _project.PoiGroups.All(g => g.IsLocked);
             var poiIcons = new List<Control>
             {
-                DialogUi.MakeTreeIconButton(BootstrapIcons.Save, Strings.Get("MainWindow_EsportaGruppiPoiTooltip"), Brushes.SteelBlue, async () => await OnExportKmz()),
+                DialogUi.MakeTreeIconButton(BootstrapIcons.Export, Strings.Get("MainWindow_EsportaGruppiPoiTooltip"), Brushes.SteelBlue, async () => await OnExportKmz()),
                 DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, Strings.Get("MainWindow_NuovoGruppoPoiTooltip"), Brushes.SteelBlue, async () => await OnNewPoiGroup())
             };
             if (_multiSelectedPoiKeys.Count > 0)
@@ -1231,7 +1253,7 @@ namespace StradarioApp.UI
             bool allRoutesLocked = _project.Percorsi.Count > 0 && _project.Percorsi.All(r => r.IsLocked);
             var percorsiIcons = new List<Control>
             {
-                DialogUi.MakeTreeIconButton(BootstrapIcons.Save, Strings.Get("MainWindow_EsportaPercorsiTooltip"), Brushes.SteelBlue, async () => await OnExportPercorsiKmz()),
+                DialogUi.MakeTreeIconButton(BootstrapIcons.Export, Strings.Get("MainWindow_EsportaPercorsiTooltip"), Brushes.SteelBlue, async () => await OnExportPercorsiKmz()),
                 DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, Strings.Get("MainWindow_NuovoPercorsoTooltip"), Brushes.SteelBlue, OnNewPercorso),
                 DialogUi.MakeTreeIconButton(_percorsiVisible ? BootstrapIcons.Eye : BootstrapIcons.EyeSlash,
                     _percorsiVisible ? Strings.Get("MainWindow_NascondiPercorsiTooltip") : Strings.Get("MainWindow_MostraPercorsiTooltip"),
@@ -1264,7 +1286,14 @@ namespace StradarioApp.UI
                     root.Children.Add(Indent(EmptyHint(filtering ? Strings.Get("MainWindow_NessunPercorsoFiltro") : Strings.Get("MainWindow_NessunPercorsoVuoto"))));
 
                 foreach (var route in visibleRoutes)
+                {
                     root.Children.Add(Indent(BuildPercorsoNavItem(route)));
+                    for (int i = 0; i < route.Points.Count; i++)
+                    {
+                        if (GcjTransform.IsInChina(route.Points[i].Lat, route.Points[i].Lon))
+                            root.Children.Add(Indent(BuildRoutePointGcjLeaf(route, i), 28));
+                    }
+                }
             }
 
             return root;
@@ -1466,7 +1495,7 @@ namespace StradarioApp.UI
                 Cursor          = new Cursor(StandardCursorType.Hand)
             };
 
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto") };
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto") };
 
             var info = new StackPanel { Spacing = 1 };
             info.Children.Add(new TextBlock { Text = item.Label, FontSize = 12 });
@@ -1479,14 +1508,25 @@ namespace StradarioApp.UI
             Grid.SetColumn(info, 0);
             row.Children.Add(info);
 
+            if (GcjTransform.IsInChina(item.Lat, item.Lon))
+            {
+                var gcjPanel = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 0, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
+                gcjPanel.Children.Add(DialogUi.MakeGcjBadgeButton(
+                    Strings.Get("Gcj_BadgeGcjToWgs"), Strings.Get("Gcj_TooltipGcjToWgs"), Brushes.SeaGreen, () => ApplyGcjToPoi(group, item, toWgs84: true)));
+                gcjPanel.Children.Add(DialogUi.MakeGcjBadgeButton(
+                    Strings.Get("Gcj_BadgeWgsToGcj"), Strings.Get("Gcj_TooltipWgsToGcj"), Brushes.DarkOrange, () => ApplyGcjToPoi(group, item, toWgs84: false)));
+                Grid.SetColumn(gcjPanel, 1);
+                row.Children.Add(gcjPanel);
+            }
+
             var editBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Pencil, Strings.Get("MainWindow_ModificaPoiTooltip"), Brushes.SteelBlue,
                 async () => await OnEditPoiItem(group, item));
-            Grid.SetColumn(editBtn, 1);
+            Grid.SetColumn(editBtn, 2);
             row.Children.Add(editBtn);
 
             var delBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("MainWindow_EliminaPoiTooltip"), Brushes.Crimson,
                 () => OnDeletePoiItem(group, item));
-            Grid.SetColumn(delBtn, 2);
+            Grid.SetColumn(delBtn, 3);
             row.Children.Add(delBtn);
 
             border.Child = row;
@@ -1512,6 +1552,33 @@ namespace StradarioApp.UI
             };
 
             return border;
+        }
+
+        // Corregge/converte manualmente le coordinate di un POI che ricade
+        // nel bounding box della Cina (v. Services/GcjTransform): applica
+        // subito la modifica (mappa + navigazione), la registra in
+        // undo/redo come qualsiasi altro spostamento e lo segnala in status
+        // bar. Serve a sistemare punti importati prima che GcjTransform
+        // esistesse (o da fonti non riconosciute come cinesi), rimasti
+        // salvati con l'offset "Mars" non corretto.
+        private void ApplyGcjToPoi(PoiGroup group, PoiItem item, bool toWgs84)
+        {
+            double oldLon = item.Lon, oldLat = item.Lat;
+            var (newLat, newLon) = toWgs84
+                ? GcjTransform.Gcj02ToWgs84(oldLat, oldLon)
+                : GcjTransform.Wgs84ToGcj02ForExport(oldLat, oldLon);
+
+            item.Lon = newLon;
+            item.Lat = newLat;
+            TouchPoiGroup(group.Id);
+            _isDirty = true;
+            PushUndo(
+                undo: () => { item.Lon = oldLon; item.Lat = oldLat; },
+                redo: () => { item.Lon = newLon; item.Lat = newLat; });
+            RefreshNavigationTree();
+            _mapCanvas?.InvalidateVisual();
+            ShowStatusMessage(string.Format(
+                Strings.Get(toWgs84 ? "Gcj_PoiCorretto" : "Gcj_PoiConvertito"), item.Label));
         }
 
         // Voce di un percorso nell'albero: swatch colore, etichetta, lunghezza
@@ -1611,6 +1678,84 @@ namespace StradarioApp.UI
             };
 
             return border;
+        }
+
+        // Foglia mostrata sotto un percorso solo per i suoi punti che
+        // ricadono nel bounding box della Cina (v. Services/GcjTransform):
+        // gli altri punti del tracciato non compaiono qui, si modificano
+        // come sempre da RouteEditWindow. Cliccando (fuori dai badge) si
+        // centra la mappa su quel punto.
+        private Control BuildRoutePointGcjLeaf(Percorso route, int pointIndex)
+        {
+            var p = route.Points[pointIndex];
+
+            var border = new Border
+            {
+                Background      = Brushes.White,
+                BorderBrush     = Brushes.Gainsboro,
+                BorderThickness = new Thickness(1),
+                CornerRadius    = new CornerRadius(3),
+                Padding         = new Thickness(6, 4),
+                Margin          = new Thickness(0, 1),
+                Cursor          = new Cursor(StandardCursorType.Hand)
+            };
+
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+
+            var info = new StackPanel { Spacing = 1 };
+            info.Children.Add(new TextBlock { Text = string.Format(Strings.Get("MainWindow_PuntoPercorsoNumero"), pointIndex + 1), FontSize = 12 });
+            info.Children.Add(new TextBlock
+            {
+                Text       = $"{p.Lon:F4}°E, {p.Lat:F4}°N",
+                FontSize   = 10,
+                Foreground = Brushes.DimGray
+            });
+            Grid.SetColumn(info, 0);
+            row.Children.Add(info);
+
+            var gcjPanel = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 0, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
+            gcjPanel.Children.Add(DialogUi.MakeGcjBadgeButton(
+                Strings.Get("Gcj_BadgeGcjToWgs"), Strings.Get("Gcj_TooltipGcjToWgs"), Brushes.SeaGreen, () => ApplyGcjToRoutePoint(route, pointIndex, toWgs84: true)));
+            gcjPanel.Children.Add(DialogUi.MakeGcjBadgeButton(
+                Strings.Get("Gcj_BadgeWgsToGcj"), Strings.Get("Gcj_TooltipWgsToGcj"), Brushes.DarkOrange, () => ApplyGcjToRoutePoint(route, pointIndex, toWgs84: false)));
+            Grid.SetColumn(gcjPanel, 1);
+            row.Children.Add(gcjPanel);
+
+            border.Child = row;
+
+            border.PointerPressed += (s, e) =>
+            {
+                if (e.Source is Button || (e.Source is Control c && c.FindAncestorOfType<Button>() != null)) return;
+                _viewCenterLon = p.Lon;
+                _viewCenterLat = p.Lat;
+                _mapCanvas?.InvalidateVisual();
+            };
+
+            return border;
+        }
+
+        // Corregge/converte manualmente le coordinate di un punto di percorso
+        // che ricade nel bounding box della Cina — stessa logica di
+        // ApplyGcjToPoi, per il vertice di un Percorso invece che un PoiItem.
+        private void ApplyGcjToRoutePoint(Percorso route, int pointIndex, bool toWgs84)
+        {
+            var pt = route.Points[pointIndex];
+            double oldLon = pt.Lon, oldLat = pt.Lat;
+            var (newLat, newLon) = toWgs84
+                ? GcjTransform.Gcj02ToWgs84(oldLat, oldLon)
+                : GcjTransform.Wgs84ToGcj02ForExport(oldLat, oldLon);
+
+            pt.Lon = newLon;
+            pt.Lat = newLat;
+            TouchPercorso(route.Id);
+            _isDirty = true;
+            PushUndo(
+                undo: () => { pt.Lon = oldLon; pt.Lat = oldLat; },
+                redo: () => { pt.Lon = newLon; pt.Lat = newLat; });
+            RefreshNavigationTree();
+            _mapCanvas?.InvalidateVisual();
+            ShowStatusMessage(string.Format(
+                Strings.Get(toWgs84 ? "Gcj_PuntoPercorsoCorretto" : "Gcj_PuntoPercorsoConvertito"), pointIndex + 1, route.Label));
         }
 
         // Rientra visivamente un nodo dell'albero di un livello
@@ -3118,63 +3263,100 @@ namespace StradarioApp.UI
             ct.ThrowIfCancellationRequested();
             void log(string msg) => logWindow?.Log(msg);
 
-            // Le ricerche per categoria (Overpass) scandagliscono tutta l'area
-            // visualizzata cercando il tag OSM: su una vista molto ampia (es.
-            // un'intera regione/nazione) diventano lentissime e rischiano il
-            // timeout sul server pubblico condiviso. Invece di rifiutarsi e
-            // basta (lasciando l'utente senza risultati e con un messaggio
-            // facile da non notare), si restringe la ricerca a un riquadro
-            // di lato MaxCategorySearchDegrees centrato sul centro della
-            // vista attuale — così torna comunque qualcosa di utile, anche
-            // se non copre tutta l'area visualizzata.
-            bool areaClamped = viewBounds.Width > MaxCategorySearchDegrees || viewBounds.Height > MaxCategorySearchDegrees;
-            if (areaClamped)
-            {
-                double origWidth = viewBounds.Width, origHeight = viewBounds.Height;
-                double half = MaxCategorySearchDegrees / 2.0;
-                viewBounds = new GeoRect
-                {
-                    MinLon = viewBounds.CenterLon - half,
-                    MaxLon = viewBounds.CenterLon + half,
-                    MinLat = viewBounds.CenterLat - half,
-                    MaxLat = viewBounds.CenterLat + half,
-                };
-                log(string.Format(Strings.Get("MainWindow_LogAreaTroppoAmpiaRestringo"), origWidth.ToString("F1"), origHeight.ToString("F1"), MaxCategorySearchDegrees));
-            }
-
             string displayLabel = string.IsNullOrWhiteSpace(nameFilter) ? label : string.Format(Strings.Get("MainWindow_LabelConTestoTraVirgolette"), label, nameFilter);
-            ShowStatusMessage(areaClamped
-                ? string.Format(Strings.Get("MainWindow_AreaTroppoAmpiaCercoIntorno"), displayLabel)
-                : string.Format(Strings.Get("MainWindow_CercoNellaZona"), displayLabel), seconds: 3);
 
             var allSubFilters = (subFilters ?? Enumerable.Empty<string>())
-                .Concat(PoiSearchService.GetCategoryExcludeFilters(key, value));
+                .Concat(PoiSearchService.GetCategoryExcludeFilters(key, value))
+                .ToList();
 
+            // Prova prima il database POI offline (osm/OsmExtractor, vedi
+            // Services/PoiOfflineDatabase): se l'utente ha scaricato almeno
+            // un continente da Impostazioni, la ricerca è istantanea e non
+            // dipende da Overpass — niente clamp d'area (nessun server
+            // pubblico da proteggere qui), tutta la vista viene cercata per
+            // intero. Overpass resta il fallback se i dati offline non sono
+            // stati scaricati, o se non trovano nulla nell'area (potrebbe
+            // essere un continente diverso da quelli scaricati).
+            List<PoiSearchService.Result>? offlineResults = null;
+            if (PoiOfflineDatabase.HasAnyLocalData())
+            {
+                log(Strings.Get("MainWindow_LogProvoDatabaseOffline"));
+                var local = PoiOfflineDatabase.SearchCategory(key, value, viewBounds, allSubFilters);
+                if (local.Count > 0)
+                {
+                    log(string.Format(Strings.Get("MainWindow_LogTrovatiOffline"), local.Count));
+                    offlineResults = local;
+                }
+                else
+                {
+                    log(Strings.Get("MainWindow_LogNessunRisultatoOfflineProvoOverpass"));
+                }
+            }
+
+            bool areaClamped = false;
+            bool possiblyTruncated = false;
             List<PoiSearchService.Result> results;
-            try
-            {
-                // Unisce sempre i filtri di esclusione fissi della categoria
-                // (es. "station!=subway" per "stazioni ferroviarie": senza,
-                // in una città con molte fermate di metro taggate allo stesso
-                // modo, queste riempiono da sole il limite di risultati e le
-                // stazioni ferroviarie vere restano fuori — vedi
-                // PoiSearchService.CategoryExcludeFilters). Sempre l'elenco
-                // completo della categoria: nessun filtro sul nome qui.
-                log(string.Format(Strings.Get("MainWindow_LogCercoCategoriaArea"), label, key, value));
-                results = await _poiSearchSvc.SearchCategoryAsync(key, value, viewBounds, allSubFilters, log, ct);
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                logWindow?.LogError(string.Format(Strings.Get("MainWindow_ErroreRicercaCategoria"), ex.Message));
-                return;
-            }
 
-            // Se SearchCategoryAsync ha dovuto tagliare (più di CategoryResultCap
-            // elementi trovati su Overpass), l'elenco non è completo: lo si
-            // segnala sempre, non solo quando il testo digitato filtra ancora
-            // di più (vedi PoiSearchService.CategoryResultCap).
-            bool possiblyTruncated = results.Count >= PoiSearchService.CategoryResultCap;
+            if (offlineResults != null)
+            {
+                results = offlineResults;
+                ShowStatusMessage(string.Format(Strings.Get("MainWindow_CercoNellaZona"), displayLabel), seconds: 3);
+            }
+            else
+            {
+                // Le ricerche per categoria (Overpass) scandagliscono tutta l'area
+                // visualizzata cercando il tag OSM: su una vista molto ampia (es.
+                // un'intera regione/nazione) diventano lentissime e rischiano il
+                // timeout sul server pubblico condiviso. Invece di rifiutarsi e
+                // basta (lasciando l'utente senza risultati e con un messaggio
+                // facile da non notare), si restringe la ricerca a un riquadro
+                // di lato MaxCategorySearchDegrees centrato sul centro della
+                // vista attuale — così torna comunque qualcosa di utile, anche
+                // se non copre tutta l'area visualizzata.
+                areaClamped = viewBounds.Width > MaxCategorySearchDegrees || viewBounds.Height > MaxCategorySearchDegrees;
+                if (areaClamped)
+                {
+                    double origWidth = viewBounds.Width, origHeight = viewBounds.Height;
+                    double half = MaxCategorySearchDegrees / 2.0;
+                    viewBounds = new GeoRect
+                    {
+                        MinLon = viewBounds.CenterLon - half,
+                        MaxLon = viewBounds.CenterLon + half,
+                        MinLat = viewBounds.CenterLat - half,
+                        MaxLat = viewBounds.CenterLat + half,
+                    };
+                    log(string.Format(Strings.Get("MainWindow_LogAreaTroppoAmpiaRestringo"), origWidth.ToString("F1"), origHeight.ToString("F1"), MaxCategorySearchDegrees));
+                }
+
+                ShowStatusMessage(areaClamped
+                    ? string.Format(Strings.Get("MainWindow_AreaTroppoAmpiaCercoIntorno"), displayLabel)
+                    : string.Format(Strings.Get("MainWindow_CercoNellaZona"), displayLabel), seconds: 3);
+
+                try
+                {
+                    // Unisce sempre i filtri di esclusione fissi della categoria
+                    // (es. "station!=subway" per "stazioni ferroviarie": senza,
+                    // in una città con molte fermate di metro taggate allo stesso
+                    // modo, queste riempiono da sole il limite di risultati e le
+                    // stazioni ferroviarie vere restano fuori — vedi
+                    // PoiSearchService.CategoryExcludeFilters). Sempre l'elenco
+                    // completo della categoria: nessun filtro sul nome qui.
+                    log(string.Format(Strings.Get("MainWindow_LogCercoCategoriaArea"), label, key, value));
+                    results = await _poiSearchSvc.SearchCategoryAsync(key, value, viewBounds, allSubFilters, log, ct);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    logWindow?.LogError(string.Format(Strings.Get("MainWindow_ErroreRicercaCategoria"), ex.Message));
+                    return;
+                }
+
+                // Se SearchCategoryAsync ha dovuto tagliare (più di CategoryResultCap
+                // elementi trovati su Overpass), l'elenco non è completo: lo si
+                // segnala sempre, non solo quando il testo digitato filtra ancora
+                // di più (vedi PoiSearchService.CategoryResultCap).
+                possiblyTruncated = results.Count >= PoiSearchService.CategoryResultCap;
+            }
 
             bool usedAi = false;
             if (results.Count > 0 && !string.IsNullOrWhiteSpace(nameFilter))
@@ -3533,7 +3715,13 @@ namespace StradarioApp.UI
 
         // Dialog di conferma generico Sì/Annulla (per operazioni distruttive
         // che meritano più attenzione di un semplice messaggio in status bar)
-        private async Task<bool> AskYesNo(string title, string message)
+        private Task<bool> AskYesNo(string title, string message) =>
+            AskYesNo(title, message, Strings.Get("MainWindow_Si"), Strings.Get("MainWindow_Annulla"));
+
+        // Variante con etichette dei bottoni personalizzate (es. la scelta
+        // GCJ-02 sì/no in import/export, dove "Sì"/"Annulla" generici
+        // sarebbero ambigui)
+        private async Task<bool> AskYesNo(string title, string message, string yesLabel, string noLabel)
         {
             bool confirmed = false;
             var dlg = new Window
@@ -3557,8 +3745,8 @@ namespace StradarioApp.UI
                             Spacing = 10,
                             Children =
                             {
-                                DialogUi.MakeDialogButton(Strings.Get("MainWindow_Si"), primary: true),
-                                DialogUi.MakeDialogButton(Strings.Get("MainWindow_Annulla"))
+                                DialogUi.MakeDialogButton(yesLabel, primary: true),
+                                DialogUi.MakeDialogButton(noLabel)
                             }
                         }
                     }
@@ -3783,12 +3971,37 @@ namespace StradarioApp.UI
             _mapCanvas?.InvalidateVisual();
             UpdateTitle();
         }
+        // Cartella di partenza per i file picker (apri/salva/importa/esporta):
+        // l'ultima cartella usata con successo in un qualunque picker
+        // dell'app, non "Recenti" (comportamento di default di alcuni
+        // backend/portali desktop) — persistita globalmente in
+        // AppPreferencesService, non per progetto. Se la cartella salvata non
+        // esiste più (rimossa, disco esterno scollegato...) TryGetFolderFromPathAsync
+        // ritorna null e il picker ricade sul comportamento di default dell'OS.
+        private async Task<Avalonia.Platform.Storage.IStorageFolder?> GetSuggestedStartFolderAsync()
+        {
+            string last = _appPrefsSvc.LoadLastUsedFolder();
+            if (string.IsNullOrWhiteSpace(last)) return null;
+            try { return await StorageProvider.TryGetFolderFromPathAsync(last); }
+            catch { return null; }
+        }
+
+        // Da chiamare dopo ogni picker completato con successo (file/cartella
+        // scelti, non annullato), con il path locale del file scelto/salvato.
+        private void RememberLastUsedFolder(string? localFilePath)
+        {
+            if (string.IsNullOrWhiteSpace(localFilePath)) return;
+            string? dir = Path.GetDirectoryName(localFilePath);
+            if (!string.IsNullOrWhiteSpace(dir)) _appPrefsSvc.SaveLastUsedFolder(dir);
+        }
+
         private async void OnOpenProject(object? sender, RoutedEventArgs e)
         {
             var files = await StorageProvider.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions
             {
                 Title          = Strings.Get("MainWindow_ApriProgettoTitolo"),
                 AllowMultiple  = false,
+                SuggestedStartLocation = await GetSuggestedStartFolderAsync(),
                 FileTypeFilter = new[]
                 {
                     new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroStradario"))
@@ -3799,6 +4012,7 @@ namespace StradarioApp.UI
             });
 
             if (files.Count == 0) return;
+            RememberLastUsedFolder(files[0].Path.LocalPath);
             await OpenProjectFromPath(files[0].Path.LocalPath);
         }
 
@@ -3836,6 +4050,21 @@ namespace StradarioApp.UI
                 RefreshNavigationTree();
                 _mapCanvas?.InvalidateVisual();
                 UpdateTitle();
+
+                // Punti già in Cina in un progetto appena aperto potrebbero essere
+                // in GCJ-02 non corretto (importati da fonte cinese, o anche
+                // digitati/modificati a mano da una coordinata che l'utente
+                // credeva WGS84 ma non lo era — vedi caso reale Torre della
+                // Campana di Xi'an: nessuna provenienza è "sicuramente giusta").
+                // A differenza di import/export, qui non viene applicata
+                // nessuna trasformazione automatica, si segnala solo quanti
+                // punti ricadono in area Cina e andrebbero verificati con le
+                // icone C→W/W→C nell'albero.
+                int poiInChina = _project.PoiGroups.Sum(g => g.Items.Count(it => GcjTransform.IsInChina(it.Lat, it.Lon)));
+                int routeInChina = _project.Percorsi.Sum(r => r.Points.Count(pt => GcjTransform.IsInChina(pt.Lat, pt.Lon)));
+                int totalInChina = poiInChina + routeInChina;
+                if (totalInChina > 0)
+                    ShowStatusMessage(string.Format(Strings.Get("Gcj_PuntiInCinaAllApertura"), totalInChina), seconds: 8);
             }
             catch (Exception ex)
             {
@@ -3860,6 +4089,7 @@ namespace StradarioApp.UI
                 Title                  = Strings.Get("MainWindow_SalvaProgettoTitolo"),
                 DefaultExtension       = "stradario",
                 SuggestedFileName      = _project.ProjectName,
+                SuggestedStartLocation = await GetSuggestedStartFolderAsync(),
                 FileTypeChoices = new[]
                 {
                     new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroStradario"))
@@ -3869,6 +4099,7 @@ namespace StradarioApp.UI
 
             if (file == null) return;
             string path = file.Path.LocalPath;
+            RememberLastUsedFolder(path);
             _currentFilePath = path;
             await SaveCurrentProject(path);
         }
@@ -4035,6 +4266,7 @@ namespace StradarioApp.UI
                     Title             = Strings.Get("MainWindow_SalvaPdfTitolo"),
                     DefaultExtension  = "pdf",
                     SuggestedFileName = _project.ProjectName,
+                    SuggestedStartLocation = await GetSuggestedStartFolderAsync(),
                     FileTypeChoices   = new[]
                     {
                         new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroPdf"))
@@ -4047,6 +4279,7 @@ namespace StradarioApp.UI
                     try
                     {
                         File.Copy(tempPath, file.Path.LocalPath, overwrite: true);
+                        RememberLastUsedFolder(file.Path.LocalPath);
                         ShowStatusMessage(string.Format(Strings.Get("MainWindow_PdfSalvato"), file.Path.LocalPath));
                     }
                     catch (Exception ex)
@@ -4296,6 +4529,7 @@ namespace StradarioApp.UI
                 Title             = Strings.Get("MainWindow_EsportaPoiTitolo"),
                 DefaultExtension  = "kmz",
                 SuggestedFileName = "poi",
+                SuggestedStartLocation = await GetSuggestedStartFolderAsync(),
                 FileTypeChoices   = new[]
                 {
                     new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroKmzIcone")) { Patterns = new[] { "*.kmz" } },
@@ -4305,16 +4539,40 @@ namespace StradarioApp.UI
             });
             if (file == null) return;
             string path = file.Path.LocalPath;
+            RememberLastUsedFolder(path);
+
+            // Il dubbio GCJ-02/WGS84 si pone solo per GPX: il formato KML/KMZ
+            // è per specifica (OGC KML 2.2) sempre WGS84, quindi per quei due
+            // non si chiede nulla e non si applica mai la conversione.
+            bool isGpxExport = string.Equals(Path.GetExtension(path), ".gpx", StringComparison.OrdinalIgnoreCase);
+            bool? gcjHint = isGpxExport ? DetectGcjHintFromFileName(Path.GetFileName(path)) : null;
+            bool applyGcjConversion = !isGpxExport ? false : gcjHint ?? !(await AskYesNo(
+                Strings.Get("Gcj_ChiediCorrezioneExportTitolo"), Strings.Get("Gcj_ChiediCorrezioneExport"),
+                Strings.Get("Gcj_LasciaWgs84"), Strings.Get("Gcj_ApplicaConversione")));
 
             try
             {
-                switch (Path.GetExtension(path).ToLowerInvariant())
+                GcjTransform.ResetCounters();
+                GcjTransform.CorrectionEnabled = applyGcjConversion;
+                try
                 {
-                    case ".kml": await _poiSvc.ExportKmlAsync(_project.PoiGroups, path); break;
-                    case ".gpx": await _poiSvc.ExportGpxAsync(_project.PoiGroups, path); break;
-                    default:     await _poiSvc.ExportKmzAsync(_project.PoiGroups, path); break;
+                    switch (Path.GetExtension(path).ToLowerInvariant())
+                    {
+                        case ".kml": await _poiSvc.ExportKmlAsync(_project.PoiGroups, path); break;
+                        case ".gpx": await _poiSvc.ExportGpxAsync(_project.PoiGroups, path); break;
+                        default:     await _poiSvc.ExportKmzAsync(_project.PoiGroups, path); break;
+                    }
                 }
-                ShowStatusMessage(string.Format(Strings.Get("MainWindow_Esportato"), path));
+                finally
+                {
+                    GcjTransform.CorrectionEnabled = true;
+                }
+                string msg = string.Format(Strings.Get("MainWindow_Esportato"), path);
+                if (GcjTransform.ExportConvertedCount > 0)
+                    msg += "  " + string.Format(Strings.Get("Gcj_ExportConvertiti"), GcjTransform.ExportConvertedCount);
+                if (gcjHint.HasValue)
+                    msg += "  " + Strings.Get(gcjHint.Value ? "Gcj_RilevatoDaNomeFileGcj02" : "Gcj_RilevatoDaNomeFileWgs84");
+                ShowStatusMessage(msg);
             }
             catch (Exception ex)
             {
@@ -4420,6 +4678,7 @@ namespace StradarioApp.UI
             {
                 Title          = Strings.Get("MainWindow_ImportaPoiPercorsiTitolo"),
                 AllowMultiple  = false,
+                SuggestedStartLocation = await GetSuggestedStartFolderAsync(),
                 FileTypeFilter = new[]
                 {
                     new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroKmzKmlGpx")) { Patterns = new[] { "*.kmz", "*.kml", "*.gpx" } },
@@ -4427,6 +4686,7 @@ namespace StradarioApp.UI
                 }
             });
             if (files.Count == 0) return;
+            RememberLastUsedFolder(files[0].TryGetLocalPath());
             await ImportFromFileAsync(files[0]);
         }
 
@@ -4437,17 +4697,54 @@ namespace StradarioApp.UI
 
         // Logica di importazione condivisa da toolbar (file picker) e
         // drag&drop: entrambe risolvono a un IStorageFile e la passano qui
+        // Se il nome del file dichiara esplicitamente il sistema di
+        // riferimento ("...wgs84...", "...gcj02.../...gcj-02...", non
+        // sensibile a maiuscole/minuscole), usa quello senza chiedere nulla
+        // all'utente: true = fonte GCJ-02 (applica la correzione), false =
+        // fonte già WGS84 (salta), null = nome ambiguo o non indicativo,
+        // va chiesto come al solito. Riguarda comunque solo i punti che
+        // ricadono nel bounding box della Cina — fuori da lì è sempre un no-op.
+        private static bool? DetectGcjHintFromFileName(string fileName)
+        {
+            string norm = fileName.ToLowerInvariant();
+            bool hasWgs84 = norm.Contains("wgs84") || norm.Contains("wgs-84") || norm.Contains("wgs_84");
+            bool hasGcj02 = norm.Contains("gcj02") || norm.Contains("gcj-02") || norm.Contains("gcj_02");
+            if (hasWgs84 && !hasGcj02) return false;
+            if (hasGcj02 && !hasWgs84) return true;
+            return null;
+        }
+
         private async Task ImportFromFileAsync(Avalonia.Platform.Storage.IStorageFile file)
         {
             string fileName = file.Name;
             string fileNameHint = Path.GetFileNameWithoutExtension(fileName);
 
+            // Il dubbio GCJ-02/WGS84 si pone solo per GPX: il formato KML/KMZ
+            // è per specifica (OGC KML 2.2) sempre WGS84, quindi per quei due
+            // non si chiede nulla e non si applica mai la correzione.
+            bool isGpxFile = string.Equals(Path.GetExtension(fileName), ".gpx", StringComparison.OrdinalIgnoreCase);
+            bool? gcjHint = isGpxFile ? DetectGcjHintFromFileName(fileName) : null;
+            bool applyGcjCorrection = !isGpxFile ? false : gcjHint ?? !(await AskYesNo(
+                Strings.Get("Gcj_ChiediCorrezioneImportTitolo"), Strings.Get("Gcj_ChiediCorrezioneImport"),
+                Strings.Get("Gcj_GiaWgs84"), Strings.Get("Gcj_ApplicaCorrezione")));
+
             try
             {
                 byte[] raw = await ReadPickedFileBytesAsync(file);
 
-                var importedGroups = _poiSvc.ImportKmz(raw, _project, fileNameHint);
-                var importedRoutes = _percorsoSvc.ImportKmz(raw, _project);
+                GcjTransform.ResetCounters();
+                GcjTransform.CorrectionEnabled = applyGcjCorrection;
+                List<PoiGroup> importedGroups;
+                List<Percorso> importedRoutes;
+                try
+                {
+                    importedGroups = _poiSvc.ImportKmz(raw, _project, fileNameHint);
+                    importedRoutes = _percorsoSvc.ImportKmz(raw, _project);
+                }
+                finally
+                {
+                    GcjTransform.CorrectionEnabled = true;
+                }
 
                 if (importedGroups.Count == 0 && importedRoutes.Count == 0)
                 {
@@ -4483,7 +4780,12 @@ namespace StradarioApp.UI
                     parts.Add(string.Format(Strings.Get("MainWindow_ImportatiGruppiPoiConteggio"), importedGroups.Count, importedGroups.Sum(g => g.Items.Count)));
                 if (importedRoutes.Count > 0)
                     parts.Add(string.Format(Strings.Get("MainWindow_ImportatiPercorsiConteggio"), importedRoutes.Count));
-                ShowStatusMessage(string.Format(Strings.Get("MainWindow_ImportatiRiepilogo"), string.Join(", ", parts)));
+                string summary = string.Format(Strings.Get("MainWindow_ImportatiRiepilogo"), string.Join(", ", parts));
+                if (GcjTransform.ImportCorrectedCount > 0)
+                    summary += "  " + string.Format(Strings.Get("Gcj_ImportCorretti"), GcjTransform.ImportCorrectedCount);
+                if (gcjHint.HasValue)
+                    summary += "  " + Strings.Get(gcjHint.Value ? "Gcj_RilevatoDaNomeFileGcj02" : "Gcj_RilevatoDaNomeFileWgs84");
+                ShowStatusMessage(summary);
             }
             catch (Exception ex)
             {
@@ -4538,6 +4840,7 @@ namespace StradarioApp.UI
                 Title             = Strings.Get("MainWindow_EsportaPercorsiTitolo"),
                 DefaultExtension  = "kmz",
                 SuggestedFileName = "percorsi",
+                SuggestedStartLocation = await GetSuggestedStartFolderAsync(),
                 FileTypeChoices   = new[]
                 {
                     new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroKmzZip")) { Patterns = new[] { "*.kmz" } },
@@ -4547,21 +4850,215 @@ namespace StradarioApp.UI
             });
             if (file == null) return;
             string path = file.Path.LocalPath;
+            RememberLastUsedFolder(path);
+
+            // Il dubbio GCJ-02/WGS84 si pone solo per GPX: il formato KML/KMZ
+            // è per specifica (OGC KML 2.2) sempre WGS84, quindi per quei due
+            // non si chiede nulla e non si applica mai la conversione.
+            bool isGpxExport = string.Equals(Path.GetExtension(path), ".gpx", StringComparison.OrdinalIgnoreCase);
+            bool? gcjHint = isGpxExport ? DetectGcjHintFromFileName(Path.GetFileName(path)) : null;
+            bool applyGcjConversion = !isGpxExport ? false : gcjHint ?? !(await AskYesNo(
+                Strings.Get("Gcj_ChiediCorrezioneExportTitolo"), Strings.Get("Gcj_ChiediCorrezioneExport"),
+                Strings.Get("Gcj_LasciaWgs84"), Strings.Get("Gcj_ApplicaConversione")));
 
             try
             {
-                switch (Path.GetExtension(path).ToLowerInvariant())
+                GcjTransform.ResetCounters();
+                GcjTransform.CorrectionEnabled = applyGcjConversion;
+                try
                 {
-                    case ".kml": await _percorsoSvc.ExportKmlAsync(_project.Percorsi, path); break;
-                    case ".gpx": await _percorsoSvc.ExportGpxAsync(_project.Percorsi, path); break;
-                    default:     await _percorsoSvc.ExportKmzAsync(_project.Percorsi, path); break;
+                    switch (Path.GetExtension(path).ToLowerInvariant())
+                    {
+                        case ".kml": await _percorsoSvc.ExportKmlAsync(_project.Percorsi, path); break;
+                        case ".gpx": await _percorsoSvc.ExportGpxAsync(_project.Percorsi, path); break;
+                        default:     await _percorsoSvc.ExportKmzAsync(_project.Percorsi, path); break;
+                    }
                 }
-                ShowStatusMessage(string.Format(Strings.Get("MainWindow_Esportato"), path));
+                finally
+                {
+                    GcjTransform.CorrectionEnabled = true;
+                }
+                string msg = string.Format(Strings.Get("MainWindow_Esportato"), path);
+                if (GcjTransform.ExportConvertedCount > 0)
+                    msg += "  " + string.Format(Strings.Get("Gcj_ExportConvertiti"), GcjTransform.ExportConvertedCount);
+                if (gcjHint.HasValue)
+                    msg += "  " + Strings.Get(gcjHint.Value ? "Gcj_RilevatoDaNomeFileGcj02" : "Gcj_RilevatoDaNomeFileWgs84");
+                ShowStatusMessage(msg);
             }
             catch (Exception ex)
             {
                 await ShowError(string.Format(Strings.Get("MainWindow_ErroreEsportazione"), ex.Message));
             }
+        }
+
+        // Esporta in un colpo solo sia i gruppi POI sia i percorsi (comando
+        // toolbar unico, speculare a "Importa") in un UNICO file combinato,
+        // non due file separati: per KML/KMZ assembla sotto un solo
+        // <Document> gli Style/Folder prodotti da PoiService.BuildKmlDocument
+        // e quelli di PercorsoService.BuildKmlDocument (ora internal apposta
+        // per questo); per GPX unisce le liste di <wpt>/<trk> nello stesso
+        // root <gpx> (formato che supporta nativamente entrambi insieme).
+        // Rispecchia il caso reale di un KML/KMZ misto POI+percorsi che
+        // OnImportKmzUnified sa già leggere in un colpo solo.
+        private async Task OnExportAll()
+        {
+            if (_project.PoiGroups.Count == 0 && _project.Percorsi.Count == 0)
+            {
+                ShowStatusMessage(Strings.Get("MainWindow_NienteDaEsportare"), isError: true);
+                return;
+            }
+
+            var file = await StorageProvider.SaveFilePickerAsync(new Avalonia.Platform.Storage.FilePickerSaveOptions
+            {
+                Title             = Strings.Get("MainWindow_EsportaTuttoTitolo"),
+                DefaultExtension  = "kmz",
+                SuggestedFileName = "stradario_export",
+                SuggestedStartLocation = await GetSuggestedStartFolderAsync(),
+                FileTypeChoices   = new[]
+                {
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroKmzIcone")) { Patterns = new[] { "*.kmz" } },
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroKml"))       { Patterns = new[] { "*.kml" } },
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroGpx"))       { Patterns = new[] { "*.gpx" } }
+                }
+            });
+            if (file == null) return;
+            string path = file.Path.LocalPath;
+            RememberLastUsedFolder(path);
+            string ext  = Path.GetExtension(path).ToLowerInvariant();
+
+            // Il dubbio GCJ-02/WGS84 si pone solo per GPX: il formato KML/KMZ
+            // è per specifica (OGC KML 2.2) sempre WGS84, quindi per quei due
+            // non si chiede nulla e non si applica mai la conversione.
+            bool isGpxExport = string.Equals(Path.GetExtension(path), ".gpx", StringComparison.OrdinalIgnoreCase);
+            bool? gcjHint = isGpxExport ? DetectGcjHintFromFileName(Path.GetFileName(path)) : null;
+            bool applyGcjConversion = !isGpxExport ? false : gcjHint ?? !(await AskYesNo(
+                Strings.Get("Gcj_ChiediCorrezioneExportTitolo"), Strings.Get("Gcj_ChiediCorrezioneExport"),
+                Strings.Get("Gcj_LasciaWgs84"), Strings.Get("Gcj_ApplicaConversione")));
+
+            try
+            {
+                GcjTransform.ResetCounters();
+                GcjTransform.CorrectionEnabled = applyGcjConversion;
+                try
+                {
+                    switch (ext)
+                    {
+                        case ".kml": await ExportCombinedKmlAsync(path, embedIcons: false); break;
+                        case ".gpx": await ExportCombinedGpxAsync(path); break;
+                        default:     await ExportCombinedKmzAsync(path); break;
+                    }
+                }
+                finally
+                {
+                    GcjTransform.CorrectionEnabled = true;
+                }
+
+                string msg = string.Format(Strings.Get("MainWindow_Esportato"), path);
+                if (GcjTransform.ExportConvertedCount > 0)
+                    msg += "  " + string.Format(Strings.Get("Gcj_ExportConvertiti"), GcjTransform.ExportConvertedCount);
+                if (gcjHint.HasValue)
+                    msg += "  " + Strings.Get(gcjHint.Value ? "Gcj_RilevatoDaNomeFileGcj02" : "Gcj_RilevatoDaNomeFileWgs84");
+                ShowStatusMessage(msg);
+            }
+            catch (Exception ex)
+            {
+                await ShowError(string.Format(Strings.Get("MainWindow_ErroreEsportazione"), ex.Message));
+            }
+        }
+
+        // Unisce i <Style>/<Folder> di PoiService/PercorsoService.BuildKmlDocument
+        // sotto un solo <Document> con un unico <name> combinato (Add() clona i
+        // nodi già "parentati" in un altro XDocument, non serve clonarli a mano).
+        private XDocument BuildCombinedKmlDocument(bool embedIcons)
+        {
+            XNamespace kml = "http://www.opengis.net/kml/2.2";
+            var document = new XElement(kml + "Document",
+                new XElement(kml + "name", "Stradario - POI e percorsi"));
+
+            if (_project.PoiGroups.Count > 0)
+            {
+                var poiDoc = _poiSvc.BuildKmlDocument(_project.PoiGroups, embedIcons);
+                var poiDocEl = poiDoc.Root!.Element(kml + "Document")!;
+                RenameKmlStyleIds(poiDocEl, kml, "poi_");
+                foreach (var child in poiDocEl.Elements())
+                    if (child.Name != kml + "name") document.Add(child);
+            }
+
+            if (_project.Percorsi.Count > 0)
+            {
+                var routeDoc = _percorsoSvc.BuildKmlDocument(_project.Percorsi);
+                var routeDocEl = routeDoc.Root!.Element(kml + "Document")!;
+                RenameKmlStyleIds(routeDocEl, kml, "route_");
+                foreach (var child in routeDocEl.Elements())
+                    if (child.Name != kml + "name") document.Add(child);
+            }
+
+            return new XDocument(
+                new XDeclaration("1.0", "UTF-8", null),
+                new XElement(kml + "kml", new XAttribute("xmlns", kml.NamespaceName), document));
+        }
+
+        // I due servizi numerano gli id di <Style> ("style_N") in modo
+        // indipendente (Id di PoiGroup e Id di Percorso partono entrambi da 1
+        // per progetto): uniti sotto lo stesso <Document> potrebbero collidere
+        // (due <Style id="style_1"> diversi). Rinomina con un prefisso per
+        // tipo sia l'attributo id di <Style> sia i <styleUrl> dei Placemark
+        // che li referenziano, prima di unire i frammenti.
+        private static void RenameKmlStyleIds(XElement documentEl, XNamespace kml, string prefix)
+        {
+            foreach (var style in documentEl.Descendants(kml + "Style"))
+            {
+                var idAttr = style.Attribute("id");
+                if (idAttr != null) idAttr.Value = prefix + idAttr.Value;
+            }
+            foreach (var styleUrl in documentEl.Descendants(kml + "styleUrl"))
+            {
+                if (styleUrl.Value.StartsWith("#"))
+                    styleUrl.Value = "#" + prefix + styleUrl.Value.Substring(1);
+            }
+        }
+
+        private async Task ExportCombinedKmlAsync(string path, bool embedIcons)
+        {
+            var kmlDoc = BuildCombinedKmlDocument(embedIcons);
+            await using var writer = new StreamWriter(path, false, new UTF8Encoding(false));
+            await writer.WriteAsync(kmlDoc.Declaration + Environment.NewLine + kmlDoc.Root);
+        }
+
+        private async Task ExportCombinedKmzAsync(string path)
+        {
+            var kmlDoc = BuildCombinedKmlDocument(embedIcons: true);
+
+            using var fs  = File.Create(path);
+            using var zip = new ZipArchive(fs, ZipArchiveMode.Create);
+
+            var kmlEntry = zip.CreateEntry("doc.kml");
+            await using (var es = kmlEntry.Open())
+            await using (var writer = new StreamWriter(es, new UTF8Encoding(false)))
+                await writer.WriteAsync(kmlDoc.Declaration + Environment.NewLine + kmlDoc.Root);
+
+            if (_project.PoiGroups.Count > 0)
+                await _poiSvc.WriteIconEntriesAsync(zip, _project.PoiGroups);
+        }
+
+        private async Task ExportCombinedGpxAsync(string path)
+        {
+            XNamespace gpx = "http://www.topografix.com/GPX/1/1";
+            var root = new XElement(gpx + "gpx",
+                new XAttribute("version", "1.1"),
+                new XAttribute("creator", "StradarioApp"),
+                new XAttribute("xmlns", gpx.NamespaceName));
+
+            if (_project.PoiGroups.Count > 0)
+                foreach (var wpt in _poiSvc.BuildGpxWaypoints(_project.PoiGroups))
+                    root.Add(wpt);
+            if (_project.Percorsi.Count > 0)
+                foreach (var trk in _percorsoSvc.BuildGpxTracks(_project.Percorsi))
+                    root.Add(trk);
+
+            var gpxDoc = new XDocument(new XDeclaration("1.0", "UTF-8", null), root);
+            await using var writer = new StreamWriter(path, false, new UTF8Encoding(false));
+            await writer.WriteAsync(gpxDoc.Declaration + Environment.NewLine + gpxDoc.Root);
         }
 
         private async void OnOpenSettings(object? sender, RoutedEventArgs e)

@@ -13,6 +13,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
@@ -38,6 +39,16 @@ namespace StradarioApp.UI
         private TextBox?    _tbCustomKey;
         private TextBox?    _tbCustomValue;
         private TextBlock?  _tbCustomError;
+
+        // Tab "Database POI offline" (vedi Services/PoiOfflineDatabase): una
+        // riga per continente, con stato (non scaricato / versione locale /
+        // aggiornamento disponibile) e un bottone scarica/aggiorna. Nessuna
+        // selezione per singola categoria: ogni zip contiene sempre tutte le
+        // 43 categorie del continente insieme.
+        private StackPanel? _offlineDataPanel;
+        private TextBlock?  _offlineDataStatusText;
+        private readonly Dictionary<string, TextBlock> _offlineContinentStatusLabels = new();
+        private readonly Dictionary<string, Button>    _offlineContinentButtons      = new();
 
         private ComboBox?  _cbPageSize;
         private ComboBox?  _cbOrientation;
@@ -87,7 +98,11 @@ namespace StradarioApp.UI
             ResultSettings   = current;
             _customCategories = (customCategories ?? Enumerable.Empty<(string, string, string)>()).ToList();
             Title          = Strings.Get("SettingsWindow_Titolo");
-            Width          = 460;
+            // Larghezza aumentata rispetto alle 2 tab originali (460 px):
+            // con l'aggiunta della tab "Database POI offline" le tre
+            // intestazioni (Generale / Categorie POI / Database POI
+            // offline) non stavano più su una sola riga.
+            Width          = 620;
             Height         = 650;
             CanResize      = false;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -95,6 +110,7 @@ namespace StradarioApp.UI
             var tabs = new TabControl();
             tabs.Items.Add(new TabItem { Header = Strings.Get("SettingsWindow_TabGenerale"),     Content = BuildGeneralTab(current) });
             tabs.Items.Add(new TabItem { Header = Strings.Get("SettingsWindow_TabCategoriePoi"), Content = BuildCategoriesTab() });
+            tabs.Items.Add(new TabItem { Header = Strings.Get("SettingsWindow_TabDatiOffline"),  Content = BuildOfflineDataTab() });
 
             // Pulsanti condivisi da entrambe le tab (OK conferma tutto,
             // impostazioni generali E categorie personalizzate insieme).
@@ -457,6 +473,174 @@ namespace StradarioApp.UI
                 row.Children.Add(btnRemove);
                 _customCategoriesPanel.Children.Add(row);
             }
+        }
+
+        // Nomi visualizzati per gli 8 continenti (stessi slug di
+        // PoiOfflineDatabase.Continents/osm/OsmExtractor.GetContinentName).
+        private static string ContinentDisplayName(string continent) =>
+            Strings.Get("Continent_" + continent.Replace("-", "_"));
+
+        private Control BuildOfflineDataTab()
+        {
+            var root = new DockPanel { Margin = new Thickness(16) };
+
+            var intro = new TextBlock
+            {
+                Text         = Strings.Get("SettingsWindow_IntroDatiOffline"),
+                TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                FontSize     = 11,
+                Foreground   = Brushes.DimGray,
+                Margin       = new Thickness(0, 0, 0, 10)
+            };
+            DockPanel.SetDock(intro, Dock.Top);
+            root.Children.Add(intro);
+
+            var btnCheckAll = DialogUi.MakeDialogButton(Strings.Get("SettingsWindow_ControllaAggiornamentiDati"));
+            btnCheckAll.HorizontalAlignment = HorizontalAlignment.Left;
+            btnCheckAll.Margin = new Thickness(0, 0, 0, 8);
+            btnCheckAll.Click += async (_, _) => await CheckOfflineDataUpdatesAsync();
+            DockPanel.SetDock(btnCheckAll, Dock.Top);
+            root.Children.Add(btnCheckAll);
+
+            _offlineDataStatusText = new TextBlock
+            {
+                FontSize     = 11,
+                Foreground   = Brushes.DimGray,
+                TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                Margin       = new Thickness(0, 0, 0, 8),
+                IsVisible    = false
+            };
+            DockPanel.SetDock(_offlineDataStatusText, Dock.Top);
+            root.Children.Add(_offlineDataStatusText);
+
+            _offlineDataPanel = new StackPanel { Spacing = 6 };
+            var scroll = new ScrollViewer { Content = _offlineDataPanel };
+            root.Children.Add(scroll); // ultimo figlio del DockPanel: riempie lo spazio restante
+
+            RefreshOfflineDataList();
+
+            return root;
+        }
+
+        private void RefreshOfflineDataList()
+        {
+            if (_offlineDataPanel == null) return;
+            _offlineDataPanel.Children.Clear();
+            _offlineContinentStatusLabels.Clear();
+            _offlineContinentButtons.Clear();
+
+            foreach (var continent in PoiOfflineDatabase.Continents)
+            {
+                var row = new Grid
+                {
+                    ColumnDefinitions = new ColumnDefinitions("120,*,Auto"),
+                    Margin            = new Thickness(0, 0, 0, 2)
+                };
+
+                var nameLbl = new TextBlock
+                {
+                    Text              = ContinentDisplayName(continent),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    FontWeight        = Avalonia.Media.FontWeight.SemiBold
+                };
+
+                var statusLbl = new TextBlock
+                {
+                    FontSize          = 11,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    TextWrapping      = Avalonia.Media.TextWrapping.Wrap,
+                    Margin            = new Thickness(8, 0)
+                };
+
+                var btn = new Button { Padding = new Thickness(8, 2) };
+                btn.Click += async (_, _) => await OnDownloadContinentAsync(continent);
+
+                Grid.SetColumn(nameLbl, 0);
+                Grid.SetColumn(statusLbl, 1);
+                Grid.SetColumn(btn, 2);
+                row.Children.Add(nameLbl);
+                row.Children.Add(statusLbl);
+                row.Children.Add(btn);
+
+                _offlineContinentStatusLabels[continent] = statusLbl;
+                _offlineContinentButtons[continent]      = btn;
+                UpdateContinentRow(continent, latestTag: null);
+
+                _offlineDataPanel.Children.Add(row);
+            }
+        }
+
+        // Aggiorna etichetta di stato e testo del bottone per un continente.
+        // latestTag = null quando non è ancora stato fatto un controllo
+        // aggiornamenti in questa apertura della finestra (mostra solo se
+        // scaricato o no, senza sapere se è la versione più recente).
+        private void UpdateContinentRow(string continent, string? latestTag)
+        {
+            if (!_offlineContinentStatusLabels.TryGetValue(continent, out var label)) return;
+            if (!_offlineContinentButtons.TryGetValue(continent, out var btn)) return;
+
+            bool    downloaded   = PoiOfflineDatabase.IsContinentDownloaded(continent);
+            string? localVersion = PoiOfflineDatabase.GetContinentVersion(continent);
+
+            if (!downloaded)
+            {
+                label.Text       = Strings.Get("SettingsWindow_DatiNonScaricati");
+                label.Foreground = Brushes.DimGray;
+                btn.Content      = Strings.Get("SettingsWindow_Scarica");
+            }
+            else if (latestTag != null && localVersion != null &&
+                     !localVersion.Equals(latestTag, StringComparison.OrdinalIgnoreCase))
+            {
+                label.Text       = string.Format(Strings.Get("SettingsWindow_AggiornamentoDatiDisponibile"), localVersion, latestTag);
+                label.Foreground = Brushes.DarkOrange;
+                btn.Content      = Strings.Get("SettingsWindow_Aggiorna");
+            }
+            else
+            {
+                label.Text       = string.Format(Strings.Get("SettingsWindow_DatiVersioneScaricata"), localVersion ?? "?");
+                label.Foreground = Brushes.SeaGreen;
+                btn.Content      = Strings.Get("SettingsWindow_Scarica");
+            }
+        }
+
+        private async Task CheckOfflineDataUpdatesAsync()
+        {
+            if (_offlineDataStatusText == null) return;
+            _offlineDataStatusText.IsVisible  = true;
+            _offlineDataStatusText.Foreground = Brushes.DimGray;
+            _offlineDataStatusText.Text       = Strings.Get("SettingsWindow_ControlloAggiornamentiDatiInCorso");
+
+            var release = await PoiOfflineDatabase.GetLatestDataReleaseAsync();
+            if (release == null)
+            {
+                _offlineDataStatusText.Text       = Strings.Get("SettingsWindow_ControlloAggiornamentiDatiFallito");
+                _offlineDataStatusText.Foreground = Brushes.Firebrick;
+                return;
+            }
+
+            _offlineDataStatusText.Text = string.Format(Strings.Get("SettingsWindow_UltimaVersioneDatiDisponibile"), release.Tag);
+            foreach (var continent in PoiOfflineDatabase.Continents)
+                UpdateContinentRow(continent, release.Tag);
+        }
+
+        private async Task OnDownloadContinentAsync(string continent)
+        {
+            if (!_offlineContinentButtons.TryGetValue(continent, out var btn)) return;
+            if (!_offlineContinentStatusLabels.TryGetValue(continent, out var label)) return;
+
+            btn.IsEnabled = false;
+            var progress = new Progress<string>(msg =>
+            {
+                label.Text       = msg;
+                label.Foreground = Brushes.DimGray;
+            });
+
+            var (success, message) = await PoiOfflineDatabase.DownloadContinentAsync(continent, progress);
+
+            label.Text       = message;
+            label.Foreground = success ? Brushes.SeaGreen : Brushes.Firebrick;
+            btn.IsEnabled    = true;
+            if (success) btn.Content = Strings.Get("SettingsWindow_Scarica");
         }
 
         private void AddLabel(Grid grid, string text, int row)

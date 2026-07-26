@@ -246,6 +246,40 @@ namespace StradarioApp.Services
             return string.IsNullOrWhiteSpace(joined) ? null : joined;
         }
 
+        // Sceglie il nome da mostrare per un elemento OSM dando priorità a un
+        // tag già in caratteri ASCII, nell'ordine della lingua correntemente
+        // selezionata nell'interfaccia (name:it prima se IT, name:en prima se
+        // EN, poi int_name, poi il "name" grezzo): in Cina (e in generale
+        // Asia/Medio Oriente/Russia...) "name" è spesso nello script locale
+        // (es. caratteri cinesi), illeggibile e non modificabile nell'app.
+        // Se NESSUNA variante è interamente ASCII, si ripiega sul primo tag
+        // non vuoto trovato ma togliendo comunque tutti i caratteri non ASCII
+        // (StripNonAscii) piuttosto che mostrare testo indecifrabile — se
+        // dopo la pulizia non resta nulla di utile, si usa il fallback.
+        private static string PickBestName(JObject? tags, string fallbackName)
+        {
+            if (tags == null) return fallbackName;
+
+            string[] priorityKeys = AsciiText.NamePriorityKeys();
+
+            string? firstNonEmpty = null;
+            foreach (var key in priorityKeys)
+            {
+                string? val = tags[key]?.Value<string>();
+                if (string.IsNullOrWhiteSpace(val)) continue;
+                firstNonEmpty ??= val;
+                if (AsciiText.IsAscii(val)) return val!;
+            }
+
+            if (firstNonEmpty != null)
+            {
+                string stripped = AsciiText.StripNonAscii(firstNonEmpty).Trim();
+                if (!string.IsNullOrWhiteSpace(stripped)) return stripped;
+            }
+
+            return fallbackName;
+        }
+
         // Tutti i tag OSM di un elemento (nodo/way trovato da
         // SearchCategoryAsync) tranne il nome (già usato per DisplayName),
         // serializzati come "chiave=valore;chiave=valore;...": nessun elenco
@@ -258,10 +292,20 @@ namespace StradarioApp.Services
         {
             if (tags == null) return null;
 
-            var parts = tags.Properties()
-                .Where(p => p.Name != "name" && p.Name != "name:it" && p.Name != "name:en")
-                .Select(p => $"{p.Name}={p.Value}")
-                .ToList();
+            // Stesso trattamento "solo ASCII" di PickBestName: un tag il cui
+            // valore contiene script non latino (es. indirizzo o note in
+            // caratteri cinesi) viene ripulito, non lasciato passare intatto
+            // nel tooltip/descrizione — se dopo la pulizia non resta nulla,
+            // il tag viene scartato invece di mostrare "chiave=" vuoto.
+            var parts = new List<string>();
+            foreach (var p in tags.Properties())
+            {
+                if (p.Name == "name" || p.Name == "name:it" || p.Name == "name:en") continue;
+                string raw = p.Value?.ToString() ?? "";
+                string val = AsciiText.IsAscii(raw) ? raw : AsciiText.StripNonAscii(raw).Trim();
+                if (string.IsNullOrWhiteSpace(val)) continue;
+                parts.Add($"{p.Name}={val}");
+            }
 
             return parts.Count == 0 ? null : string.Join(";", parts);
         }
@@ -556,12 +600,10 @@ namespace StradarioApp.Services
                 if (lat == null || lon == null) continue;
 
                 var tags = el["tags"] as JObject;
-                string? name = tags?["name:it"]?.Value<string>()
-                    ?? tags?["name:en"]?.Value<string>()
-                    ?? tags?["name"]?.Value<string>();
+                string name = PickBestName(tags, $"{value} (senza nome)");
 
                 results.Add(new Result(
-                    string.IsNullOrWhiteSpace(name) ? $"{value} (senza nome)" : name!,
+                    name,
                     lon.Value, lat.Value,
                     key, value, null, BuildOsmTagsString(tags)));
             }
@@ -787,12 +829,10 @@ namespace StradarioApp.Services
                 if (elat == null || elon == null) continue;
 
                 var tags = el["tags"] as JObject;
-                string? name = tags?["name:it"]?.Value<string>()
-                    ?? tags?["name:en"]?.Value<string>()
-                    ?? tags?["name"]?.Value<string>();
+                string name = PickBestName(tags, $"{value} (senza nome)");
 
                 results.Add(new PoiResult(
-                    string.IsNullOrWhiteSpace(name) ? $"{value} (senza nome)" : name!,
+                    name,
                     elat.Value, elon.Value, category, null));
             }
             return results;

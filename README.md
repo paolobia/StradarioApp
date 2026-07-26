@@ -10,12 +10,15 @@ stradali a pagine) a partire da OpenStreetMap. Portabile su **Linux** e
 
 ## Funzionalità
 
-1. **Impostazioni** – Due tab: "Generale" (formato pagina A5/A4/A3,
+1. **Impostazioni** – Tre tab: "Generale" (formato pagina A5/A4/A3,
    orientamento, DPI 72/96/150/300, scala cartografica da 1:1.000 fino a
    1:1.000.000 — vedi elenco sotto, tile server con o senza API key, blocco
-   automatico oggetti inattivi, contrasto mappa nel PDF) e "Categorie POI"
+   automatico oggetti inattivi, contrasto mappa nel PDF), "Categorie POI"
    (aggiunta di categorie di ricerca personalizzate, oltre alle predefinite,
-   specificando etichetta e tag OSM `chiave=valore`)
+   specificando etichetta e tag OSM `chiave=valore`) e "Database POI
+   offline" (download facoltativo, continente per continente, di un
+   database POI locale per cercare istantaneamente senza rete e senza
+   limiti d'area, invece che dal vivo su Overpass)
 2. **Mappa interattiva** – Pan (drag), zoom (rotella) centrato sul cursore
 3. **Pagine** – Click destro per aggiungere una pagina; drag per spostarla;
    etichette automatiche (A1, B2…); blocco/sblocco per evitare spostamenti
@@ -38,17 +41,30 @@ stradali a pagine) a partire da OpenStreetMap. Portabile su **Linux** e
 5. **Percorsi** – Disegno di percorsi punto-per-punto direttamente sulla
    mappa, estendibili in seguito, con drag dei singoli vertici
 6. **Import/Export KMZ/KML/GPX** – Importazione unificata (POI e percorsi
-   nello stesso file), esportazione separata per gruppi POI e percorsi; i
-   punti che cadono in Cina vengono corretti automaticamente da GCJ-02 a
-   WGS84 in importazione e viceversa in esportazione (le mappe pubbliche
-   cinesi offuscano le coordinate reali con un offset deterministico)
-7. **Generazione PDF** – Anteprima prima del salvataggio, stradario completo
+   nello stesso file); esportazione sia separata (gruppi POI, percorsi) sia
+   in un unico file combinato ("Esporta tutto"). Nomi/descrizioni in
+   script non latino (es. caratteri cinesi) vengono sostituiti con una
+   variante ASCII quando disponibile nei tag, altrimenti ripuliti. I punti
+   in Cina possono essere in coordinate GCJ-02 anziché WGS84 reale (offset
+   deterministico usato dalle mappe cinesi, Google Maps incluso per i
+   luoghi in territorio cinese): per KML/KMZ (sempre WGS84 per
+   specifica) non si chiede nulla, per GPX si può scegliere di correggere
+   o lasciare invariato (rilevato in automatico dal nome file se contiene
+   "wgs84"/"gcj02"); icone "C→W"/"W→C" nell'albero permettono di
+   correggere/convertire manualmente ogni singolo POI o punto di percorso
+   che ricade in Cina, in qualunque momento
+7. **Ricerca POI ibrida** – Overpass dal vivo di default; se scaricato
+   almeno un continente dal database POI offline (vedi Impostazioni), la
+   stessa ricerca per categoria risponde istantaneamente e senza rete
+8. **Generazione PDF** – Anteprima prima del salvataggio, stradario completo
    con indice, mappa riassuntiva, eventuali pagine gazetteer POI, pagine
    mappa con riferimenti alle pagine adiacenti (N/S/E/O) e scala grafica;
    contrasto opzionale ottimizzato per la stampa in bianco e nero
-8. **Salvataggio progetto** – File `.stradario` (JSON), leggibile e
+9. **Salvataggio progetto** – File `.stradario` (JSON), leggibile e
    modificabile manualmente; le chiavi API (tile server, Groq) **non**
-   vengono mai salvate nel progetto, solo nelle preferenze dell'applicazione
+   vengono mai salvate nel progetto, solo nelle preferenze dell'applicazione.
+   Ogni finestra di selezione file (apri/salva progetto, importa, esporta,
+   PDF) riparte dall'ultima cartella usata, non dai "Recenti" del sistema
 
 ---
 

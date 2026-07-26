@@ -23,13 +23,16 @@ l'app genera un PDF con indice, mappa riassuntiva e una pagina per quadrante.
 ---
 
 ## Funzionalità
-1. **Impostazioni**: due tab. "Generale": formato pagina (A5/A4/A3), orientamento,
+1. **Impostazioni**: tre tab. "Generale": formato pagina (A5/A4/A3), orientamento,
    DPI (72/96/150/300), scala (da 1:1.000 a 1:1.000.000, 16 valori — tutte le
    scale tipiche degli stradari cittadini e stradali), tile server (con o senza
    API key), blocco automatico, contrasto mappa nel PDF (Nessuno/Colore/B-N/
    Enfatizza strade). "Categorie POI": aggiunta di categorie di ricerca
    personalizzate (etichetta + tag OSM `chiave=valore`), in coda alle
-   predefinite, persistite globalmente
+   predefinite, persistite globalmente. "Database POI offline": download
+   facoltativo per continente (`PoiOfflineDatabase`, dati generati da
+   `osm/OsmExtractor` da estratti Geofabrik) per cercare istantaneamente
+   senza rete al posto di Overpass dal vivo
 2. **Mappa interattiva**: pan con drag, zoom con rotella centrato sul cursore,
    tile OSM con cache in memoria e retry automatico sui fallimenti, ricerca
    città (autocomplete GeoNames)
@@ -52,18 +55,28 @@ l'app genera un PDF con indice, mappa riassuntiva e una pagina per quadrante.
    shift+click = fine), auto-label `PATH<n>`, estensione di percorsi
    esistenti, drag dei singoli vertici
 7. **Import/Export unificato**: un solo pulsante toolbar importa KMZ/KML/GPX
-   (POI e percorsi nello stesso file, merge automatico); export separato per
-   gruppi POI e percorsi in KMZ/KML/GPX a seconda dell'estensione scelta.
-   Punti in Cina corretti GCJ-02→WGS84 in import e simmetricamente
-   WGS84→GCJ-02 in export (`GcjTransform`)
-8. **Generazione PDF**: anteprima (temp file → viewer di sistema → dialog
+   (POI e percorsi nello stesso file, merge automatico); export sia separato
+   (gruppi POI, percorsi) sia combinato in un unico file ("Esporta tutto",
+   `BuildCombinedKmlDocument` per KML/KMZ, root GPX condiviso per GPX).
+   Nomi/tag in script non latino ripuliti/sostituiti con variante ASCII
+   (`Services/AsciiText`). Punti in Cina in GCJ-02 anziché WGS84 reale
+   (`GcjTransform`, offset usato anche da Google Maps per luoghi in Cina):
+   per KML/KMZ mai chiesto (sempre WGS84 per specifica), per GPX scelta
+   esplicita (o auto-rilevata dal nome file) con default "già WGS84"; icone
+   C→W/W→C nell'albero per correggere/convertire manualmente ogni singolo
+   punto in area Cina, indipendentemente da come è stato creato
+8. **Ricerca POI ibrida**: Overpass dal vivo di default, database offline
+   locale (se scaricato) come alternativa istantanea senza rete
+9. **Generazione PDF**: anteprima (temp file → viewer di sistema → dialog
    Salva/Chiudi) prima di chiedere dove salvare; indice + mappa riassuntiva +
    eventuali pagine gazetteer POI + pagine mappa ordinate con bordi
    adiacenti e scala grafica
-9. **Salvataggio progetto**: file `.stradario` (JSON) con tutte le
-   impostazioni/pagine/POI/percorsi — le chiavi API (`TileServerApiKey`,
-   `GroqApiKey`) sono `[JsonIgnore]`: mai scritte nel progetto, vivono solo
-   in `AppPreferencesService` (preferenze utente globali)
+10. **Salvataggio progetto**: file `.stradario` (JSON) con tutte le
+    impostazioni/pagine/POI/percorsi — le chiavi API (`TileServerApiKey`,
+    `GroqApiKey`) sono `[JsonIgnore]`: mai scritte nel progetto, vivono solo
+    in `AppPreferencesService` (preferenze utente globali). Ogni file picker
+    (apri/salva progetto, importa, esporta, PDF) riparte dall'ultima cartella
+    usata (`AppPreferencesService.LastUsedFolder`), non dai "Recenti"
 
 ---
 

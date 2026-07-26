@@ -1,0 +1,32 @@
+Africa	[.osm.pbf]	(7.3 GB)
+Antarctica	[.osm.pbf]	(31.6 MB)
+Asia	[.osm.pbf]	(15.0 GB)
+Australia and Oceania	[.osm.pbf]	(1.4 GB)
+Central America	[.osm.pbf]	(744 MB)
+Europe	[.osm.pbf]	(32.3 GB)
+North America	[.osm.pbf]	(17.9 GB)
+South America	[.osm.pbf]	(3.8 GB)
+
+
+# Installa dipendenze
+dotnet new console -n OsmExtractor
+cd OsmExtractor
+dotnet add package OSMSharp
+dotnet add package OSMSharp.PBF
+
+# Copia Program.cs e CategoriePOI.txt nella cartella
+
+# Esegui per un singolo continente
+dotnet run ./osm_data/continents/europe-latest.osm.pbf
+
+# Esegui per un altro continente
+dotnet run ./osm_data/continents/north-america-latest.osm.pbf
+
+# Esegui in loop per tutti i continenti
+for f in ./osm_data/continents/*.osm.pbf; do
+    dotnet run "$f"
+done
+
+
+dotnet run \osm_data\continents\australia-oceania-260721.osm.pbf
+dotnet run \osm_data\continents\africa-260721.osm.pbf

@@ -52,6 +52,12 @@ namespace StradarioApp.Services
             // (vedi LoadLanguage). Una volta che l'utente sceglie dalle
             // Impostazioni, il valore esplicito qui prevale sempre.
             public string Language = "";
+            // Ultima cartella usata in un qualunque file picker (apri/salva
+            // progetto, importa, esporta...): riproposta come cartella di
+            // partenza al prossimo picker invece di lasciare che l'OS/portale
+            // desktop apra "Recenti" di default — vedi MainWindow.
+            // SuggestedStartFolderAsync/RememberLastUsedFolder.
+            public string LastUsedFolder = "";
         }
 
         private static string StorageFilePath =>
@@ -159,6 +165,23 @@ namespace StradarioApp.Services
         {
             var data = LoadData();
             data.Language = language ?? "it";
+            SaveData(data);
+        }
+
+        // "" se non ancora impostata (nessun picker usato in questa
+        // installazione): il chiamante ricade sul comportamento di default
+        // dell'OS in quel caso.
+        public string LoadLastUsedFolder()
+        {
+            var data = LoadData();
+            return data.LastUsedFolder ?? "";
+        }
+
+        public void SaveLastUsedFolder(string folderPath)
+        {
+            if (string.IsNullOrWhiteSpace(folderPath)) return;
+            var data = LoadData();
+            data.LastUsedFolder = folderPath;
             SaveData(data);
         }
     }
