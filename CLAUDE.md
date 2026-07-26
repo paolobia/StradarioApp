@@ -299,8 +299,8 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   tool (see `osm/CLAUDE.md`: streams a Geofabrik `.osm.pbf` planet extract
   via `OsmSharp`, one CSV per OSM tag category in `osm/OsmExtractor/
   CategoriePOI.txt`; `Node`s directly, plus `Way`s — polygon POI like large
-  monuments/buildings/airports — via a bounding-box centroid computed in two
-  extra targeted passes, see `osm/CLAUDE.md` for why `Relation`s are still
+  monuments/buildings/airports — via a bounding-box centroid computed in one
+  extra targeted pass, see `osm/CLAUDE.md` for why `Relation`s are still
   not covered). CSVs are zipped per continent (`PoiOfflineDatabase.Continents`:
   africa/antarctica/asia/australia-oceania/central-america/europe/
   north-america/south-america) and published to a **separate** GitHub

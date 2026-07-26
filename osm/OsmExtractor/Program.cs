@@ -29,6 +29,25 @@ class Program
         return baseName;
     }
 
+    // Trova il primo tag dell'elemento che matcha una categoria in
+    // TargetTags (stesso criterio "primo che matcha vince" per Node e Way).
+    static bool TryFindMatchingTag(TagsCollectionBase tags, out string? matchingTag, out Tag matchingTagObj)
+    {
+        matchingTag = null;
+        matchingTagObj = default;
+        foreach (var tag in tags)
+        {
+            var candidate = $"{tag.Key}={tag.Value}";
+            if (TargetTags.Contains(candidate))
+            {
+                matchingTag = candidate;
+                matchingTagObj = tag;
+                return true;
+            }
+        }
+        return false;
+    }
+
     static void Main(string[] args)
     {
         if (args.Length < 1)
@@ -96,13 +115,13 @@ class Program
             var path = Path.Combine(outputDir, fileName);
 
             var streamWriter = new StreamWriter(path, append: true, Encoding.UTF8);
-            
+
             var config = new CsvConfiguration(CultureInfo.InvariantCulture)
             {
                 Delimiter = ",",
                 HasHeaderRecord = !File.Exists(path) || new FileInfo(path).Length == 0
             };
-            
+
             var csvWriter = new CsvWriter(streamWriter, config);
             writers[tag] = csvWriter;
         }
@@ -116,6 +135,21 @@ class Program
         long bytesRead = 0;
         int lastPercent = -1;
         DateTime startTime = DateTime.Now;
+
+        // Way (poligoni: edifici, aree...) che matchano una categoria:
+        // niente lat/lon dirette come i Node, serve calcolare un centroide
+        // dai nodi che compongono il perimetro — raccolti QUI, nella stessa
+        // unica passata che gestisce già i Node (le Way arrivano comunque
+        // più avanti nello stesso file, non serve una passata dedicata solo
+        // per trovarle). Le coordinate dei loro nodi però non sono ancora
+        // note a questo punto (i Node già passati non vengono tenuti in
+        // memoria: per un continente intero sarebbero miliardi, troppa RAM)
+        // — richiedono un'unica passata aggiuntiva dopo questa, mirata solo
+        // a risolvere gli id-nodo qui raccolti (ResolveWayCentroids sotto).
+        // Relation non gestite (multipolygon con "outer"/"inner", geometria
+        // già più complessa da assemblare correttamente).
+        var matchedWays = new List<(string tag, long id, string name, string tags, long[] nodeIds)>();
+        var neededNodeIds = new HashSet<long>();
 
         using (var fileStream = File.OpenRead(pbfPath))
         {
@@ -172,81 +206,57 @@ class Program
                 if (element.Tags == null || element.Tags.Count == 0)
                     continue;
 
-                // Trova il tag match - versione senza Tag? problematici
-                string? matchingTag = null;
-                Tag matchingTagObj = default;
-                bool foundMatch = false;
-                foreach (var tag in element.Tags)
-                {
-                    var candidate = $"{tag.Key}={tag.Value}";
-                    if (TargetTags.Contains(candidate))
-                    {
-                        matchingTag = candidate;
-                        matchingTagObj = tag;
-                        foundMatch = true;
-                        break;
-                    }
-                }
-
-                if (!foundMatch || matchingTag == null)
+                if (!TryFindMatchingTag(element.Tags, out string? matchingTag, out Tag matchingTagObj) || matchingTag == null)
                     continue;
 
                 matched++;
 
-                double lat = 0, lon = 0;
                 if (element is Node node)
                 {
-                    lat = node.Latitude ?? 0;
-                    lon = node.Longitude ?? 0;
+                    double lat = node.Latitude ?? 0, lon = node.Longitude ?? 0;
+
+                    if (!writers.TryGetValue(matchingTag, out var writer))
+                        continue;
+
+                    string name = element.Tags.GetValue("name") ?? "";
+
+                    // Costruisce la stringa dei tags ESCLUDENDO il tag che ha fatto match e il tag "name" (già in colonna dedicata)
+                    var allTags = element.Tags.Where(t => !t.Equals(matchingTagObj) && t.Key != "name");
+                    string tags = string.Join(";", allTags.Select(t => $"{t.Key}={t.Value}"));
+
+                    // Scrive la riga usando CsvHelper
+                    writer.WriteField(element.Id);
+                    writer.WriteField(lat.ToString("0.000000", CultureInfo.InvariantCulture));
+                    writer.WriteField(lon.ToString("0.000000", CultureInfo.InvariantCulture));
+                    writer.WriteField(name);
+                    writer.WriteField(tags);
+                    writer.NextRecord();
                 }
-                else
+                else if (element is Way way)
                 {
-                    continue;
+                    var nodeIds = way.Nodes ?? Array.Empty<long>();
+                    if (nodeIds.Length == 0) continue;
+
+                    string name = element.Tags.GetValue("name") ?? "";
+                    var allTags = element.Tags.Where(t => !t.Equals(matchingTagObj) && t.Key != "name");
+                    string tagsStr = string.Join(";", allTags.Select(t => $"{t.Key}={t.Value}"));
+
+                    matchedWays.Add((matchingTag, way.Id ?? 0, name, tagsStr, nodeIds));
+                    foreach (var nid in nodeIds) neededNodeIds.Add(nid);
                 }
-
-                if (!writers.TryGetValue(matchingTag, out var writer))
-                    continue;
-
-                // Prepara i dati per il CSV
-                string name = element.Tags.GetValue("name") ?? "";
-                
-                // Costruisce la stringa dei tags ESCLUDENDO il tag che ha fatto match e il tag "name" (già in colonna dedicata)
-                var allTags = element.Tags.Where(t => !t.Equals(matchingTagObj) && t.Key != "name");
-                string tags = string.Join(";", allTags.Select(t => $"{t.Key}={t.Value}"));
-
-                // Scrive la riga usando CsvHelper
-                writer.WriteField(element.Id);
-                writer.WriteField(lat.ToString("0.000000", CultureInfo.InvariantCulture));
-                writer.WriteField(lon.ToString("0.000000", CultureInfo.InvariantCulture));
-                writer.WriteField(name);
-                writer.WriteField(tags);
-                writer.NextRecord();
+                // Relation: non gestite, si scarta.
             }
         }
 
         Console.WriteLine($"\r100% ({processed:N0} oggetti) | Completato in {(DateTime.Now - startTime).ToString(@"hh\:mm\:ss")}    ");
+        Console.WriteLine($"Way di categoria trovate: {matchedWays.Count:N0} ({neededNodeIds.Count:N0} nodi da risolvere)");
         Console.WriteLine();
 
-        // Way (poligoni: edifici, aree...) che matchano una categoria:
-        // niente lat/lon dirette come i Node, serve calcolare un centroide
-        // dai nodi che compongono il perimetro. Un Way in un PBF Geofabrik fa
-        // sempre riferimento a Node che lo precedono nel file (i blocchi sono
-        // sempre Node, poi Way, poi Relation) — non si può quindi risolvere
-        // il centroide "al volo" nella stessa passata di sopra, che processa
-        // il file in ordine e ha già superato la sezione Node quando incontra
-        // una Way. Servono due passate aggiuntive sul file:
-        //   1) trova le Way che matchano una categoria, registra gli id dei
-        //      loro Node (serviranno nella passata 2) senza ancora risolverli;
-        //   2) rilegge il file una seconda volta e per ogni Node ne salva
-        //      lat/lon SOLO se il suo id è tra quelli richiesti dal passo 1
-        //      (mai l'intero file in un dizionario: per un continente intero
-        //      sarebbero miliardi di Node, qui invece solo quelli che
-        //      appartengono a una Way di categoria, tipicamente una frazione
-        //      minuscola del totale).
-        // Relation non gestite (multipolygon con "outer"/"inner", geometria
-        // già più complessa da assemblare correttamente): stesso limite di
-        // prima, ora ristretto alle sole Relation invece che a way+relation.
-        ExtractWayCentroids(pbfPath, fileSize, writers);
+        // Unica passata aggiuntiva: rilegge il file solo per risolvere le
+        // coordinate dei nodi richiesti dalle way appena raccolte (mai
+        // l'intero file di Node in un dizionario — qui solo la piccola
+        // frazione che appartiene a una way di categoria).
+        ResolveWayCentroids(pbfPath, fileSize, writers, matchedWays, neededNodeIds);
 
         foreach (var w in writers.Values)
         {
@@ -262,76 +272,24 @@ class Program
         Console.WriteLine($"File CSV in: {outputDir}");
     }
 
-    static void ExtractWayCentroids(string pbfPath, long fileSize, Dictionary<string, CsvWriter> writers)
+    static void ResolveWayCentroids(
+        string pbfPath, long fileSize, Dictionary<string, CsvWriter> writers,
+        List<(string tag, long id, string name, string tags, long[] nodeIds)> matchedWays,
+        HashSet<long> neededNodeIds)
     {
-        Console.WriteLine();
-        Console.WriteLine("Way (poligoni): passata 1/2 - individuazione...");
-        DateTime start1 = DateTime.Now;
-
-        var matchedWays = new List<(string tag, long id, string name, string tags, long[] nodeIds)>();
-        var neededNodeIds = new HashSet<long>();
-
-        using (var fs1 = File.OpenRead(pbfPath))
-        {
-            var source1 = new PBFOsmStreamSource(fs1);
-            long seen = 0;
-            int lastPercent1 = -1;
-
-            foreach (var element in source1)
-            {
-                if (element is not Way way) continue;
-                if (way.Tags == null || way.Tags.Count == 0) continue;
-
-                seen++;
-                int percent = (int)((fs1.Position * 100) / fileSize);
-                if (percent != lastPercent1 && (percent <= 10 || percent % 5 == 0))
-                {
-                    lastPercent1 = percent;
-                    Console.Write($"\r{percent}% ({seen:N0} way con tag)    ");
-                }
-
-                string? matchingTag = null;
-                Tag matchingTagObj = default;
-                foreach (var tag in way.Tags)
-                {
-                    var candidate = $"{tag.Key}={tag.Value}";
-                    if (TargetTags.Contains(candidate))
-                    {
-                        matchingTag = candidate;
-                        matchingTagObj = tag;
-                        break;
-                    }
-                }
-                if (matchingTag == null) continue;
-
-                var nodeIds = way.Nodes ?? Array.Empty<long>();
-                if (nodeIds.Length == 0) continue;
-
-                string name = way.Tags.GetValue("name") ?? "";
-                var allTags = way.Tags.Where(t => !t.Equals(matchingTagObj) && t.Key != "name");
-                string tagsStr = string.Join(";", allTags.Select(t => $"{t.Key}={t.Value}"));
-
-                matchedWays.Add((matchingTag, way.Id ?? 0, name, tagsStr, nodeIds));
-                foreach (var nid in nodeIds) neededNodeIds.Add(nid);
-            }
-        }
-
-        Console.WriteLine($"\r100% ({matchedWays.Count:N0} way di categoria trovate, {neededNodeIds.Count:N0} nodi da risolvere) | {(DateTime.Now - start1).ToString(@"hh\:mm\:ss")}    ");
-
         if (matchedWays.Count == 0) return;
 
-        Console.WriteLine("Way (poligoni): passata 2/2 - risoluzione coordinate nodi...");
-        DateTime start2 = DateTime.Now;
+        Console.WriteLine("Way (poligoni): risoluzione coordinate nodi...");
+        DateTime start = DateTime.Now;
 
         var nodeCoords = new Dictionary<long, (float lat, float lon)>(neededNodeIds.Count);
-        using (var fs2 = File.OpenRead(pbfPath))
+        using (var fs = File.OpenRead(pbfPath))
         {
-            var source2 = new PBFOsmStreamSource(fs2);
-            bool pastNodes = false;
+            var source = new PBFOsmStreamSource(fs);
             bool sawAnyNode = false;
-            int lastPercent2 = -1;
+            int lastPercent = -1;
 
-            foreach (var element in source2)
+            foreach (var element in source)
             {
                 if (element is not Node node)
                 {
@@ -339,25 +297,24 @@ class Program
                     // Relation: appena finiscono i Node non c'è più nulla da
                     // cercare in questa passata, si può fermare subito invece
                     // di continuare a scandire way/relation fino in fondo.
-                    if (sawAnyNode) { pastNodes = true; break; }
+                    if (sawAnyNode) break;
                     continue;
                 }
                 sawAnyNode = true;
 
-                int percent = (int)((fs2.Position * 100) / fileSize);
-                if (percent != lastPercent2 && (percent <= 10 || percent % 5 == 0))
+                int percent = (int)((fs.Position * 100) / fileSize);
+                if (percent != lastPercent && (percent <= 10 || percent % 5 == 0))
                 {
-                    lastPercent2 = percent;
+                    lastPercent = percent;
                     Console.Write($"\r{percent}%    ");
                 }
 
                 if (node.Id.HasValue && neededNodeIds.Contains(node.Id.Value))
                     nodeCoords[node.Id.Value] = ((float)(node.Latitude ?? 0), (float)(node.Longitude ?? 0));
             }
-            _ = pastNodes;
         }
 
-        Console.WriteLine($"\r100% ({nodeCoords.Count:N0}/{neededNodeIds.Count:N0} nodi risolti) | {(DateTime.Now - start2).ToString(@"hh\:mm\:ss")}    ");
+        Console.WriteLine($"\r100% ({nodeCoords.Count:N0}/{neededNodeIds.Count:N0} nodi risolti) | {(DateTime.Now - start).ToString(@"hh\:mm\:ss")}    ");
         Console.WriteLine();
 
         // Centroide = centro del bounding box dei nodi risolti (stessa
