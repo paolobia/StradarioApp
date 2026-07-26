@@ -296,12 +296,24 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   `Services/PoiOfflineDatabase` reads per-continent CSV files (id, lat, lon,
   name, `key=value;...` tags — same serialization as `PoiSearchService.
   BuildOsmTagsString`) produced by the separate `osm/OsmExtractor` console
-  tool (see `osm/CLAUDE.md`: streams a Geofabrik `.osm.pbf` planet extract
-  via `OsmSharp`, one CSV per OSM tag category in `osm/OsmExtractor/
-  CategoriePOI.txt`; `Node`s directly, plus `Way`s — polygon POI like large
-  monuments/buildings/airports — via a bounding-box centroid computed in one
-  extra targeted pass, see `osm/CLAUDE.md` for why `Relation`s are still
-  not covered). CSVs are zipped per continent (`PoiOfflineDatabase.Continents`:
+  tool (see `osm/CLAUDE.md`: pre-filters a Geofabrik `.osm.pbf` planet
+  extract with the external `osmium tags-filter` tool down to a much
+  smaller file — only elements matching one of `osm/OsmExtractor/
+  CategoriePOI.txt`'s 43 categories, ~40× smaller for Europe — then streams
+  that with `OsmSharp`, one CSV per category; `Node`s directly, plus
+  `Way`s — polygon POI like large monuments/buildings/airports — via a
+  bounding-box centroid computed in one extra pass over the same small
+  filtered file, see `osm/CLAUDE.md` for why `Relation`s are still not
+  covered). **A real incident worth remembering**: the CSV writers open in
+  append mode by design (so re-running the extractor for a *different*
+  continent accumulates into the same category files) — but re-running it
+  for the *same* continent without first clearing `osm_data/csv/<continent>/`
+  silently duplicates every previously-written `Node` (not `Way`s, those
+  were new). This actually happened and corrupted an entire published data
+  release before a spot-check (row count vs. distinct-ID count) caught it —
+  `Main` now warns and waits for Enter if it finds non-empty CSVs in the
+  target folder before starting, but the real safeguard is still to clear
+  that folder first when re-running the same continent. CSVs are zipped per continent (`PoiOfflineDatabase.Continents`:
   africa/antarctica/asia/australia-oceania/central-america/europe/
   north-america/south-america) and published to a **separate** GitHub
   Release tagged `osm-data-<date>` (`DataTagPrefix`, deliberately distinct

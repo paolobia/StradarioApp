@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Text;
@@ -46,6 +47,88 @@ class Program
             }
         }
         return false;
+    }
+
+    // Prefiltra il .osm.pbf originale (fino a ~35 GB) con l'utility esterna
+    // "osmium tags-filter" (pacchetto osmium-tool, non una libreria .NET):
+    // un'unica passata SEQUENZIALE sul file grande produce un .osm.pbf molto
+    // più piccolo (~40x nei test: Europa 34,67 GB -> 853 MB) contenente SOLO
+    // i Node/Way che matchano una categoria, più — per convenzione di
+    // default di osmium (senza il flag -R/--omit-referenced) — i Node
+    // referenziati dalle Way incluse, già con le coordinate.
+    //
+    // Perché conviene rispetto a leggere il .pbf originale con OsmSharp:
+    // 1) sostituisce sia il vecchio giro di individuazione delle Way sia la
+    //    successiva risoluzione delle coordinate nodo con un'unica passata
+    //    (osmium è anche molto più veloce di OsmSharp sullo stesso lavoro:
+    //    ~18 min contro le ~144 min delle vecchie 3 fasi, misurato
+    //    sull'estratto Europa);
+    // 2) il file filtrato è piccolo abbastanza da stare comodamente in RAM
+    //    (i suoi Node in un dizionario, es. ~50M per l'Europa, pesano ~2-3
+    //    GB) — Main può quindi risolvere le Way lavorando SOLO su questo
+    //    file piccolo, senza mai più toccare l'originale;
+    // 3) resta tutto sequenziale, nessun accesso casuale su disco: importante
+    //    su un HD lento, dove il seek casuale costerebbe molto più della
+    //    doppia lettura sequenziale.
+    // Richiede osmium-tool installato sul sistema che esegue l'estrazione
+    // (non è una dipendenza dell'app pubblicata, solo di questo workflow
+    // manuale — vedi osm/CLAUDE.md). Se manca, si esce con un errore chiaro
+    // invece di ripiegare silenziosamente sulla lettura diretta del file
+    // originale (che vanificherebbe il guadagno e sorprenderebbe con tempi
+    // molto più lunghi del previsto).
+    static string RunOsmiumFilter(string pbfPath, string continent)
+    {
+        string exprFile = Path.Combine(Path.GetTempPath(), $"osmextractor-filter-{continent}-{Guid.NewGuid():N}.txt");
+        string filteredPath = Path.Combine(Path.GetTempPath(), $"osmextractor-filtered-{continent}-{Guid.NewGuid():N}.osm.pbf");
+
+        // Sia "n/chiave=valore" (Node taggati direttamente) sia
+        // "w/chiave=valore" (Way, con i loro Node referenziati inclusi
+        // automaticamente da osmium) per ogni categoria.
+        var lines = TargetTags.Select(t => "n/" + t).Concat(TargetTags.Select(t => "w/" + t));
+        File.WriteAllLines(exprFile, lines);
+
+        Console.WriteLine("Prefiltro con osmium tags-filter (unica passata sul file originale)...");
+        DateTime start = DateTime.Now;
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = "osmium",
+            ArgumentList = { "tags-filter", pbfPath, "-e", exprFile, "-o", filteredPath, "--overwrite", "--no-progress" },
+            RedirectStandardOutput = false,
+            RedirectStandardError = false,
+            UseShellExecute = false,
+        };
+
+        try
+        {
+            using var process = Process.Start(psi);
+            if (process == null)
+                throw new InvalidOperationException("Process.Start ha restituito null.");
+            process.WaitForExit();
+
+            if (process.ExitCode != 0)
+            {
+                Console.WriteLine($"Errore: 'osmium tags-filter' e' uscito con codice {process.ExitCode}.");
+                Environment.Exit(1);
+            }
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception || ex is InvalidOperationException)
+        {
+            Console.WriteLine("Errore: impossibile eseguire 'osmium' (osmium-tool e' installato ed e' nel PATH?).");
+            Console.WriteLine($"Dettaglio: {ex.Message}");
+            Environment.Exit(1);
+        }
+        finally
+        {
+            if (File.Exists(exprFile)) File.Delete(exprFile);
+        }
+
+        long filteredSize = new FileInfo(filteredPath).Length;
+        Console.WriteLine($"Prefiltro completato in {(DateTime.Now - start).ToString(@"hh\:mm\:ss")} " +
+            $"({filteredSize / (1024.0 * 1024):F0} MB filtrati)");
+        Console.WriteLine();
+
+        return filteredPath;
     }
 
     static void Main(string[] args)
@@ -107,6 +190,29 @@ class Program
         // Crea la cartella CSV
         Directory.CreateDirectory(outputDir);
 
+        // I CsvWriter sotto aprono in modalità append (voluto: permette di
+        // rilanciare l'estrazione su continenti DIVERSI accumulando i
+        // risultati nelle stesse categorie, vedi sopra). Ma rilanciare
+        // l'estrazione sullo STESSO continente senza svuotare prima questa
+        // cartella somma le righe della vecchia estrazione a quelle nuove,
+        // duplicando ogni Node già presente (le Way non duplicano perché
+        // erano dati nuovi la prima volta) — successo per davvero, non solo
+        // in teoria: ha corrotto silenziosamente un'intera release dati già
+        // pubblicata prima che ce ne accorgessimo. Un avviso esplicito qui,
+        // non un blocco, perché rilanciare volutamente per accumulare più
+        // continenti nella stessa cartella capiterebbe solo per errore (i
+        // continenti finiscono già in cartelle separate), quindi qualunque
+        // CSV non vuoto trovato qui è quasi certamente un residuo da pulire
+        // a mano prima di continuare.
+        bool hasExistingData = Directory.EnumerateFiles(outputDir, "*.csv").Any(f => new FileInfo(f).Length > 0);
+        if (hasExistingData)
+        {
+            Console.WriteLine($"ATTENZIONE: '{outputDir}' contiene già CSV non vuoti da un'estrazione precedente.");
+            Console.WriteLine("Se non sono stati svuotati apposta, quest'estrazione duplicherà ogni Node già presente.");
+            Console.WriteLine("Premi Invio per continuare comunque, o Ctrl+C per fermarti e ripulire la cartella prima.");
+            Console.ReadLine();
+        }
+
         // Apre un writer per ogni categoria (con CsvHelper)
         var writers = new Dictionary<string, CsvWriter>();
         foreach (var tag in TargetTags)
@@ -125,6 +231,12 @@ class Program
             var csvWriter = new CsvWriter(streamWriter, config);
             writers[tag] = csvWriter;
         }
+
+        // Da qui in poi si lavora SOLO sul file prefiltrato da osmium (molto
+        // più piccolo dell'originale), mai più sull'originale — vedi
+        // RunOsmiumFilter sopra per il perché.
+        string filteredPbfPath = RunOsmiumFilter(pbfPath, continent);
+        long filteredFileSize = new FileInfo(filteredPbfPath).Length;
 
         // Processa il file
         Console.WriteLine("Elaborazione in corso...");
@@ -151,7 +263,7 @@ class Program
         var matchedWays = new List<(string tag, long id, string name, string tags, long[] nodeIds)>();
         var neededNodeIds = new HashSet<long>();
 
-        using (var fileStream = File.OpenRead(pbfPath))
+        using (var fileStream = File.OpenRead(filteredPbfPath))
         {
             var source = new PBFOsmStreamSource(fileStream);
 
@@ -160,7 +272,7 @@ class Program
                 processed++;
                 bytesRead = fileStream.Position;
 
-                int percent = (int)((bytesRead * 100) / fileSize);
+                int percent = (int)((bytesRead * 100) / filteredFileSize);
 
                 bool shouldShow = false;
                 if (percent != lastPercent)
@@ -252,11 +364,12 @@ class Program
         Console.WriteLine($"Way di categoria trovate: {matchedWays.Count:N0} ({neededNodeIds.Count:N0} nodi da risolvere)");
         Console.WriteLine();
 
-        // Unica passata aggiuntiva: rilegge il file solo per risolvere le
-        // coordinate dei nodi richiesti dalle way appena raccolte (mai
-        // l'intero file di Node in un dizionario — qui solo la piccola
-        // frazione che appartiene a una way di categoria).
-        ResolveWayCentroids(pbfPath, fileSize, writers, matchedWays, neededNodeIds);
+        // Seconda (e ultima) lettura, sempre e solo del file filtrato da
+        // osmium (piccolo, mai l'originale): risolve le coordinate dei nodi
+        // richiesti dalle way appena raccolte.
+        ResolveWayCentroids(filteredPbfPath, filteredFileSize, writers, matchedWays, neededNodeIds);
+
+        if (File.Exists(filteredPbfPath)) File.Delete(filteredPbfPath);
 
         foreach (var w in writers.Values)
         {
