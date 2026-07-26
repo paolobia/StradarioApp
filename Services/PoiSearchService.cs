@@ -98,7 +98,10 @@ namespace StradarioApp.Services
         // sotto). Details = TUTTI gli altri tag OSM grezzi dell'elemento
         // trovato da SearchCategoryAsync (indirizzo, telefono, sito, orari,
         // qualunque altra cosa OSM abbia), come stringa unica
-        // "chiave=valore;chiave=valore;..." — vedi BuildOsmTagsString. Sempre
+        // "chiave=valore\nchiave=valore\n..." (newline, non ';' — molti valori
+        // OSM legittimi, es. alt_name, contengono ';' come separatore interno
+        // di alternative, che andrebbe altrimenti in conflitto con quello tra
+        // tag) — vedi BuildOsmTagsString. Sempre
         // null per i risultati Nominatim (indirizzo/geocodifica/città), che
         // non passano da lì. Confidence/Motivo = valorizzati SOLO quando il
         // risultato è passato dal filtro AI su testo libero (vedi
@@ -256,7 +259,12 @@ namespace StradarioApp.Services
         // non vuoto trovato ma togliendo comunque tutti i caratteri non ASCII
         // (StripNonAscii) piuttosto che mostrare testo indecifrabile — se
         // dopo la pulizia non resta nulla di utile, si usa il fallback.
-        private static string PickBestName(JObject? tags, string fallbackName)
+        // Nota: prende un dizionario chiave/valore, non un JObject direttamente,
+        // così la stessa pulizia ASCII serve sia alla ricerca live (Overpass,
+        // tag JSON) sia al database offline (PoiOfflineDatabase, tag da CSV
+        // testuale) senza duplicare la logica in due posti — vedi
+        // PoiOfflineDatabase.SearchCategory.
+        internal static string PickBestName(IReadOnlyDictionary<string, string>? tags, string fallbackName)
         {
             if (tags == null) return fallbackName;
 
@@ -265,8 +273,7 @@ namespace StradarioApp.Services
             string? firstNonEmpty = null;
             foreach (var key in priorityKeys)
             {
-                string? val = tags[key]?.Value<string>();
-                if (string.IsNullOrWhiteSpace(val)) continue;
+                if (!tags.TryGetValue(key, out string? val) || string.IsNullOrWhiteSpace(val)) continue;
                 firstNonEmpty ??= val;
                 if (AsciiText.IsAscii(val)) return val!;
             }
@@ -282,13 +289,16 @@ namespace StradarioApp.Services
 
         // Tutti i tag OSM di un elemento (nodo/way trovato da
         // SearchCategoryAsync) tranne il nome (già usato per DisplayName),
-        // serializzati come "chiave=valore;chiave=valore;...": nessun elenco
+        // serializzati come "chiave=valore\nchiave=valore\n...": nessun elenco
         // prefissato di campi "importanti" da riconoscere uno per uno (indirizzo,
         // telefono, orari...) — semplicemente TUTTO quello che OSM ha per quel
-        // punto, un formato libero. Chi lo mostra (tooltip sulla mappa,
-        // descrizione del POI creato) spezza una riga a ogni ";" per renderlo
-        // leggibile, vedi MainWindow.
-        private static string? BuildOsmTagsString(JObject? tags)
+        // punto, un formato libero. Newline (non ';') come separatore TRA tag:
+        // molti valori OSM legittimi (es. "alt_name=Beijing South;北京南站;...")
+        // usano ';' come separatore INTERNO di alternative — usarlo anche come
+        // separatore tra tag spezzava quei valori a metà quando chi lo mostra
+        // (tooltip, descrizione del POI, vedi MainWindow) andava a capo a ogni
+        // ';' trovato nella stringa unica.
+        internal static string? BuildOsmTagsString(IReadOnlyDictionary<string, string>? tags)
         {
             if (tags == null) return null;
 
@@ -296,18 +306,33 @@ namespace StradarioApp.Services
             // valore contiene script non latino (es. indirizzo o note in
             // caratteri cinesi) viene ripulito, non lasciato passare intatto
             // nel tooltip/descrizione — se dopo la pulizia non resta nulla,
-            // il tag viene scartato invece di mostrare "chiave=" vuoto.
+            // il tag viene scartato invece di mostrare "chiave=" vuoto. La
+            // CHIAVE stessa può contenere non-ASCII (es. OSM reale:
+            // "railway:position:exact:京沪" — un suffisso col nome della linea
+            // in cinese): non ha un fallback ASCII sensato come i valori (non
+            // è un nome/testo, è un identificatore), quindi l'intero tag viene
+            // scartato piuttosto che mostrare una chiave mutilata o duplicata
+            // (più chiavi del genere collasserebbero tutte sullo stesso
+            // prefisso "railway:position:exact:" una volta tolto il suffisso).
             var parts = new List<string>();
-            foreach (var p in tags.Properties())
+            foreach (var p in tags)
             {
-                if (p.Name == "name" || p.Name == "name:it" || p.Name == "name:en") continue;
-                string raw = p.Value?.ToString() ?? "";
+                if (p.Key == "name" || p.Key == "name:it" || p.Key == "name:en") continue;
+                if (!AsciiText.IsAscii(p.Key)) continue;
+                string raw = p.Value ?? "";
                 string val = AsciiText.IsAscii(raw) ? raw : AsciiText.StripNonAscii(raw).Trim();
+                // Rimuovere i segmenti non-ASCII da un valore come
+                // "alt_name=Beijing South;北京南站;..." può lasciare ";;"
+                // (il segmento cinese in mezzo sparisce ma il suo ';' resta):
+                // si ricompattano i separatori ripetuti invece di mostrarli.
+                if (val.Contains(';'))
+                    val = string.Join(";", val.Split(';').Select(x => x.Trim()).Where(x => x.Length > 0));
+                val = val.TrimEnd(':', '-', ',', ';').Trim();
                 if (string.IsNullOrWhiteSpace(val)) continue;
-                parts.Add($"{p.Name}={val}");
+                parts.Add($"{p.Key}={val}");
             }
 
-            return parts.Count == 0 ? null : string.Join(";", parts);
+            return parts.Count == 0 ? null : string.Join("\n", parts);
         }
 
         // Tag OSM puramente tecnici/editoriali (provenienza del dato,
@@ -333,7 +358,7 @@ namespace StradarioApp.Services
         {
             if (string.IsNullOrEmpty(tags)) return tags;
 
-            var kept = tags.Split(';').Where(part =>
+            var kept = tags.Split('\n').Where(part =>
             {
                 int eq = part.IndexOf('=');
                 string key = (eq > 0 ? part.Substring(0, eq) : part).Trim();
@@ -341,7 +366,7 @@ namespace StradarioApp.Services
                 return !NoiseTagPrefixesForAi.Any(p => key.StartsWith(p, StringComparison.OrdinalIgnoreCase));
             });
 
-            string joined = string.Join(";", kept);
+            string joined = string.Join("\n", kept);
             return joined.Length == 0 ? null : joined;
         }
 
@@ -599,7 +624,8 @@ namespace StradarioApp.Services
                 double? lon = el["lon"]?.Value<double?>() ?? el["center"]?["lon"]?.Value<double?>();
                 if (lat == null || lon == null) continue;
 
-                var tags = el["tags"] as JObject;
+                var tagsObj = el["tags"] as JObject;
+                var tags = tagsObj?.Properties().ToDictionary(p => p.Name, p => p.Value?.ToString() ?? "");
                 string name = PickBestName(tags, $"{value} (senza nome)");
 
                 results.Add(new Result(
@@ -828,7 +854,8 @@ namespace StradarioApp.Services
                 double? elon = el["lon"]?.Value<double?>() ?? el["center"]?["lon"]?.Value<double?>();
                 if (elat == null || elon == null) continue;
 
-                var tags = el["tags"] as JObject;
+                var tagsObj = el["tags"] as JObject;
+                var tags = tagsObj?.Properties().ToDictionary(p => p.Name, p => p.Value?.ToString() ?? "");
                 string name = PickBestName(tags, $"{value} (senza nome)");
 
                 results.Add(new PoiResult(

@@ -245,10 +245,24 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   `MainWindow.MaxCategorySearchDegrees` (3°) on either side (e.g. "vedo
   tutta la Toscana e il Lazio" at a very small zoom), it used to just show
   an easy-to-miss status message and return nothing. Now it silently
-  restricts the Overpass query to a 3°×3° box centered on the current view
+  restricts the Overpass query to a box centered on the current view
   center — so a search always returns *something* useful, with an explicit
   note (both in the initial "cerco..." message and in the final result
-  count) that the area was restricted. `PoiSearchService.CategoryResultCap`
+  count) that the area was restricted. **Width and height are clamped to
+  3° independently** (`Math.Min(viewBounds.Width, MaxCategorySearchDegrees)`,
+  same for height), never forced to the same fixed 3°×3° square: an
+  earlier version always produced a square whenever *either* dimension
+  exceeded 3°, which — since the screen is virtually never square — meant
+  the un-exceeded dimension (typically height, on a wide monitor) got
+  silently inflated up to 3° too. A point well inside the visible screen
+  (e.g. ~1.3° from center) could then appear included at one zoom level
+  and disappear at the very next 0.1 zoom step, purely because *width*
+  crossed the 3° threshold and the clamp's forced height snapped back down
+  to the real (smaller) screen height — a real user report ("cambio lo
+  zoom anche di poco e un punto nel mezzo sparisce", noticed searching
+  monuments in China, where wide-area views are common) reproduced and
+  confirmed with a standalone Python simulation of the exact Web Mercator
+  math before fixing. `PoiSearchService.CategoryResultCap`
   (now `5000`, was `200`) is a safety valve against pathological responses,
   not a normal usage limit anymore — a dense category like "caffetterie" in
   a big city should return everything real, not an arbitrary subset.
@@ -298,11 +312,49 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   for Europe), so fetching one is always an explicit action from
   Settings → "Database POI offline" (`UI/SettingsWindow.BuildOfflineDataTab`,
   one row per continent with status — not downloaded / local version /
-  update available — and a download/update button).
+  update available — and a download/update button). The button is never
+  disabled even when already at the latest known version — clicking it
+  always re-downloads/re-extracts unconditionally
+  (`PoiOfflineDatabase.DownloadContinentAsync` has no "already current, skip"
+  guard) — but its label only said generic "Scarica" in that state too,
+  same as "not downloaded", giving no visual hint that clicking does
+  anything. Now labeled "Riscarica" specifically when up to date (still the
+  same click handler/behavior), and `OnDownloadContinentAsync` re-derives
+  the post-download label via `UpdateContinentRow` (using the last tag seen
+  by `CheckOfflineDataUpdatesAsync`, cached in `_lastKnownDataTag`) instead
+  of hardcoding "Scarica" after any successful download regardless of the
+  resulting state.
   `MainWindow.RunCategorySearchAsync` prefers this offline path over
   Overpass whenever `PoiOfflineDatabase.HasAnyLocalData()` is true (instant,
   no need to clamp an over-wide view since there's no public server to
-  protect), falling back to the live Overpass query otherwise.
+  protect), falling back to the live Overpass query only when the offline
+  search finds **zero** matches for that exact area+category (not when the
+  continent simply isn't downloaded — `HasAnyLocalData()` already gates
+  that above). `PoiOfflineDatabase.SearchCategory`'s results now go through
+  the same ASCII-only name/tag cleanup as the live path
+  (`PoiSearchService.PickBestName`/`BuildOsmTagsString`, both changed from
+  `private`/`JObject`-typed to `internal` and taking a plain
+  `IReadOnlyDictionary<string, string>?` so both callers share one
+  implementation) — before this fix, an offline hit showed the raw OSM
+  `name`/tags untouched (no ASCII preference, no diacritic-preserving
+  strip), while the same POI found live via Overpass would have been
+  cleaned; the CSV's `;`-joined tag string is parsed into a dictionary
+  (`name` reinserted from its own CSV column, since OsmExtractor keeps it
+  out of the tags blob) before calling either method.
+  **The `Node`-only extraction (see above) is a real, user-visible gap, not
+  just a performance shortcut**: a landmark mapped as a `way`/polygon (very
+  common for large buildings) is invisible to the offline database no
+  matter how the tags match, in every city, and *only* shows up via the
+  Overpass fallback once the offline search comes up empty for that view.
+  Confirmed on a real case: Xi'an's Bell Tower (钟楼) is correctly tagged
+  `historic=monument` in OSM but mapped as way `254488435` — genuinely
+  absent from `historic_monument.csv` for that reason alone, not an
+  area/zoom or tagging problem, unlike Beijing's own `historic=monument`
+  POIs in the same CSV, several of which happen to be mapped as nodes.
+  Extending `OsmExtractor` to also cover ways (via a centroid computed from
+  each way's/relation's geometry, e.g. `OsmSharp`'s complete-geometry
+  streams) would close this gap, but needs re-extracting and re-uploading
+  every continent — a deliberately deferred, not-yet-done improvement.
 
 - **Percorsi (routes).** `Models/StradarioModels.cs` defines `Percorso`
   (label, description, color, ordered `List<GeoPoint>`), stored flat in
@@ -431,11 +483,14 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   at 1 and would otherwise collide once merged (verified with a standalone
   reflection-based smoke test before shipping). For GPX, waypoints and
   tracks just go in the same `<gpx>` root (the format supports both
-  natively, no id collision possible). `BootstrapIcons.Export` is the same
-  cloud/arrow glyph as `Import` with the arrow vertically mirrored about
-  its own bounding-box center (verified by rendering both with `cairosvg`
-  before committing the path data), used for both the new toolbar action
-  and the two "Esporta" tree buttons (previously the generic `Save` icon).
+  natively, no id collision possible). `BootstrapIcons.Import`/`Export` are
+  the Bootstrap Icons `download`/`upload` glyphs (tray + arrow; chosen
+  after showing the user several alternatives — box-arrow, file-arrow,
+  cloud-arrow, arrow-in-square — rendered side by side with `cairosvg`),
+  used for both the toolbar actions and the "Esporta"/"Importa" tree
+  buttons (previously the generic `Save` icon). Each constant's path `d`
+  concatenates the two official `<path>` subpaths (tray + arrow) of the
+  source SVG into one string, verified by rendering before committing.
 
 - **OSM tag values in an unfamiliar script are ASCII-only, never left
   garbled.** `Services/AsciiText.cs` centralizes this (used by both the
@@ -451,6 +506,31 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   `BuildOsmTagsString`/`SanitizeMultilineAscii`) get the same per-line
   treatment, and a `key=value` line whose value goes empty after stripping
   is dropped entirely instead of showing a dangling `key=`.
+  `AsciiText.StripNonAscii` first runs a **Unicode NFKD normalization**
+  before filtering out characters `> 127`: an accented Latin letter (é, í,
+  ü, ç...) decomposes into its base letter plus a separate combining mark,
+  and only the mark (itself `> 127`) gets dropped — so "Pekín"/"Südbahnhof"
+  clean up to "Pekin"/"Sudbahnhof", not the earlier "Pekn"/"Sdbahnhof"
+  (removing the whole accented codepoint mutilated the word instead of
+  just de-accenting it). For non-Latin scripts (Chinese, Cyrillic...) NFKD
+  doesn't decompose into ASCII components, so the behavior there is
+  unchanged (full removal). Found and fixed via a live Overpass query
+  against real Beijing station data (`name:es=Pekín`, `name:de=Peking
+  Südbahnhof`) before shipping. `BuildOsmTagsString` also now (a) **drops
+  the entire tag if the *key itself* is non-ASCII** (e.g. real OSM data
+  like `railway:position:exact:京沪`, a line-name suffix in Chinese) rather
+  than showing a mutilated or duplicate-looking key — a key has no
+  sensible ASCII fallback the way a name/value does; (b) joins tags with
+  **newline, not `;`**, and collapses repeated `;` left over after
+  stripping a non-ASCII segment out of a multi-value field (e.g.
+  `alt_name=Beijing South;北京南站;...` → `alt_name=Beijing
+  South;Beijing South Railway Station`, not a dangling `;;` or a value
+  broken across lines) — `;` is a legitimate *internal* separator in some
+  OSM values, so using it as the separator *between* tags too would (and
+  did) split those values in half wherever they got re-split by consumers
+  (`MainWindow`'s tooltip and `ConfirmPoiSearchResult`, and
+  `StripNoiseTagsForAi` in `PoiSearchService`, all updated to split on `\n`
+  instead).
 
 - **File pickers (open/save project, import, export, PDF) start in the
   last folder actually used**, not the OS/portal's own "Recent" default.

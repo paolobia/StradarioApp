@@ -19,6 +19,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using StradarioApp.Resources;
 
 namespace StradarioApp.Services
@@ -27,7 +28,18 @@ namespace StradarioApp.Services
     {
         public static bool IsAscii(string s) => s.All(c => c <= 127);
 
-        public static string StripNonAscii(string s) => new string(s.Where(c => c <= 127).ToArray());
+        // Normalizza in NFKD prima di filtrare: una lettera latina accentata
+        // (es. "í", "ü", "ç") si decompone in lettera base + segno diacritico
+        // separato (il segno, U+0300 in su, è comunque > 127 e viene tolto),
+        // quindi la lettera base sopravvive alla pulizia invece di sparire
+        // insieme all'accento. Senza questo passaggio, togliere semplicemente
+        // ogni carattere > 127 da "Pekín"/"Südbahnhof" produceva "Pekn"/
+        // "Sdbahnhof" — parole storpiate, non solo private dell'accento.
+        // Per script non latini (cinese, cirillico, ...) NFKD non decompone in
+        // componenti ASCII, quindi il comportamento resta "rimuovi tutto"
+        // come prima.
+        public static string StripNonAscii(string s) =>
+            new string(s.Normalize(NormalizationForm.FormKD).Where(c => c <= 127).ToArray());
 
         // Ripulisce un blocco di testo multi-riga (es. <description> KML)
         // togliendo i caratteri non ASCII riga per riga. Scarta le righe che

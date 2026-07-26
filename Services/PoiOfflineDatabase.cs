@@ -229,9 +229,31 @@ namespace StradarioApp.Services
                         continue;
                     if (!MatchesSubFilters(e, filters)) continue;
 
-                    result.Add(new PoiSearchService.Result(
-                        string.IsNullOrWhiteSpace(e.Name) ? $"{value} (senza nome)" : e.Name,
-                        e.Lon, e.Lat, key, value, null, e.Tags));
+                    // Stessa pulizia "solo ASCII" della ricerca live Overpass
+                    // (PoiSearchService.PickBestName/BuildOsmTagsString), non
+                    // applicata prima: un nome/tag OSM in script non latino
+                    // (es. cinese) trovato offline arrivava grezzo, mentre lo
+                    // stesso trovato via Overpass sarebbe già stato ripulito —
+                    // incoerenza tra le due fonti. Il CSV di OsmExtractor
+                    // esclude già il tag "name" dalla colonna Tags (sta nella
+                    // sua colonna dedicata) ma include name:it/name:en/
+                    // int_name, quindi si reinserisce "name" nel dizionario
+                    // prima di passarlo, per la stessa priorità di scelta.
+                    var tagsDict = new Dictionary<string, string>();
+                    foreach (var part in e.Tags.Split(';'))
+                    {
+                        int eq = part.IndexOf('=');
+                        if (eq <= 0) continue;
+                        string k = part.Substring(0, eq).Trim();
+                        if (k.Length == 0 || tagsDict.ContainsKey(k)) continue;
+                        tagsDict[k] = part.Substring(eq + 1).Trim();
+                    }
+                    if (!string.IsNullOrWhiteSpace(e.Name)) tagsDict["name"] = e.Name;
+
+                    string name = PoiSearchService.PickBestName(tagsDict, $"{value} (senza nome)");
+                    string? details = PoiSearchService.BuildOsmTagsString(tagsDict);
+
+                    result.Add(new PoiSearchService.Result(name, e.Lon, e.Lat, key, value, null, details));
                 }
             }
 

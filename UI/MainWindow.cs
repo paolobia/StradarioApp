@@ -2064,12 +2064,12 @@ namespace StradarioApp.UI
             else
                 lines.AddRange(WrapText(r.DisplayName, 40).Take(2));
 
-            // Details è un'unica stringa "chiave=valore;chiave=valore;..."
+            // Details è un'unica stringa "chiave=valore\nchiave=valore\n..."
             // (tutti i tag OSM grezzi dell'elemento, vedi
-            // PoiSearchService.BuildOsmTagsString): una riga per ogni ";",
+            // PoiSearchService.BuildOsmTagsString): una riga per ogni newline,
             // nessun campo prefissato da riconoscere.
             if (!string.IsNullOrWhiteSpace(r.Details))
-                foreach (string detailLine in r.Details!.Split(';'))
+                foreach (string detailLine in r.Details!.Split('\n'))
                     lines.AddRange(WrapText(detailLine.Trim(), 40));
 
             if (r.Confidence.HasValue)
@@ -3316,16 +3316,26 @@ namespace StradarioApp.UI
                 areaClamped = viewBounds.Width > MaxCategorySearchDegrees || viewBounds.Height > MaxCategorySearchDegrees;
                 if (areaClamped)
                 {
+                    // Clampare le due dimensioni indipendentemente (non sostituirle
+                    // entrambe con lo stesso quadrato fisso): lo schermo è quasi
+                    // sempre più largo che alto, quindi tipicamente è solo la
+                    // larghezza a superare la soglia. Forzare anche l'altezza allo
+                    // stesso valore la faceva discontinuamente crescere o
+                    // restringere a seconda che la larghezza superasse o meno i 3°
+                    // tra uno zoom e il successivo — un punto a metà schermo,
+                    // sempre visibile, spariva/ricompariva dal riquadro di ricerca
+                    // pur non essendosi mai avvicinato al vero bordo della vista.
                     double origWidth = viewBounds.Width, origHeight = viewBounds.Height;
-                    double half = MaxCategorySearchDegrees / 2.0;
+                    double halfWidth = Math.Min(viewBounds.Width, MaxCategorySearchDegrees) / 2.0;
+                    double halfHeight = Math.Min(viewBounds.Height, MaxCategorySearchDegrees) / 2.0;
                     viewBounds = new GeoRect
                     {
-                        MinLon = viewBounds.CenterLon - half,
-                        MaxLon = viewBounds.CenterLon + half,
-                        MinLat = viewBounds.CenterLat - half,
-                        MaxLat = viewBounds.CenterLat + half,
+                        MinLon = viewBounds.CenterLon - halfWidth,
+                        MaxLon = viewBounds.CenterLon + halfWidth,
+                        MinLat = viewBounds.CenterLat - halfHeight,
+                        MaxLat = viewBounds.CenterLat + halfHeight,
                     };
-                    log(string.Format(Strings.Get("MainWindow_LogAreaTroppoAmpiaRestringo"), origWidth.ToString("F1"), origHeight.ToString("F1"), MaxCategorySearchDegrees));
+                    log(string.Format(Strings.Get("MainWindow_LogAreaTroppoAmpiaRestringo"), origWidth.ToString("F1"), origHeight.ToString("F1"), (halfWidth * 2).ToString("F1"), (halfHeight * 2).ToString("F1")));
                 }
 
                 ShowStatusMessage(areaClamped
@@ -4407,7 +4417,7 @@ namespace StradarioApp.UI
             string label = SanitizeSearchLabel(result.DisplayName);
             // Descrizione su più righe: nome, poi (per città) la popolazione
             // in Address, poi tutti i tag OSM grezzi di Details (uno per
-            // riga, spezzati a ogni ";" — vedi PoiSearchService.
+            // riga, spezzati a ogni newline — vedi PoiSearchService.
             // BuildOsmTagsString) quando la ricerca li ha trovati. Non per la
             // ricerca indirizzo: lì DisplayName è già l'indirizzo completo di
             // Nominatim, riaggiungere Address ripeterebbe la stessa
@@ -4416,7 +4426,7 @@ namespace StradarioApp.UI
             if (!_poiSearchResultsAreAddresses && !string.IsNullOrWhiteSpace(result.Address))
                 descriptionLines.Add(result.Address!);
             if (!string.IsNullOrWhiteSpace(result.Details))
-                descriptionLines.AddRange(result.Details!.Split(';').Select(s => s.Trim()));
+                descriptionLines.AddRange(result.Details!.Split('\n').Select(s => s.Trim()));
             string description = string.Join("\n", descriptionLines);
 
             var item = new PoiItem

@@ -47,6 +47,13 @@ namespace StradarioApp.UI
         // 43 categorie del continente insieme.
         private StackPanel? _offlineDataPanel;
         private TextBlock?  _offlineDataStatusText;
+        // Tag dell'ultima release dati vista da CheckOfflineDataUpdatesAsync
+        // in questa apertura della finestra: null finché non si è controllato
+        // almeno una volta. Riusato da OnDownloadContinentAsync a fine
+        // download per rietichettare correttamente il pulsante (altrimenti
+        // tornerebbe sempre a "Scarica" anche se il continente è ora alla
+        // versione più recente, che dovrebbe invece mostrare "Riscarica").
+        private string? _lastKnownDataTag;
         private readonly Dictionary<string, TextBlock> _offlineContinentStatusLabels = new();
         private readonly Dictionary<string, Button>    _offlineContinentButtons      = new();
 
@@ -599,7 +606,14 @@ namespace StradarioApp.UI
             {
                 label.Text       = string.Format(Strings.Get("SettingsWindow_DatiVersioneScaricata"), localVersion ?? "?");
                 label.Foreground = Brushes.SeaGreen;
-                btn.Content      = Strings.Get("SettingsWindow_Scarica");
+                // Etichetta diversa da "Scarica"/"Aggiorna": qui non c'è una
+                // versione più recente, ma il pulsante resta comunque attivo
+                // e forza un nuovo download/estrazione anche a versione
+                // invariata (DownloadContinentAsync non ha alcun controllo
+                // "già alla versione più recente, non fare nulla") — utile
+                // per un CSV corrotto/incompleto o riscaricare dopo una
+                // ri-generazione dei dati con lo stesso tag di release.
+                btn.Content      = Strings.Get("SettingsWindow_Riscarica");
             }
         }
 
@@ -619,6 +633,7 @@ namespace StradarioApp.UI
             }
 
             _offlineDataStatusText.Text = string.Format(Strings.Get("SettingsWindow_UltimaVersioneDatiDisponibile"), release.Tag);
+            _lastKnownDataTag = release.Tag;
             foreach (var continent in PoiOfflineDatabase.Continents)
                 UpdateContinentRow(continent, release.Tag);
         }
@@ -637,10 +652,16 @@ namespace StradarioApp.UI
 
             var (success, message) = await PoiOfflineDatabase.DownloadContinentAsync(continent, progress);
 
-            label.Text       = message;
             label.Foreground = success ? Brushes.SeaGreen : Brushes.Firebrick;
             btn.IsEnabled    = true;
-            if (success) btn.Content = Strings.Get("SettingsWindow_Scarica");
+            if (success)
+                // Rietichetta correttamente ("Riscarica" se ora alla versione
+                // più recente nota, altrimenti "Scarica"/"Aggiorna" come da
+                // logica normale) invece di tornare sempre al generico
+                // "Scarica" indipendentemente dallo stato risultante.
+                UpdateContinentRow(continent, _lastKnownDataTag);
+            else
+                label.Text = message;
         }
 
         private void AddLabel(Grid grid, string text, int row)
