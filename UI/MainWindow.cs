@@ -506,6 +506,18 @@ namespace StradarioApp.UI
         // Chiede se salvare quando si chiude con modifiche non salvate
         private async void OnWindowClosing(object? sender, System.ComponentModel.CancelEventArgs e)
         {
+            // Chiudere l'app mentre un download/estrazione di un continente
+            // offline è in corso (avviato da Impostazioni) interromperebbe
+            // l'estrazione a metà, lasciando quel continente in uno stato
+            // incompleto sul disco — bloccato prima ancora del controllo
+            // _isDirty, che riguarda solo le modifiche al progetto.
+            if (PoiOfflineDatabase.IsAnyDownloadInProgress)
+            {
+                e.Cancel = true;
+                ShowStatusMessage(Strings.Get("MainWindow_AttendiDownloadInCorso"), seconds: 5);
+                return;
+            }
+
             if (!_isDirty) return;
 
             // Blocca la chiusura mentre aspettiamo la risposta dell'utente
@@ -3269,28 +3281,25 @@ namespace StradarioApp.UI
                 .Concat(PoiSearchService.GetCategoryExcludeFilters(key, value))
                 .ToList();
 
-            // Prova prima il database POI offline (osm/OsmExtractor, vedi
+            // Prova il database POI offline (osm/OsmExtractor, vedi
             // Services/PoiOfflineDatabase): se l'utente ha scaricato almeno
             // un continente da Impostazioni, la ricerca è istantanea e non
             // dipende da Overpass — niente clamp d'area (nessun server
             // pubblico da proteggere qui), tutta la vista viene cercata per
-            // intero. Overpass resta il fallback se i dati offline non sono
-            // stati scaricati, o se non trovano nulla nell'area (potrebbe
-            // essere un continente diverso da quelli scaricati).
+            // intero. Overpass NON è più un fallback quando i dati offline
+            // ci sono: se il continente scaricato coprisse davvero l'area ma
+            // quella combinazione area+categoria non trova nulla localmente,
+            // ripiegare su Overpass mostrava risultati che sembravano "dal
+            // database" ma in realtà provenivano dal vivo — comportamento
+            // esplicitamente rifiutato dall'utente ("se ho il file NON VOGLIO
+            // MAI E POI MAI overpass"). Overpass resta l'unica via SOLO se
+            // nessun continente è stato scaricato affatto.
             List<PoiSearchService.Result>? offlineResults = null;
             if (PoiOfflineDatabase.HasAnyLocalData())
             {
                 log(Strings.Get("MainWindow_LogProvoDatabaseOffline"));
-                var local = PoiOfflineDatabase.SearchCategory(key, value, viewBounds, allSubFilters);
-                if (local.Count > 0)
-                {
-                    log(string.Format(Strings.Get("MainWindow_LogTrovatiOffline"), local.Count));
-                    offlineResults = local;
-                }
-                else
-                {
-                    log(Strings.Get("MainWindow_LogNessunRisultatoOfflineProvoOverpass"));
-                }
+                offlineResults = PoiOfflineDatabase.SearchCategory(key, value, viewBounds, allSubFilters);
+                log(string.Format(Strings.Get("MainWindow_LogTrovatiOffline"), offlineResults.Count));
             }
 
             bool areaClamped = false;

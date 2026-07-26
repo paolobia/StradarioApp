@@ -327,10 +327,20 @@ namespace StradarioApp.Services
             }
         }
 
+        // Numero di download/estrazioni attualmente in corso (più di uno è
+        // possibile se l'utente avvia più continenti in sequenza prima che il
+        // primo finisca — ogni riga della tabella Impostazioni ha il proprio
+        // bottone indipendente). Le finestre (SettingsWindow, MainWindow)
+        // controllano questo flag per impedire una chiusura che
+        // interromperebbe un download/estrazione a metà, lasciando un
+        // continente in uno stato incompleto/corrotto sul disco.
+        private static int _downloadsInProgress;
+        public static bool IsAnyDownloadInProgress => Volatile.Read(ref _downloadsInProgress) > 0;
+
         // Scarica ed estrae lo zip del continente dalla release dati più
         // recente, sovrascrivendo l'eventuale versione già in cache locale.
         // onProgress riceve una stringa già pronta da mostrare (percentuale
-        // di download), niente calcoli lato chiamante.
+        // di download/estrazione), niente calcoli lato chiamante.
         public static async Task<(bool Success, string Message)> DownloadContinentAsync(
             string continent, IProgress<string>? onProgress = null, CancellationToken ct = default)
         {
@@ -341,6 +351,7 @@ namespace StradarioApp.Services
             if (!release.AssetUrlsByContinent.TryGetValue(continent, out var url))
                 return (false, $"Nessun pacchetto dati trovato per '{continent}' nella release {release.Tag}.");
 
+            Interlocked.Increment(ref _downloadsInProgress);
             string tempZip = Path.GetTempFileName();
             try
             {
@@ -374,10 +385,30 @@ namespace StradarioApp.Services
                 }
 
                 string destDir = Path.Combine(DownloadCacheDir, continent);
-                onProgress?.Report($"Estraggo {continent}.zip...");
                 if (Directory.Exists(destDir)) Directory.Delete(destDir, recursive: true);
                 Directory.CreateDirectory(destDir);
-                ZipFile.ExtractToDirectory(tempZip, destDir);
+
+                // Estrazione voce per voce (non ZipFile.ExtractToDirectory in
+                // un'unica chiamata bloccante) per poter riportare una
+                // percentuale reale: con ~43 file per continente non è
+                // granularità sprecata, e senza questo l'utente restava
+                // fermo su "Estraggo..." senza sapere se il programma si
+                // fosse bloccato o fosse quasi finito.
+                using (var archive = ZipFile.OpenRead(tempZip))
+                {
+                    var entries = archive.Entries.Where(e => !string.IsNullOrEmpty(e.Name)).ToList();
+                    int done = 0;
+                    foreach (var entry in entries)
+                    {
+                        string destPath = Path.Combine(destDir, entry.FullName);
+                        string? entryDir = Path.GetDirectoryName(destPath);
+                        if (!string.IsNullOrEmpty(entryDir)) Directory.CreateDirectory(entryDir);
+                        entry.ExtractToFile(destPath, overwrite: true);
+                        done++;
+                        int percent = entries.Count == 0 ? 100 : (done * 100 / entries.Count);
+                        onProgress?.Report($"Estraggo {continent}.zip... {percent}% ({done}/{entries.Count} file)");
+                    }
+                }
 
                 File.WriteAllText(Path.Combine(destDir, "_version.txt"), release.Tag);
 
@@ -399,6 +430,7 @@ namespace StradarioApp.Services
             finally
             {
                 if (File.Exists(tempZip)) File.Delete(tempZip);
+                Interlocked.Decrement(ref _downloadsInProgress);
             }
         }
     }

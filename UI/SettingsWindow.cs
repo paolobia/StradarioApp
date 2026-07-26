@@ -45,6 +45,7 @@ namespace StradarioApp.UI
         // aggiornamento disponibile) e un bottone scarica/aggiorna. Nessuna
         // selezione per singola categoria: ogni zip contiene sempre tutte le
         // 43 categorie del continente insieme.
+        private TabControl? _tabs;
         private StackPanel? _offlineDataPanel;
         private TextBlock?  _offlineDataStatusText;
         // Tag dell'ultima release dati vista da CheckOfflineDataUpdatesAsync
@@ -118,6 +119,27 @@ namespace StradarioApp.UI
             tabs.Items.Add(new TabItem { Header = Strings.Get("SettingsWindow_TabGenerale"),     Content = BuildGeneralTab(current) });
             tabs.Items.Add(new TabItem { Header = Strings.Get("SettingsWindow_TabCategoriePoi"), Content = BuildCategoriesTab() });
             tabs.Items.Add(new TabItem { Header = Strings.Get("SettingsWindow_TabDatiOffline"),  Content = BuildOfflineDataTab() });
+            _tabs = tabs;
+
+            // Blocca QUALUNQUE chiusura (OK, Annulla, X) finché un download/
+            // estrazione di un continente offline è in corso: altrimenti la
+            // finestra si chiude ma il download prosegue invisibile in
+            // background (nessuna conferma di successo/errore più
+            // visibile), oppure — se l'utente chiude anche l'intera app nel
+            // frattempo — l'estrazione viene interrotta a metà lasciando il
+            // continente in uno stato incompleto sul disco.
+            Closing += (_, e) =>
+            {
+                if (!PoiOfflineDatabase.IsAnyDownloadInProgress) return;
+                e.Cancel = true;
+                _tabs.SelectedIndex = 2; // porta in vista la tab "Database POI offline"
+                if (_offlineDataStatusText != null)
+                {
+                    _offlineDataStatusText.IsVisible  = true;
+                    _offlineDataStatusText.Foreground = Brushes.DarkOrange;
+                    _offlineDataStatusText.Text       = Strings.Get("SettingsWindow_AttendiDownloadInCorso");
+                }
+            };
 
             // Pulsanti condivisi da entrambe le tab (OK conferma tutto,
             // impostazioni generali E categorie personalizzate insieme).

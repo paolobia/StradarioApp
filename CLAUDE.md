@@ -298,8 +298,10 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   BuildOsmTagsString`) produced by the separate `osm/OsmExtractor` console
   tool (see `osm/CLAUDE.md`: streams a Geofabrik `.osm.pbf` planet extract
   via `OsmSharp`, one CSV per OSM tag category in `osm/OsmExtractor/
-  CategoriePOI.txt`, way/relation POI — polygons — are skipped, only
-  `Node`s). CSVs are zipped per continent (`PoiOfflineDatabase.Continents`:
+  CategoriePOI.txt`; `Node`s directly, plus `Way`s — polygon POI like large
+  monuments/buildings/airports — via a bounding-box centroid computed in two
+  extra targeted passes, see `osm/CLAUDE.md` for why `Relation`s are still
+  not covered). CSVs are zipped per continent (`PoiOfflineDatabase.Continents`:
   africa/antarctica/asia/australia-oceania/central-america/europe/
   north-america/south-america) and published to a **separate** GitHub
   Release tagged `osm-data-<date>` (`DataTagPrefix`, deliberately distinct
@@ -323,14 +325,36 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   the post-download label via `UpdateContinentRow` (using the last tag seen
   by `CheckOfflineDataUpdatesAsync`, cached in `_lastKnownDataTag`) instead
   of hardcoding "Scarica" after any successful download regardless of the
-  resulting state.
+  resulting state. **Extraction now reports a real percentage**: the zip
+  (~40 files, one per category) is extracted entry-by-entry
+  (`ZipArchiveEntry.ExtractToFile` in a loop) instead of one blocking
+  `ZipFile.ExtractToDirectory(...)` call, which had no progress callback at
+  all and left the status stuck on a static "Estraggo..." with no way to
+  tell a slow-but-working extraction from a hang. **Closing either window
+  while a download/extraction is in flight is blocked outright**
+  (`PoiOfflineDatabase.IsAnyDownloadInProgress`, an `Interlocked`-guarded
+  counter incremented/decremented around the whole download+extract body):
+  `SettingsWindow`'s `Closing` handler cancels the close and switches to the
+  offline-data tab with a warning (covers OK, Annulla, and the window's own
+  X, since `Closing` fires for all of them); `MainWindow.OnWindowClosing`
+  checks the same flag before its usual unsaved-changes prompt. Closing the
+  whole app mid-extraction would otherwise abandon a continent half-written
+  on disk — silently truncated data, not just a lost download.
   `MainWindow.RunCategorySearchAsync` prefers this offline path over
   Overpass whenever `PoiOfflineDatabase.HasAnyLocalData()` is true (instant,
   no need to clamp an over-wide view since there's no public server to
-  protect), falling back to the live Overpass query only when the offline
-  search finds **zero** matches for that exact area+category (not when the
-  continent simply isn't downloaded — `HasAnyLocalData()` already gates
-  that above). `PoiOfflineDatabase.SearchCategory`'s results now go through
+  protect). **Overpass is never used as a fallback once any continent is
+  downloaded, even when that specific area+category search comes back with
+  zero offline hits** — an earlier version fell back to live Overpass in
+  that case, but the user explicitly rejected it ("se ho il file NON VOGLIO
+  MAI E POI MAI overpass"): a zero-result offline search now just reports
+  zero results, on the reasoning that mixing in occasional live-Overpass
+  results (indistinguishable in the UI from offline ones) breaks the
+  guarantee that a downloaded continent means fully offline, predictable
+  search. Overpass remains the only path when **no** continent has been
+  downloaded at all (`HasAnyLocalData()` false).
+
+  `PoiOfflineDatabase.SearchCategory`'s results now go through
   the same ASCII-only name/tag cleanup as the live path
   (`PoiSearchService.PickBestName`/`BuildOsmTagsString`, both changed from
   `private`/`JObject`-typed to `internal` and taking a plain
@@ -341,20 +365,23 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   cleaned; the CSV's `;`-joined tag string is parsed into a dictionary
   (`name` reinserted from its own CSV column, since OsmExtractor keeps it
   out of the tags blob) before calling either method.
-  **The `Node`-only extraction (see above) is a real, user-visible gap, not
+  **The earlier `Node`-only extraction was a real, user-visible gap, not
   just a performance shortcut**: a landmark mapped as a `way`/polygon (very
-  common for large buildings) is invisible to the offline database no
-  matter how the tags match, in every city, and *only* shows up via the
-  Overpass fallback once the offline search comes up empty for that view.
-  Confirmed on a real case: Xi'an's Bell Tower (钟楼) is correctly tagged
-  `historic=monument` in OSM but mapped as way `254488435` — genuinely
-  absent from `historic_monument.csv` for that reason alone, not an
-  area/zoom or tagging problem, unlike Beijing's own `historic=monument`
-  POIs in the same CSV, several of which happen to be mapped as nodes.
-  Extending `OsmExtractor` to also cover ways (via a centroid computed from
-  each way's/relation's geometry, e.g. `OsmSharp`'s complete-geometry
-  streams) would close this gap, but needs re-extracting and re-uploading
-  every continent — a deliberately deferred, not-yet-done improvement.
+  common for large buildings) was invisible to the offline database no
+  matter how the tags matched, in every city — confirmed on a real case:
+  Xi'an's Bell Tower (钟楼) is correctly tagged `historic=monument` in OSM
+  but mapped as way `254488435`, genuinely absent from
+  `historic_monument.csv` for that reason alone, not an area/zoom or
+  tagging problem, unlike Beijing's own `historic=monument` POIs in the
+  same CSV (several mapped as nodes). This is exactly what the two-pass
+  way/centroid extraction in `osm/OsmExtractor` (see `osm/CLAUDE.md`) now
+  fixes — `Relation`s (multipolygon geometry, more complex to assemble
+  correctly) remain the one still-unclosed gap. Because Overpass is no
+  longer used as a silent fallback (see above), a POI still missing for
+  this reason (or simply not yet re-downloaded with the new data) will
+  just not appear, rather than quietly appearing via a live query — the
+  data needs to actually be re-extracted/re-downloaded to close the gap,
+  there's no compensating runtime behavior anymore.
 
 - **Percorsi (routes).** `Models/StradarioModels.cs` defines `Percorso`
   (label, description, color, ordered `List<GeoPoint>`), stored flat in
