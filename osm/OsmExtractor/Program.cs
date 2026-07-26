@@ -319,7 +319,9 @@ class Program
 
         // Centroide = centro del bounding box dei nodi risolti (stessa
         // convenzione di Overpass "out center", per restare coerenti con
-        // quello che la ricerca dal vivo mostra per lo stesso elemento).
+        // quello che la ricerca dal vivo mostra per lo stesso elemento, e
+        // con tutti i dati già estratti/pubblicati con questa stessa
+        // formula — vedi CLAUDE.md/osm/CLAUDE.md).
         int written = 0, skippedUnresolved = 0;
         foreach (var w in matchedWays)
         {
