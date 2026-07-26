@@ -3,68 +3,21 @@
 # StradarioApp
 
 Applicazione desktop C# per la creazione di stradari cartografici (atlanti
-stradali a pagine) a partire da OpenStreetMap. Portabile su **Linux** e
-**Windows** grazie ad Avalonia UI.
+stradali a pagine) a partire da OpenStreetMap. Portabile su Linux e Windows
+grazie ad Avalonia UI.
 
 ---
 
 ## Funzionalità
 
-1. **Impostazioni** – Tre tab: "Generale" (formato pagina A5/A4/A3,
-   orientamento, DPI 72/96/150/300, scala cartografica da 1:1.000 fino a
-   1:1.000.000 — vedi elenco sotto, tile server con o senza API key, blocco
-   automatico oggetti inattivi, contrasto mappa nel PDF), "Categorie POI"
-   (aggiunta di categorie di ricerca personalizzate, oltre alle predefinite,
-   specificando etichetta e tag OSM `chiave=valore`) e "Database POI
-   offline" (download facoltativo, continente per continente, di un
-   database POI locale per cercare istantaneamente senza rete e senza
-   limiti d'area, invece che dal vivo su Overpass)
-2. **Mappa interattiva** – Pan (drag), zoom (rotella) centrato sul cursore
-3. **Pagine** – Click destro per aggiungere una pagina; drag per spostarla;
-   etichette automatiche (A1, B2…); blocco/sblocco per evitare spostamenti
-   accidentali; bottone "📍 Città principali" nel dialog di modifica pagina
-   per compilare la descrizione con le città più popolose dell'area
-   (database GeoNames `cities500.csv`, opzionale)
-4. **Gruppi POI** – Marker con icona/colore personalizzabili, aggiunta diretta
-   sulla mappa, drag per riposizionare, ricerca POI per 43 categorie
-   predefinite (elenco completo dei tag OSM in `CategoriePOI.txt`, menu a
-   tendina, ricordata tra le sessioni, estendibile dalle Impostazioni —
-   vedi sopra) con filtro testuale sul nome e, in
-   opzione (richiede una chiave API Groq gratuita), un filtro AI più ampio
-   quando il filtro letterale non trova nulla. In cima al menu, due voci
-   speciali: **"Ricerca un indirizzo"** (geocoding libero via Nominatim) e
-   **"Ricerca una città"** (nome anche parziale, o vuoto per le città già
-   visibili nell'area — database GeoNames). Ogni ricerca mostra una
-   finestra di log passo-passo con un pulsante "Annulla": si chiude da sola
-   a ricerca riuscita, resta invece aperta in caso di errore (per non far
-   sparire il messaggio prima che l'utente possa leggerlo)
-5. **Percorsi** – Disegno di percorsi punto-per-punto direttamente sulla
-   mappa, estendibili in seguito, con drag dei singoli vertici
-6. **Import/Export KMZ/KML/GPX** – Importazione unificata (POI e percorsi
-   nello stesso file); esportazione sia separata (gruppi POI, percorsi) sia
-   in un unico file combinato ("Esporta tutto"). Nomi/descrizioni in
-   script non latino (es. caratteri cinesi) vengono sostituiti con una
-   variante ASCII quando disponibile nei tag, altrimenti ripuliti. I punti
-   in Cina possono essere in coordinate GCJ-02 anziché WGS84 reale (offset
-   deterministico usato dalle mappe cinesi, Google Maps incluso per i
-   luoghi in territorio cinese): per KML/KMZ (sempre WGS84 per
-   specifica) non si chiede nulla, per GPX si può scegliere di correggere
-   o lasciare invariato (rilevato in automatico dal nome file se contiene
-   "wgs84"/"gcj02"); icone "C→W"/"W→C" nell'albero permettono di
-   correggere/convertire manualmente ogni singolo POI o punto di percorso
-   che ricade in Cina, in qualunque momento
-7. **Ricerca POI ibrida** – Overpass dal vivo di default; se scaricato
-   almeno un continente dal database POI offline (vedi Impostazioni), la
-   stessa ricerca per categoria risponde istantaneamente e senza rete
-8. **Generazione PDF** – Anteprima prima del salvataggio, stradario completo
-   con indice, mappa riassuntiva, eventuali pagine gazetteer POI, pagine
-   mappa con riferimenti alle pagine adiacenti (N/S/E/O) e scala grafica;
-   contrasto opzionale ottimizzato per la stampa in bianco e nero
-9. **Salvataggio progetto** – File `.stradario` (JSON), leggibile e
-   modificabile manualmente; le chiavi API (tile server, Groq) **non**
-   vengono mai salvate nel progetto, solo nelle preferenze dell'applicazione.
-   Ogni finestra di selezione file (apri/salva progetto, importa, esporta,
-   PDF) riparte dall'ultima cartella usata, non dai "Recenti" del sistema
+- **Mappa interattiva**: pan con drag, zoom con rotella centrato sul cursore, ricerca città
+- **Pagine**: click destro per aggiungere, drag per spostare, blocco manuale/automatico contro spostamenti accidentali, etichette automatiche (A1, B2…)
+- **Gruppi POI**: marker con icona/colore personalizzabili, aggiunta diretta sulla mappa o via ricerca — 43 categorie predefinite più quelle personalizzate, ricerca dal vivo (Overpass) o offline (database locale scaricabile per continente), ricerca indirizzo e città
+- **Percorsi**: disegno punto-per-punto sulla mappa, estendibili ed editabili in seguito
+- **Import/export universale**: un solo comando importa KMZ/KML/GPX (POI e percorsi insieme); esportazione separata o combinata in un unico file; nomi in script non latino ripuliti automaticamente; punti in Cina (possibile GCJ-02 anziché WGS84) gestiti con correzione automatica o manuale
+- **Generazione PDF**: anteprima prima di salvare, indice, mappa riassuntiva, pagine con riferimenti alle adiacenti e scala grafica
+- **Salvataggio progetto**: file `.stradario` (JSON) leggibile e modificabile a mano; le chiavi API restano solo nelle preferenze locali, mai nel progetto
+- **Impostazioni**: tre tab — Generale (formato pagina, DPI, scala di stampa da 1:1.000 a 1:1.000.000, tile server, contrasto mappa nel PDF), Categorie POI (aggiunta di categorie personalizzate), Database POI offline (download facoltativo per continente)
 
 ---
 

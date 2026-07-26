@@ -3,66 +3,21 @@
 # StradarioApp
 
 C# desktop application to create cartographic *stradari* (page-based street
-atlases) from OpenStreetMap. Portable on **Linux** and **Windows** thanks to
+atlases) from OpenStreetMap. Portable on Linux and Windows thanks to
 Avalonia UI.
 
 ---
 
 ## Features
 
-1. **Settings** – Three tabs: "General" (page size A5/A4/A3, orientation,
-   DPI 72/96/150/300, map scale from 1:1,000 up to 1:1,000,000 — see the
-   list below, tile server with or without an API key, auto-lock for
-   inactive objects, map contrast in the PDF), "POI categories" (add
-   custom search categories, alongside the built-in ones, by specifying a
-   label and an OSM tag `key=value`), and "Offline POI database" (optional,
-   per-continent download of a local POI database for instant, network-free,
-   area-unrestricted search instead of live Overpass)
-2. **Interactive map** – Pan (drag), zoom (scroll wheel) centered on the
-   cursor
-3. **Pages** – Right-click to add a page; drag to move it; automatic
-   labels (A1, B2…); lock/unlock to prevent accidental moves; "📍 Main
-   cities" button in the page edit dialog to fill the description with the
-   most populous cities in the area (GeoNames `cities500.csv` database,
-   optional)
-4. **POI groups** – Markers with customizable icon/color, added directly
-   on the map, drag to reposition, POI search across 43 built-in
-   categories (full list of OSM tags in `CategoriePOI.txt`, dropdown menu,
-   remembered across sessions, extendable from Settings — see above) with
-   a text filter on the name and, optionally (requires a free Groq API
-   key), a broader AI filter when the literal filter finds nothing. At the
-   top of the menu, two special entries: **"Search an address"** (free
-   geocoding via Nominatim) and **"Search a city"** (name, even partial, or
-   empty for the cities already visible in the area — GeoNames database).
-   Every search shows a step-by-step log window with a "Cancel" button: it
-   closes itself on a successful search, but stays open on error (so the
-   message doesn't disappear before the user can read it)
-5. **Routes** – Point-by-point route drawing directly on the map,
-   extendable afterwards, with drag on individual vertices
-6. **KMZ/KML/GPX Import/Export** – Unified import (POIs and routes in the
-   same file); export either separate (POI groups, routes) or combined
-   into a single file ("Export all"). Names/descriptions in a non-Latin
-   script (e.g. Chinese characters) are replaced with an ASCII variant when
-   available in the tags, or stripped otherwise. Points in China may be in
-   GCJ-02 rather than real WGS84 (a deterministic offset used by Chinese
-   maps, including Google Maps for locations inside China): for KML/KMZ
-   (always WGS84 by specification) nothing is asked, for GPX you can choose
-   to correct or leave as-is (auto-detected from the file name if it
-   contains "wgs84"/"gcj02"); "C→W"/"W→C" icons in the tree let you manually
-   correct/convert any single POI or route point that falls in China, at
-   any time
-7. **Hybrid POI search** – Live Overpass by default; if at least one
-   continent has been downloaded from the offline POI database (see
-   Settings), the same category search answers instantly and offline
-8. **PDF generation** – Preview before saving, complete stradario with
-   index, overview map, optional POI gazetteer pages, map pages with
-   references to adjacent pages (N/S/E/W) and a graphic scale bar;
-   optional contrast tuned for black-and-white printing
-9. **Project saving** – `.stradario` file (JSON), readable and editable by
-   hand; API keys (tile server, Groq) are **never** saved in the project,
-   only in the application preferences. Every file picker (open/save
-   project, import, export, PDF) starts from the last folder actually
-   used, not the system's "Recent" list
+- **Interactive map**: pan by dragging, zoom with the scroll wheel centered on the cursor, city search
+- **Pages**: right-click to add, drag to move, manual/automatic lock against accidental moves, automatic labels (A1, B2…)
+- **POI groups**: markers with customizable icon/color, added directly on the map or via search — 43 built-in categories plus custom ones, live search (Overpass) or offline (downloadable per-continent local database), address and city search
+- **Routes**: point-by-point drawing on the map, extendable and editable afterwards
+- **Universal import/export**: a single command imports KMZ/KML/GPX (POI and routes together); export either separate or combined into a single file; names in a non-Latin script are cleaned up automatically; points in China (possibly GCJ-02 instead of WGS84) handled with automatic or manual correction
+- **PDF generation**: preview before saving, index, overview map, pages with references to adjacent ones and a graphic scale bar
+- **Project saving**: `.stradario` file (JSON), human-readable and editable by hand; API keys stay only in local preferences, never in the project
+- **Settings**: three tabs — General (page format, DPI, print scale from 1:1,000 to 1:1,000,000, tile server, PDF map contrast), POI categories (add custom categories), Offline POI database (optional per-continent download)
 
 ---
 
