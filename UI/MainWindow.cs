@@ -4647,12 +4647,12 @@ namespace StradarioApp.UI
             if (_instradaPanel == null) return;
 
             double totalKm = 0, totalMin = 0;
-            var rows = new List<(double km, double min, bool failed)>();
+            var rows = new List<(double km, double min, bool failed, string? error)>();
             foreach (var leg in _instradaLegs)
             {
                 if (leg.Failed || leg.SelectedIndex < 0 || leg.SelectedIndex >= leg.Alternatives.Count)
                 {
-                    rows.Add((0, 0, true));
+                    rows.Add((0, 0, true, leg.ErrorMessage));
                     continue;
                 }
                 var alt = leg.Alternatives[leg.SelectedIndex];
@@ -4660,7 +4660,7 @@ namespace StradarioApp.UI
                 double min = alt.DurationSeconds / 60.0;
                 totalKm  += km;
                 totalMin += min;
-                rows.Add((km, min, false));
+                rows.Add((km, min, false, null));
             }
 
             _instradaPanel.SetTotals(totalKm, totalMin);

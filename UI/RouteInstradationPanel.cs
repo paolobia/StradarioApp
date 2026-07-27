@@ -109,18 +109,24 @@ namespace StradarioApp.UI
             _tbTotals.Text = string.Format(Strings.Get("RouteInstradationPanel_Totali"), km, minutes);
         }
 
-        // Una riga per tratta: "Tratta N: X km · Y min", oppure un messaggio
-        // di fallimento per le tratte senza alternative disponibili.
-        public void SetLegs(IReadOnlyList<(double km, double min, bool failed)> legs)
+        // Una riga per tratta: "Tratta N: X km · Y min", oppure il motivo
+        // reale del fallimento per le tratte senza alternative disponibili
+        // (errore .NET o "code" OSRM — vedi RouteInstradationService.LegResult
+        // .ErrorMessage: unico modo di diagnosticare un problema di rete su
+        // un eseguibile pubblicato, dato che DebugLog non scrive nulla nelle
+        // build Release).
+        public void SetLegs(IReadOnlyList<(double km, double min, bool failed, string? error)> legs)
         {
             _legsPanel.Children.Clear();
             for (int i = 0; i < legs.Count; i++)
             {
-                var (km, min, failed) = legs[i];
+                var (km, min, failed, error) = legs[i];
                 var tb = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap };
                 if (failed)
                 {
-                    tb.Text       = string.Format(Strings.Get("RouteInstradationPanel_TrattaFallita"), i + 1);
+                    tb.Text = string.IsNullOrWhiteSpace(error)
+                        ? string.Format(Strings.Get("RouteInstradationPanel_TrattaFallita"), i + 1)
+                        : string.Format(Strings.Get("RouteInstradationPanel_TrattaFallitaConErrore"), i + 1, error);
                     tb.Foreground = Brushes.Firebrick;
                 }
                 else

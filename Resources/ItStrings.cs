@@ -105,6 +105,7 @@ namespace StradarioApp.Resources
             ["RouteInstradationPanel_Totali"] = "Distanza totale: {0:F1} km — Durata stimata: {1:F0} min",
             ["RouteInstradationPanel_Tratta"] = "Tratta {0}: {1:F1} km · {2:F0} min",
             ["RouteInstradationPanel_TrattaFallita"] = "Tratta {0}: instradamento fallito",
+            ["RouteInstradationPanel_TrattaFallitaConErrore"] = "Tratta {0}: instradamento fallito ({1})",
 
             // UI/ProgressWindow.cs
             ["ProgressWindow_Avvio"] = "Avvio...",

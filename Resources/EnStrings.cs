@@ -98,6 +98,7 @@ namespace StradarioApp.Resources
             ["RouteInstradationPanel_Totali"] = "Total distance: {0:F1} km — Estimated duration: {1:F0} min",
             ["RouteInstradationPanel_Tratta"] = "Leg {0}: {1:F1} km · {2:F0} min",
             ["RouteInstradationPanel_TrattaFallita"] = "Leg {0}: routing failed",
+            ["RouteInstradationPanel_TrattaFallitaConErrore"] = "Leg {0}: routing failed ({1})",
 
             // UI/ProgressWindow.cs
             ["ProgressWindow_Avvio"] = "Starting...",

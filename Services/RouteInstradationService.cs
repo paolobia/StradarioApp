@@ -67,8 +67,14 @@ namespace StradarioApp.Services
         // SelectedIndex = -1 quando Failed (nessuna alternativa disponibile).
         // Essendo un record, per cambiare la selezione si sostituisce l'intero
         // elemento nella lista con "leg with { SelectedIndex = nuovoIndice }",
-        // non lo si muta in place.
-        public record LegResult(GeoPoint From, GeoPoint To, List<RouteAlternative> Alternatives, int SelectedIndex, bool Failed);
+        // non lo si muta in place. ErrorMessage (solo quando Failed) riporta
+        // il motivo REALE del fallimento (eccezione .NET o "code" OSRM non
+        // "Ok") — DebugLog.Write è un no-op nelle build Release (vedi
+        // Services/DebugLog.cs), quindi per un utente remoto su un
+        // eseguibile pubblicato l'unico modo di capire un fallimento di rete
+        // (firewall, proxy, DNS...) è mostrarglielo direttamente in app,
+        // vedi RouteInstradationPanel.SetLegs.
+        public record LegResult(GeoPoint From, GeoPoint To, List<RouteAlternative> Alternatives, int SelectedIndex, bool Failed, string? ErrorMessage = null);
 
         private static string FmtCoord(double v) => v.ToString(CultureInfo.InvariantCulture);
 
@@ -93,7 +99,11 @@ namespace StradarioApp.Services
                 string? code = (string?)root["code"];
                 var routesArr = root["routes"] as JArray;
                 if (!string.Equals(code, "Ok", StringComparison.OrdinalIgnoreCase) || routesArr == null || routesArr.Count == 0)
-                    return new LegResult(from, to, new List<RouteAlternative>(), -1, Failed: true);
+                {
+                    string? osrmMessage = (string?)root["message"];
+                    string reason = string.IsNullOrWhiteSpace(osrmMessage) ? (code ?? "risposta OSRM senza \"routes\"") : $"{code}: {osrmMessage}";
+                    return new LegResult(from, to, new List<RouteAlternative>(), -1, Failed: true, ErrorMessage: reason);
+                }
 
                 var alternatives = new List<RouteAlternative>();
                 foreach (var r in routesArr)
@@ -114,15 +124,21 @@ namespace StradarioApp.Services
                 }
 
                 if (alternatives.Count == 0)
-                    return new LegResult(from, to, new List<RouteAlternative>(), -1, Failed: true);
+                    return new LegResult(from, to, new List<RouteAlternative>(), -1, Failed: true, ErrorMessage: "nessuna geometria valida nella risposta OSRM");
 
                 alternatives = alternatives.OrderBy(a => a.DistanceMeters).ToList();
                 return new LegResult(from, to, alternatives, 0, Failed: false);
             }
             catch (OperationCanceledException) { throw; }
-            catch
+            catch (Exception ex)
             {
-                return new LegResult(from, to, new List<RouteAlternative>(), -1, Failed: true);
+                // Tipicamente qui: HttpRequestException (rete/DNS/firewall/
+                // certificato), TaskCanceledException per timeout (25s, vedi
+                // Http sopra), o JsonException se OSRM risponde con qualcosa
+                // di inatteso. Il messaggio arriva fino all'utente tramite
+                // RouteInstradationPanel — è l'unico modo di diagnosticare un
+                // fallimento di rete su un eseguibile pubblicato da remoto.
+                return new LegResult(from, to, new List<RouteAlternative>(), -1, Failed: true, ErrorMessage: $"{ex.GetType().Name}: {ex.Message}");
             }
         }
 
