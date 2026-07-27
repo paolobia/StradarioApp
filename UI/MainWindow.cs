@@ -60,6 +60,12 @@ namespace StradarioApp.UI
         private double _dragCenterLon;
         private double _dragCenterLat;
 
+        // Sotto questa distanza (px) fra premuto e rilascio, un gesto in
+        // _addRouteMode/_addRoutePointsMode è un click (aggiunge un punto),
+        // non un pan — altrimenti ogni piccolo trascinamento per spostare la
+        // vista durante il disegno di un percorso aggiungeva un punto indesiderato
+        private const double ClickVsPanThresholdPx = 4.0;
+
         // Drag pagina selezionata (sposta pagina)
         private bool   _isDraggingPage   = false;
         private double _pageDragStartLon; // lon centro pagina all'inizio del drag
@@ -2460,15 +2466,16 @@ namespace StradarioApp.UI
 
                 if (_addRouteMode && _drawingRoute != null)
                 {
-                    var (lon, lat) = GeoUtils.PixelToGeo(pos.X, pos.Y,
-                        _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
-                    _drawingRoute.Points.Add(new GeoPoint { Lon = lon, Lat = lat });
-
-                    // shift+clic = termina il disegno (invece del doppio clic)
-                    if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
-                        FinishRouteDrawing();
-                    else
-                        _mapCanvas?.InvalidateVisual();
+                    // Non aggiunge il punto subito: se il mouse si sposta
+                    // prima del rilascio è un pan (vedi OnMapPointerMoved,
+                    // che pannerebbe comunque grazie a _isDragging), non
+                    // un click — il punto si aggiunge solo in
+                    // OnMapPointerReleased se il movimento è sotto soglia.
+                    _isDragging    = true;
+                    _dragStart     = pos;
+                    _dragCenterLon = _viewCenterLon;
+                    _dragCenterLat = _viewCenterLat;
+                    e.Pointer.Capture(_mapCanvas);
                     return;
                 }
 
@@ -2495,38 +2502,13 @@ namespace StradarioApp.UI
 
                 if (_addRoutePointsMode && _addRoutePointsTarget != null)
                 {
-                    var (lon, lat) = GeoUtils.PixelToGeo(pos.X, pos.Y,
-                        _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
-                    var newPoint = new GeoPoint { Lon = lon, Lat = lat };
-
-                    // Al primo punto della sessione, decide una volta sola
-                    // quale estremità estendere in base a quella più vicina
-                    if (_addRoutePointsSessionCount == 0 && _addRoutePointsTarget.Points.Count > 0)
-                    {
-                        var first = _addRoutePointsTarget.Points[0];
-                        var last  = _addRoutePointsTarget.Points[^1];
-                        double distToFirst = GeoUtils.DistanceKm(lon, lat, first.Lon, first.Lat);
-                        double distToLast  = GeoUtils.DistanceKm(lon, lat, last.Lon, last.Lat);
-                        _addRoutePointsPrepend = distToFirst < distToLast;
-                    }
-
-                    if (_addRoutePointsPrepend)
-                        _addRoutePointsTarget.Points.Insert(0, newPoint);
-                    else
-                        _addRoutePointsTarget.Points.Add(newPoint);
-                    _addRoutePointsSessionCount++;
-
-                    TouchPercorso(_addRoutePointsTarget.Id);
-                    _isDirty = true;
-                    var routeExtended = _addRoutePointsTarget;
-                    bool prepend       = _addRoutePointsPrepend;
-                    PushUndo(
-                        undo: () => routeExtended.Points.RemoveAt(prepend ? 0 : routeExtended.Points.Count - 1),
-                        redo: () => { if (prepend) routeExtended.Points.Insert(0, newPoint); else routeExtended.Points.Add(newPoint); });
-
-                    if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
-                        FinishAddRoutePoints();
-                    _mapCanvas?.InvalidateVisual();
+                    // Stesso motivo del blocco _addRouteMode sopra: il punto si
+                    // aggiunge in OnMapPointerReleased solo se non è stato un pan.
+                    _isDragging    = true;
+                    _dragStart     = pos;
+                    _dragCenterLon = _viewCenterLon;
+                    _dragCenterLat = _viewCenterLat;
+                    e.Pointer.Capture(_mapCanvas);
                     return;
                 }
 
@@ -2677,6 +2659,53 @@ namespace StradarioApp.UI
                 _addPageMode = false;
                 _mapCanvas?.InvalidateVisual();
             }
+        }
+
+        // Aggiunge un punto al percorso in disegno da zero (chiamato da
+        // OnMapPointerReleased solo se il gesto era un click, non un pan)
+        private void AddPointToDrawingRoute(double lon, double lat, bool finish)
+        {
+            if (_drawingRoute == null) return;
+            _drawingRoute.Points.Add(new GeoPoint { Lon = lon, Lat = lat });
+            if (finish) FinishRouteDrawing();
+            else _mapCanvas?.InvalidateVisual();
+        }
+
+        // Aggiunge un punto all'estremità di un percorso esistente in
+        // estensione (chiamato da OnMapPointerReleased solo se il gesto era
+        // un click, non un pan)
+        private void AddPointToExtendedRoute(double lon, double lat, bool finish)
+        {
+            if (_addRoutePointsTarget == null) return;
+            var newPoint = new GeoPoint { Lon = lon, Lat = lat };
+
+            // Al primo punto della sessione, decide una volta sola quale
+            // estremità estendere in base a quella più vicina
+            if (_addRoutePointsSessionCount == 0 && _addRoutePointsTarget.Points.Count > 0)
+            {
+                var first = _addRoutePointsTarget.Points[0];
+                var last  = _addRoutePointsTarget.Points[^1];
+                double distToFirst = GeoUtils.DistanceKm(lon, lat, first.Lon, first.Lat);
+                double distToLast  = GeoUtils.DistanceKm(lon, lat, last.Lon, last.Lat);
+                _addRoutePointsPrepend = distToFirst < distToLast;
+            }
+
+            if (_addRoutePointsPrepend)
+                _addRoutePointsTarget.Points.Insert(0, newPoint);
+            else
+                _addRoutePointsTarget.Points.Add(newPoint);
+            _addRoutePointsSessionCount++;
+
+            TouchPercorso(_addRoutePointsTarget.Id);
+            _isDirty = true;
+            var routeExtended = _addRoutePointsTarget;
+            bool prepend       = _addRoutePointsPrepend;
+            PushUndo(
+                undo: () => routeExtended.Points.RemoveAt(prepend ? 0 : routeExtended.Points.Count - 1),
+                redo: () => { if (prepend) routeExtended.Points.Insert(0, newPoint); else routeExtended.Points.Add(newPoint); });
+
+            if (finish) FinishAddRoutePoints();
+            _mapCanvas?.InvalidateVisual();
         }
 
         // Termina il disegno del percorso in corso (invocato con shift+clic al
@@ -2939,23 +2968,58 @@ namespace StradarioApp.UI
             {
                 _isDragging = false;
                 e.Pointer.Capture(null);
+
+                // _addRouteMode/_addRoutePointsMode deferiscono l'aggiunta del
+                // punto fin qui (vedi OnMapPointerPressed): se il puntatore si
+                // è spostato oltre la soglia da quando è stato premuto è stato
+                // un pan (già applicato in tempo reale da OnMapPointerMoved),
+                // non un click, quindi nessun punto va aggiunto.
+                var pos = e.GetPosition(_mapCanvas);
+                double movedPx = Math.Sqrt(Math.Pow(pos.X - _dragStart.X, 2) + Math.Pow(pos.Y - _dragStart.Y, 2));
+                if (movedPx < ClickVsPanThresholdPx && (_addRouteMode || _addRoutePointsMode))
+                {
+                    float cw = (float)(_mapCanvas?.Bounds.Width  ?? 800);
+                    float ch = (float)(_mapCanvas?.Bounds.Height ?? 600);
+                    var (lon, lat) = GeoUtils.PixelToGeo(pos.X, pos.Y,
+                        _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
+                    bool finish = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+
+                    if (_addRouteMode && _drawingRoute != null)
+                        AddPointToDrawingRoute(lon, lat, finish);
+                    else if (_addRoutePointsMode && _addRoutePointsTarget != null)
+                        AddPointToExtendedRoute(lon, lat, finish);
+                }
             }
         }
 
+        // Lo zoom con la rotellina mantiene fermo sotto il cursore il punto
+        // geografico che c'era prima dello zoom, invece di zoomare sempre sul
+        // centro della vista (comportamento standard di ogni mappa
+        // interattiva — Google Maps, OSM, ecc.): calcola il punto geo sotto
+        // il cursore PRIMA di cambiare zoom, poi ricalcola il centro vista
+        // in modo che quello stesso punto resti sotto il cursore DOPO.
         private void OnMapWheelChanged(object? sender, PointerWheelEventArgs e)
         {
+            var pos  = e.GetPosition(_mapCanvas);
+            float cw = (float)(_mapCanvas?.Bounds.Width  ?? 800);
+            float ch = (float)(_mapCanvas?.Bounds.Height ?? 600);
+
+            var (cursorLon, cursorLat) = GeoUtils.PixelToGeo(pos.X, pos.Y,
+                _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
+
             double delta = e.Delta.Y > 0 ? 0.5 : -0.5;
             double maxZoom = TileServers.GetMaxZoom(_project.Settings.TileServerUrl);
             _viewZoom = Math.Clamp(_viewZoom + delta, 1.0, maxZoom);
+
+            double cursorTileX = GeoUtils.LonToTileX(cursorLon, _viewZoom);
+            double cursorTileY = GeoUtils.LatToTileY(cursorLat, _viewZoom);
+            double centerTileX = cursorTileX - (pos.X - cw / 2.0) / 256.0;
+            double centerTileY = cursorTileY - (pos.Y - ch / 2.0) / 256.0;
+            _viewCenterLon = Math.Max(-180, Math.Min(180, GeoUtils.TileXToLon(centerTileX, _viewZoom)));
+            _viewCenterLat = Math.Max(-85,  Math.Min(85,  GeoUtils.TileYToLat(centerTileY, _viewZoom)));
+
             if (_statusBarPositionText != null)
-            {
-                var pos = e.GetPosition(_mapCanvas);
-                float cw = (float)(_mapCanvas?.Bounds.Width  ?? 800);
-                float ch = (float)(_mapCanvas?.Bounds.Height ?? 600);
-                var (cursorLon, cursorLat) = GeoUtils.PixelToGeo(pos.X, pos.Y,
-                    _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
                 _statusBarPositionText.Text = $"🔍 {_viewZoom:0.#}   {cursorLon:F5}°E, {cursorLat:F5}°N";
-            }
             _mapCanvas?.InvalidateVisual();
         }
 

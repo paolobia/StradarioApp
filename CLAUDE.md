@@ -862,3 +862,23 @@ left-click and shift+click are repurposed as described above under
 "Percorsi"; while in add-POI mode, left-click places the new POI and
 right-click/Escape cancels — page add/drag, POI/vertex drag, and map pan all
 work normally once no add-mode is active.
+
+While drawing/extending a route (`_addRouteMode`/`_addRoutePointsMode`), a
+left-button press does **not** add a point immediately — it starts the same
+generic drag state as a plain map pan (`_isDragging`/`_dragStart` in
+`OnMapPointerPressed`), so `OnMapPointerMoved`'s existing pan branch runs
+unconditionally and the view scrolls in real time. Only in
+`OnMapPointerReleased`, if the pointer moved less than
+`ClickVsPanThresholdPx` (4px) since the press, is it treated as a click and
+`AddPointToDrawingRoute`/`AddPointToExtendedRoute` actually appends the
+point — otherwise it was a pan and nothing is added. Before this, every
+press-drag-release performed while trying to pan the view mid-drawing
+appended a stray point at the release location, a real usability complaint.
+
+**Scroll-wheel zoom keeps the geo point under the cursor fixed on screen**
+(`OnMapWheelChanged`), not the view center — the standard behavior of every
+interactive map (Google Maps, OSM...). It reads the cursor's geo coordinate
+*before* changing `_viewZoom`, then re-solves `_viewCenterLon`/`_viewCenterLat`
+so that same coordinate projects back to the same pixel afterward (inverting
+`GeoUtils.GeoToPixel`'s tile-unit math by hand, since there's no ready-made
+inverse helper for "given target pixel and zoom, find the center").
