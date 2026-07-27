@@ -401,7 +401,9 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   and managed from the same navigation tree as POI groups (branch
   "🥾 Percorsi" in `UI/MainWindow`). Creating one enters a draw mode
   (`_addRouteMode`/`_drawingRoute` in `MainWindow`): left-click appends a
-  point, shift+click appends a final point and finishes immediately with no
+  point, shift+click appends a final point and finishes immediately, and
+  Enter (`FinishRouteDrawing`, bound in `OnMainWindowKeyDown`) confirms the
+  points already placed without needing a final click at all — with no
   dialog — the route is added with an auto-generated label `PATH<n>`
   (`GetNextPercorsoLabelNumber`, same highest-number-used approach as POI
   labels); right-click undoes the last point (or exits the mode if empty),
@@ -659,11 +661,12 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   `Percorso.Points` list (no scratch/preview object — the normal route
   render already reflects it live). Which end gets extended is decided once,
   from the first click of the session, by proximity to the route's current
-  first vs. last point (`_addRoutePointsPrepend`); shift+click ends the
-  session, right-click undoes the last point *added this session* (falls
-  through to canceling the mode once the session-added count reaches zero,
-  never eating pre-existing points), Escape cancels outright — same
-  interaction language as `_addRouteMode`'s from-scratch drawing.
+  first vs. last point (`_addRoutePointsPrepend`); shift+click or Enter
+  (`FinishAddRoutePoints`) ends the session, right-click undoes the last
+  point *added this session* (falls through to canceling the mode once the
+  session-added count reaches zero, never eating pre-existing points),
+  Escape cancels outright — same interaction language as `_addRouteMode`'s
+  from-scratch drawing.
 
 - **Export offers KMZ/KML/GPX, chosen by the extension picked/typed in the
   save dialog** (`OnExportKmz`/`OnExportPercorsiKmz` in `UI/MainWindow`
@@ -791,6 +794,39 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   while the text was still empty, and updating `.Text` afterwards (from the
   async update check) rendered truncated instead of re-wrapping/centering
   at full width.
+
+- **POI search target group is whichever group the user has left expanded
+  in the nav tree**, not an implicit "first unlocked group" guess.
+  `MainWindow.ResolvePoiSearchTargetGroup` (used only by
+  `ConfirmPoiSearchResult`, at the moment a search result is actually
+  clicked/confirmed) looks at `_navCollapsedGroupIds`: exactly one expanded
+  group → that's the target; zero expanded → falls back to the previous
+  behavior (first non-`IsLocked` group, else the first group, else create
+  one on the fly); **more than one expanded group is a hard error** (status
+  bar, `MainWindow_PiuGruppiPoiAperti`) rather than silently picking one —
+  ambiguous intent shouldn't guess which group the user meant.
+
+- **Imported POI groups (KMZ/KML/GPX) get distinct colors from each other
+  and from groups already in the project.** `PoiService.ImportKmz` has no
+  color information to read from the source file, so every imported group
+  used to come back with the same `PoiIconRenderer.DefaultColorHex` —
+  indistinguishable on the map from any other group already using that
+  default. `MainWindow.AssignDistinctColors` (called from
+  `ImportFromFileAsync` right after import, before the groups are added to
+  `_project.PoiGroups`) assigns each newly imported group the first unused
+  color from `PoiIconRenderer.Palette`, tracking colors already claimed
+  both by pre-existing groups and by other groups imported in the same
+  file; recycles from the start of the palette once it's exhausted.
+
+- **A route created via OSRM instradamento (`OnCreatePercorsoInstradato`)
+  has its point list simplified before being saved**, not stored raw as
+  returned by OSRM. `MainWindow.SimplifyCollinearPoints` repeatedly drops
+  any point whose perpendicular distance from the line through its two
+  current neighbors is below `CollinearToleranceMeters` (1 m) — OSRM's full
+  geometry packs many near-collinear vertices along straight stretches that
+  add no real geometric information. Runs to a fixed point (removing a
+  point can make its former neighbors newly collinear with each other), not
+  a single pass.
 
 ## Interaction model (MainWindow)
 

@@ -526,6 +526,23 @@ namespace StradarioApp.UI
                 _mapCanvas?.InvalidateVisual();
             }
 
+            // Invio conferma il disegno del percorso in corso, in alternativa
+            // a shift+clic sull'ultimo punto (più comodo: non serve tenere
+            // premuto shift proprio sul click finale)
+            if (e.Key == Avalonia.Input.Key.Enter)
+            {
+                if (_addRouteMode && _drawingRoute != null)
+                {
+                    FinishRouteDrawing();
+                    e.Handled = true;
+                }
+                else if (_addRoutePointsMode && _addRoutePointsTarget != null)
+                {
+                    FinishAddRoutePoints();
+                    e.Handled = true;
+                }
+            }
+
             // Ctrl+Z / Ctrl+Y (o Ctrl+Shift+Z) = undo/redo
             if (e.KeyModifiers.HasFlag(Avalonia.Input.KeyModifiers.Control))
             {
@@ -2455,12 +2472,7 @@ namespace StradarioApp.UI
                         redo: () => { if (prepend) routeExtended.Points.Insert(0, newPoint); else routeExtended.Points.Add(newPoint); });
 
                     if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
-                    {
-                        _addRoutePointsMode         = false;
-                        _addRoutePointsTarget       = null;
-                        _addRoutePointsSessionCount = 0;
-                        RefreshNavigationTree();
-                    }
+                        FinishAddRoutePoints();
                     _mapCanvas?.InvalidateVisual();
                     return;
                 }
@@ -2641,6 +2653,16 @@ namespace StradarioApp.UI
                 redo: () => { if (!_project.Percorsi.Contains(route)) _project.Percorsi.Add(route); });
             RefreshNavigationTree();
             _mapCanvas?.InvalidateVisual();
+        }
+
+        // Termina l'estensione di un percorso esistente (invocata con
+        // shift+clic o Invio): chiude la modalità e aggiorna l'albero
+        private void FinishAddRoutePoints()
+        {
+            _addRoutePointsMode         = false;
+            _addRoutePointsTarget       = null;
+            _addRoutePointsSessionCount = 0;
+            RefreshNavigationTree();
         }
 
         // Trova il numero progressivo successivo per l'etichetta automatica
@@ -3153,15 +3175,31 @@ namespace StradarioApp.UI
         // Ricerca POI online (Nominatim)
         // ---------------------------------------------------------------
 
-        // Determina il gruppo POI di destinazione per la ricerca online, senza
-        // mai chiedere all'utente: il primo gruppo NON bloccato (se ce n'è
-        // più di uno), altrimenti il primo gruppo comunque, altrimenti ne
-        // crea uno nuovo al volo (senza dialog) intitolato alla ricerca
-        // effettuata (_poiSearchQueryLabel)
-        private PoiGroup ResolvePoiSearchTargetGroup()
+        // Determina il gruppo POI di destinazione per la ricerca online:
+        // sempre il gruppo che l'utente ha lasciato APERTO (non collassato)
+        // nell'albero di navigazione, così il target è esplicito e visibile
+        // invece di essere indovinato — con più di un gruppo aperto non c'è
+        // modo di sapere quale intendeva, quindi si rifiuta l'inserimento
+        // (vedi ConfirmPoiSearchResult, che mostra l'errore e obbliga a
+        // chiuderne tutti tranne uno). Nessun gruppo aperto = comportamento
+        // di prima (primo NON bloccato, altrimenti il primo comunque).
+        // Nessun gruppo nel progetto: ne crea uno nuovo al volo (senza
+        // dialog) intitolato alla ricerca effettuata (_poiSearchQueryLabel).
+        private PoiGroup? ResolvePoiSearchTargetGroup(out string? error)
         {
+            error = null;
             if (_project.PoiGroups.Count == 0)
                 return CreateAutoPoiGroup(_poiSearchQueryLabel);
+
+            var expanded = _project.PoiGroups.Where(g => !_navCollapsedGroupIds.Contains(g.Id)).ToList();
+            if (expanded.Count == 1)
+                return expanded[0];
+            if (expanded.Count > 1)
+            {
+                error = Strings.Get("MainWindow_PiuGruppiPoiAperti");
+                return null;
+            }
+
             return _project.PoiGroups.FirstOrDefault(g => !g.IsLocked) ?? _project.PoiGroups[0];
         }
 
@@ -4675,6 +4713,65 @@ namespace StradarioApp.UI
         // fallite il bottone "Crea percorso" nel pannello resta disabilitato
         // (vedi UpdateInstradaPanel), quindi questo metodo non viene mai
         // chiamato in quel caso.
+        // Tolleranza perpendicolare sotto la quale un punto è considerato
+        // "praticamente allineato" fra i suoi due vicini e quindi ridondante
+        private const double CollinearToleranceMeters = 1.0;
+
+        // OSRM restituisce la geometria completa con moltissimi vertici,
+        // molti dei quali quasi perfettamente allineati lungo un tratto
+        // rettilineo (non aggiungono informazione geometrica reale). Rimuove
+        // ricorsivamente il punto centrale di ogni tripletta quasi allineata:
+        // il processo si ripete finché una passata intera non elimina più
+        // nulla, perché togliere un punto può rendere allineati anche i suoi
+        // ex-vicini, ora adiacenti fra loro.
+        private static List<GeoPoint> SimplifyCollinearPoints(List<GeoPoint> points)
+        {
+            if (points.Count < 3) return points;
+
+            var current = points;
+            while (true)
+            {
+                var next = new List<GeoPoint> { current[0] };
+                bool removedAny = false;
+                for (int i = 1; i < current.Count - 1; i++)
+                {
+                    var a = next[^1];
+                    var b = current[i];
+                    var c = current[i + 1];
+                    if (PerpendicularDistanceMeters(b, a, c) < CollinearToleranceMeters)
+                    {
+                        removedAny = true; // scarta b: quasi allineato fra a e c
+                        continue;
+                    }
+                    next.Add(b);
+                }
+                next.Add(current[^1]);
+                current = next;
+                if (!removedAny) return current;
+            }
+        }
+
+        // Distanza perpendicolare del punto p dalla retta passante per a e c,
+        // in metri. Proiezione piana locale (km, centrata su "a"): adeguata
+        // per distanze brevi come quelle fra vertici consecutivi di una
+        // tratta stradale, non serve la precisione di una geodetica.
+        private static double PerpendicularDistanceMeters(GeoPoint p, GeoPoint a, GeoPoint c)
+        {
+            double pxKm = GeoUtils.LonDegToKm(p.Lon - a.Lon, a.Lat);
+            double pyKm = GeoUtils.LatDegToKm(p.Lat - a.Lat);
+            double cxKm = GeoUtils.LonDegToKm(c.Lon - a.Lon, a.Lat);
+            double cyKm = GeoUtils.LatDegToKm(c.Lat - a.Lat);
+
+            double lenSq = cxKm * cxKm + cyKm * cyKm;
+            if (lenSq < 1e-12)
+                return Math.Sqrt(pxKm * pxKm + pyKm * pyKm) * 1000;
+
+            // Distanza punto-retta (non punto-segmento): |p × c| / |c|, con
+            // a nell'origine del sistema locale.
+            double crossKm = Math.Abs(pxKm * cyKm - pyKm * cxKm);
+            return crossKm / Math.Sqrt(lenSq) * 1000;
+        }
+
         private void OnCreatePercorsoInstradato()
         {
             var original = _instradaTargetRoute;
@@ -4714,7 +4811,7 @@ namespace StradarioApp.UI
                 Description = original.Description,
                 ColorHex    = original.ColorHex,
                 IsLocked    = true, // come i percorsi importati: dato "finalizzato"
-                Points      = points,
+                Points      = SimplifyCollinearPoints(points),
             };
 
             _project.Percorsi.Add(newRoute);
@@ -4765,7 +4862,12 @@ namespace StradarioApp.UI
             // un gruppo vuoto orfano — da qui il confronto pre/post invece di
             // due PushUndo separati.
             var existingGroupIds = _project.PoiGroups.Select(g => g.Id).ToHashSet();
-            var target = ResolvePoiSearchTargetGroup();
+            var target = ResolvePoiSearchTargetGroup(out string? targetError);
+            if (target == null)
+            {
+                ShowStatusMessage(targetError!, isError: true);
+                return;
+            }
             bool groupWasCreated = !existingGroupIds.Contains(target.Id);
 
             string label = SanitizeSearchLabel(result.DisplayName);
@@ -5078,6 +5180,33 @@ namespace StradarioApp.UI
             return null;
         }
 
+        // I gruppi importati da PoiService.ImportKmz arrivano tutti con lo
+        // stesso ColorHex di default (nessuna informazione di colore nel
+        // KML/GPX sorgente) — appiccicati alla stessa icona/colore di un
+        // gruppo già esistente nel progetto sarebbero indistinguibili sulla
+        // mappa. Assegna a ciascuno il primo colore della palette curata
+        // (PoiIconRenderer.Palette) non ancora usato da nessun gruppo del
+        // progetto, tracciando anche i colori appena assegnati così due
+        // gruppi importati nello stesso file non si scontrano fra loro.
+        // Esaurita la palette (più gruppi che colori), si ricicla dall'inizio:
+        // meglio un duplicato dopo il decimo gruppo che nessun colore.
+        private void AssignDistinctColors(IReadOnlyList<PoiGroup> newGroups)
+        {
+            var used = new HashSet<string>(
+                _project.PoiGroups.Except(newGroups)
+                    .Select(g => g.ColorHex)
+                    .Where(c => !string.IsNullOrWhiteSpace(c)),
+                StringComparer.OrdinalIgnoreCase);
+
+            foreach (var g in newGroups)
+            {
+                string chosen = PoiIconRenderer.Palette.FirstOrDefault(c => !used.Contains(c))
+                                ?? PoiIconRenderer.Palette[used.Count % PoiIconRenderer.Palette.Length];
+                g.ColorHex = chosen;
+                used.Add(chosen);
+            }
+        }
+
         private async Task ImportFromFileAsync(Avalonia.Platform.Storage.IStorageFile file)
         {
             string fileName = file.Name;
@@ -5115,6 +5244,8 @@ namespace StradarioApp.UI
                     ShowStatusMessage(Strings.Get("MainWindow_NessunGruppoPercorsoTrovato"), isError: true);
                     return;
                 }
+
+                AssignDistinctColors(importedGroups);
 
                 // Dati importati da fonte esterna: bloccati subito, per
                 // evitare di spostarli accidentalmente prima ancora di averli

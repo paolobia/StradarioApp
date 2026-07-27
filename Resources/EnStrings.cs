@@ -394,6 +394,7 @@ namespace StradarioApp.Resources
             ["MainWindow_LocalizzazioneRiuscita"] = "Location successful: position found.",
             ["MainWindow_LocalizzazioneFallita"] = "Location failed: {0}",
             ["MainWindow_RicercaLabelDefault"] = "Search",
+            ["MainWindow_PiuGruppiPoiAperti"] = "More than one POI group is expanded in the tree: collapse all but the one you want the result added to.",
             ["MainWindow_IndirizzoWatermark"] = "Address: street, city... (required)",
             ["MainWindow_CittaWatermark"] = "City name, even partial (empty = visible ones)",
             ["MainWindow_LogAvvioRicerca"] = "Starting search \"{0}\"",
