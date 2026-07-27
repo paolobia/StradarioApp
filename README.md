@@ -12,9 +12,9 @@ grazie ad Avalonia UI.
 
 - **Mappa interattiva**: pan con drag, zoom con rotella centrato sul cursore, ricerca città
 - **Pagine**: click destro per aggiungere, drag per spostare, blocco manuale/automatico contro spostamenti accidentali, etichette automatiche (A1, B2…)
-- **Gruppi POI**: marker con icona/colore personalizzabili, aggiunta diretta sulla mappa o via ricerca — 43 categorie predefinite più quelle personalizzate, ricerca dal vivo (Overpass) o offline (database locale scaricabile per continente), ricerca indirizzo e città
-- **Percorsi**: disegno punto-per-punto sulla mappa, estendibili ed editabili in seguito
-- **Import/export universale**: un solo comando importa KMZ/KML/GPX (POI e percorsi insieme); esportazione separata o combinata in un unico file; nomi in script non latino ripuliti automaticamente; punti in Cina (possibile GCJ-02 anziché WGS84) gestiti con correzione automatica o manuale
+- **Gruppi POI**: marker con icona/colore personalizzabili, aggiunta diretta sulla mappa o via ricerca — 43 categorie predefinite più quelle personalizzate, ricerca dal vivo (Overpass, con punteggio locale offline sempre calcolato in aggiunta al filtro AI/Groq opzionale) o offline (database locale scaricabile per continente), ricerca indirizzo e città; spostamento di un POI fra gruppi con un gesto taglia/incolla; un gruppo nascosto (occhio spento) è protetto da modifiche accidentali
+- **Percorsi**: disegno punto-per-punto sulla mappa (Invio o shift+clic per confermare, senza aggiungere punti spuri se si pan durante il disegno), estendibili ed editabili in seguito, instradabili su strada reale via OSRM (auto/bici/piedi, alternative multiple selezionabili direttamente sulla mappa)
+- **Import/export universale**: un solo comando importa KMZ/KML/GPX (POI e percorsi insieme, con colori distinti per i gruppi POI importati); esportazione separata, combinata o di un singolo gruppo/percorso; nomi in script non latino ripuliti automaticamente; punti in Cina (possibile GCJ-02 anziché WGS84) gestiti con correzione automatica o manuale
 - **Generazione PDF**: anteprima prima di salvare, indice, mappa riassuntiva, pagine con riferimenti alle adiacenti e scala grafica
 - **Salvataggio progetto**: file `.stradario` (JSON) leggibile e modificabile a mano; le chiavi API restano solo nelle preferenze locali, mai nel progetto
 - **Impostazioni**: tre tab — Generale (formato pagina, DPI, scala di stampa da 1:1.000 a 1:1.000.000, tile server, contrasto mappa nel PDF), Categorie POI (aggiunta di categorie personalizzate), Database POI offline (download facoltativo per continente)
@@ -105,7 +105,8 @@ StradarioApp/
 │   ├── PoiIconRenderer.cs          # Icone POI vettoriali condivise mappa/PDF/KMZ
 │   ├── PoiService.cs / PercorsoService.cs   # Import/export KMZ/KML/GPX
 │   ├── GcjTransform.cs             # Correzione GCJ-02 -> WGS84 per import in Cina
-│   ├── PoiSearchService.cs         # Ricerca POI per categoria/indirizzo + filtro AI/Groq opzionale
+│   ├── PoiSearchService.cs         # Ricerca POI per categoria/indirizzo + filtro AI/Groq opzionale + punteggio locale
+│   ├── RouteInstradationService.cs # Instradamento OSRM di un Percorso su strada reale (auto/bici/piedi)
 │   ├── GroqClient.cs               # Client HTTP minimo per l'API Groq (filtro POI AI)
 │   ├── KmlIo.cs                    # Caricamento XML KML/KMZ/GPX robusto a BOM/encoding
 │   ├── CityDatabase.cs             # Database città GeoNames, download automatico se assente
@@ -121,7 +122,8 @@ StradarioApp/
     ├── EditPageWindow.cs            # Dialog modifica pagina
     ├── PoiGroupEditWindow.cs / PoiItemEditWindow.cs
     ├── RouteEditWindow.cs
-    ├── PoiSearchLogWindow.cs        # Log passo-passo di ogni ricerca POI, con Annulla
+    ├── RouteInstradationPanel.cs    # Pannello alternative/distanza/durata durante l'instradamento OSRM
+    ├── PoiSearchLogWindow.cs        # Log passo-passo di ogni ricerca POI, con Annulla/OK
     └── ProgressWindow.cs            # Dialog avanzamento generazione PDF
 ```
 
