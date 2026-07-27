@@ -1528,6 +1528,8 @@ namespace StradarioApp.UI
             }
             else
             {
+                actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Export, Strings.Get("MainWindow_EsportaGruppoTooltip"), Brushes.SteelBlue,
+                    async () => await OnExportSinglePoiGroup(group)));
                 actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, Strings.Get("MainWindow_AggiungiPoiAlGruppoTooltip"), Brushes.SteelBlue,
                     () => StartAddPoiMode(group)));
                 actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Pencil, Strings.Get("MainWindow_ModificaGruppoTooltip"), Brushes.SteelBlue,
@@ -1620,18 +1622,23 @@ namespace StradarioApp.UI
             // al Ctrl+clic (invisibile finché non lo si sa) per selezionare
             // il POI da spostare in un altro gruppo — vedi BuildPoiGroupNavHeader,
             // che appena _multiSelectedPoiKeys non è vuoto sostituisce le
-            // icone di ogni ALTRO gruppo con una sola icona "incolla".
-            var cutBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Cut,
-                isMultiSelected ? Strings.Get("MainWindow_AnnullaTaglioPoiTooltip") : Strings.Get("MainWindow_TagliaPoiTooltip"),
-                isMultiSelected ? Brushes.DarkOrange : Brushes.SteelBlue, () =>
+            // icone di ogni ALTRO gruppo con una sola icona "incolla". Con un
+            // solo gruppo nel progetto non c'è nessun altro gruppo in cui
+            // incollare, quindi l'icona non ha senso e viene omessa del tutto.
+            if (_project.PoiGroups.Count > 1)
             {
-                var key = (group.Id, item.Id);
-                if (!_multiSelectedPoiKeys.Remove(key))
-                    _multiSelectedPoiKeys.Add(key);
-                RefreshNavigationTree();
-            });
-            Grid.SetColumn(cutBtn, 3);
-            row.Children.Add(cutBtn);
+                var cutBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Cut,
+                    isMultiSelected ? Strings.Get("MainWindow_AnnullaTaglioPoiTooltip") : Strings.Get("MainWindow_TagliaPoiTooltip"),
+                    isMultiSelected ? Brushes.DarkOrange : Brushes.SteelBlue, () =>
+                {
+                    var key = (group.Id, item.Id);
+                    if (!_multiSelectedPoiKeys.Remove(key))
+                        _multiSelectedPoiKeys.Add(key);
+                    RefreshNavigationTree();
+                });
+                Grid.SetColumn(cutBtn, 3);
+                row.Children.Add(cutBtn);
+            }
 
             var delBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("MainWindow_EliminaPoiTooltip"), Brushes.Crimson,
                 () => OnDeletePoiItem(group, item));
@@ -1709,7 +1716,7 @@ namespace StradarioApp.UI
                 Cursor          = new Cursor(StandardCursorType.Hand)
             };
 
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto,Auto,Auto,Auto,Auto") };
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto") };
 
             var swatch = new Border
             {
@@ -1737,9 +1744,14 @@ namespace StradarioApp.UI
             Grid.SetColumn(info, 1);
             row.Children.Add(info);
 
+            var exportBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Export, Strings.Get("MainWindow_EsportaPercorsoTooltip"), Brushes.SteelBlue,
+                async () => await OnExportSinglePercorso(route));
+            Grid.SetColumn(exportBtn, 2);
+            row.Children.Add(exportBtn);
+
             var addPtsBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, Strings.Get("MainWindow_AggiungiPuntiPercorsoTooltip"), Brushes.SteelBlue,
                 () => StartAddRoutePointsMode(route));
-            Grid.SetColumn(addPtsBtn, 2);
+            Grid.SetColumn(addPtsBtn, 3);
             row.Children.Add(addPtsBtn);
 
             bool instradaFailed = _instradaFailedRouteIds.Contains(route.Id);
@@ -1747,17 +1759,17 @@ namespace StradarioApp.UI
                 Strings.Get(instradaFailed ? "MainWindow_InstradaFallitoTooltip" : "MainWindow_InstradaTooltip"),
                 instradaFailed ? Brushes.Crimson : Brushes.SteelBlue,
                 () => StartInstradaMode(route));
-            Grid.SetColumn(instradaBtn, 3);
+            Grid.SetColumn(instradaBtn, 4);
             row.Children.Add(instradaBtn);
 
             var editBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Pencil, Strings.Get("MainWindow_ModificaPercorsoTooltip"), Brushes.SteelBlue,
                 async () => await OnEditPercorso(route));
-            Grid.SetColumn(editBtn, 4);
+            Grid.SetColumn(editBtn, 5);
             row.Children.Add(editBtn);
 
             var delBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("MainWindow_EliminaPercorsoTooltip"), Brushes.Crimson,
                 () => OnDeletePercorso(route));
-            Grid.SetColumn(delBtn, 5);
+            Grid.SetColumn(delBtn, 6);
             row.Children.Add(delBtn);
 
             var eyeBtn = DialogUi.MakeTreeIconButton(visible ? BootstrapIcons.Eye : BootstrapIcons.EyeSlash,
@@ -1769,7 +1781,7 @@ namespace StradarioApp.UI
                 RefreshNavigationTree();
                 _mapCanvas?.InvalidateVisual();
             });
-            Grid.SetColumn(eyeBtn, 6);
+            Grid.SetColumn(eyeBtn, 7);
             row.Children.Add(eyeBtn);
 
             var lockBtn = DialogUi.MakeTreeIconButton(route.IsLocked ? BootstrapIcons.LockClosed : BootstrapIcons.LockOpen,
@@ -1781,7 +1793,7 @@ namespace StradarioApp.UI
                 _isDirty = true;
                 RefreshNavigationTree();
             });
-            Grid.SetColumn(lockBtn, 7);
+            Grid.SetColumn(lockBtn, 8);
             row.Children.Add(lockBtn);
 
             border.Child = row;
@@ -4954,13 +4966,22 @@ namespace StradarioApp.UI
             _mapCanvas?.InvalidateVisual();
         }
 
-        // Esporta i gruppi POI nel formato scelto dall'utente (KMZ zippato
-        // con icone incorporate, KML grezzo con solo il colore del gruppo, o
-        // GPX come lista piatta di waypoint): il formato è dedotto
+        // Esporta TUTTI i gruppi POI del progetto
+        private async Task OnExportKmz() => await OnExportPoiGroups(_project.PoiGroups, "poi");
+
+        // Esporta UN SOLO gruppo POI (icona 💾/Export nella sua testata
+        // nell'albero, vedi BuildPoiGroupNavHeader) — stesso formato/dialog
+        // dell'export "tutti", solo con un gruppo invece della lista intera
+        private async Task OnExportSinglePoiGroup(PoiGroup group) =>
+            await OnExportPoiGroups(new List<PoiGroup> { group }, SanitizeFileNameForExport(group.Name));
+
+        // Esporta i gruppi POI passati nel formato scelto dall'utente (KMZ
+        // zippato con icone incorporate, KML grezzo con solo il colore del
+        // gruppo, o GPX come lista piatta di waypoint): il formato è dedotto
         // dall'estensione del file scelto/digitato nel dialog di salvataggio.
-        private async Task OnExportKmz()
+        private async Task OnExportPoiGroups(List<PoiGroup> groups, string suggestedFileName)
         {
-            if (_project.PoiGroups.Count == 0)
+            if (groups.Count == 0)
             {
                 ShowStatusMessage(Strings.Get("MainWindow_NessunGruppoDaEsportare"), isError: true);
                 return;
@@ -4970,7 +4991,7 @@ namespace StradarioApp.UI
             {
                 Title             = Strings.Get("MainWindow_EsportaPoiTitolo"),
                 DefaultExtension  = "kmz",
-                SuggestedFileName = "poi",
+                SuggestedFileName = suggestedFileName,
                 SuggestedStartLocation = await GetSuggestedStartFolderAsync(),
                 FileTypeChoices   = new[]
                 {
@@ -5000,9 +5021,9 @@ namespace StradarioApp.UI
                 {
                     switch (Path.GetExtension(path).ToLowerInvariant())
                     {
-                        case ".kml": await _poiSvc.ExportKmlAsync(_project.PoiGroups, path); break;
-                        case ".gpx": await _poiSvc.ExportGpxAsync(_project.PoiGroups, path); break;
-                        default:     await _poiSvc.ExportKmzAsync(_project.PoiGroups, path); break;
+                        case ".kml": await _poiSvc.ExportKmlAsync(groups, path); break;
+                        case ".gpx": await _poiSvc.ExportGpxAsync(groups, path); break;
+                        default:     await _poiSvc.ExportKmzAsync(groups, path); break;
                     }
                 }
                 finally
@@ -5156,6 +5177,15 @@ namespace StradarioApp.UI
             return null;
         }
 
+        // Nome file suggerito per l'export di un singolo gruppo POI/percorso
+        // (SuggestedFileName del dialog di salvataggio): il nome/etichetta
+        // dell'oggetto, ripulito dai caratteri non ammessi nei nomi file
+        private static string SanitizeFileNameForExport(string name)
+        {
+            string sanitized = string.Concat((name ?? "").Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c)).Trim();
+            return sanitized.Length == 0 ? "export" : sanitized;
+        }
+
         // I gruppi importati da PoiService.ImportKmz arrivano tutti con lo
         // stesso ColorHex di default (nessuna informazione di colore nel
         // KML/GPX sorgente) — appiccicati alla stessa icona/colore di un
@@ -5295,12 +5325,20 @@ namespace StradarioApp.UI
                 .OfType<Avalonia.Platform.Storage.IStorageFile>()
                 .Any(f => ImportableExtensions.Contains(Path.GetExtension(f.Name).ToLowerInvariant())) ?? false;
 
-        // Esporta i percorsi nel formato scelto dall'utente (KMZ, KML grezzo,
-        // o GPX come <trk>); il formato è dedotto dall'estensione del file
-        // scelto/digitato nel dialog di salvataggio.
-        private async Task OnExportPercorsiKmz()
+        // Esporta TUTTI i percorsi del progetto
+        private async Task OnExportPercorsiKmz() => await OnExportPercorsi(_project.Percorsi, "percorsi");
+
+        // Esporta UN SOLO percorso (icona 💾/Export nella sua riga
+        // nell'albero, vedi BuildPercorsoNavItem)
+        private async Task OnExportSinglePercorso(Percorso route) =>
+            await OnExportPercorsi(new List<Percorso> { route }, SanitizeFileNameForExport(route.Label));
+
+        // Esporta i percorsi passati nel formato scelto dall'utente (KMZ,
+        // KML grezzo, o GPX come <trk>); il formato è dedotto dall'estensione
+        // del file scelto/digitato nel dialog di salvataggio.
+        private async Task OnExportPercorsi(List<Percorso> routes, string suggestedFileName)
         {
-            if (_project.Percorsi.Count == 0)
+            if (routes.Count == 0)
             {
                 ShowStatusMessage(Strings.Get("MainWindow_NessunPercorsoDaEsportare"), isError: true);
                 return;
@@ -5310,7 +5348,7 @@ namespace StradarioApp.UI
             {
                 Title             = Strings.Get("MainWindow_EsportaPercorsiTitolo"),
                 DefaultExtension  = "kmz",
-                SuggestedFileName = "percorsi",
+                SuggestedFileName = suggestedFileName,
                 SuggestedStartLocation = await GetSuggestedStartFolderAsync(),
                 FileTypeChoices   = new[]
                 {
@@ -5340,9 +5378,9 @@ namespace StradarioApp.UI
                 {
                     switch (Path.GetExtension(path).ToLowerInvariant())
                     {
-                        case ".kml": await _percorsoSvc.ExportKmlAsync(_project.Percorsi, path); break;
-                        case ".gpx": await _percorsoSvc.ExportGpxAsync(_project.Percorsi, path); break;
-                        default:     await _percorsoSvc.ExportKmzAsync(_project.Percorsi, path); break;
+                        case ".kml": await _percorsoSvc.ExportKmlAsync(routes, path); break;
+                        case ".gpx": await _percorsoSvc.ExportGpxAsync(routes, path); break;
+                        default:     await _percorsoSvc.ExportKmzAsync(routes, path); break;
                     }
                 }
                 finally
