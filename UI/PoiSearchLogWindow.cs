@@ -134,8 +134,12 @@ namespace StradarioApp.UI
         // Segnala che si sta per attendere la risposta AI (Groq): il
         // pulsante cambia etichetta in "OK" e il suo significato cambia
         // (vedi SkipAiRequested sopra). ExitAiWaitPhase va chiamato sempre,
-        // in un finally, non solo sul percorso felice — altrimenti il
-        // pulsante resterebbe "OK" anche dopo, con la ricerca conclusa.
+        // in un finally, non solo sul percorso felice, per ripristinare il
+        // comportamento del click (chiudi/annulla) — ma NON l'etichetta:
+        // resta "OK" anche dopo, la finestra a questo punto deve solo
+        // chiudersi (a fine ricerca da sola, o a mano se resta aperta per
+        // un errore), un "Annulla" che riapparirebbe solo per un istante
+        // non ha senso da mostrare.
         public void EnterAiWaitPhase()
         {
             _aiWaitPhase = true;
@@ -145,7 +149,6 @@ namespace StradarioApp.UI
         public void ExitAiWaitPhase()
         {
             _aiWaitPhase = false;
-            _actionBtn.Content = Strings.Get("PoiSearchLogWindow_Annulla");
         }
 
         // Chiusura "legittima": a operazione conclusa (successo, errore o
