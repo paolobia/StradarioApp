@@ -26,9 +26,21 @@ namespace StradarioApp.UI
     {
         public event Action? CancelRequested;
 
+        // Sollevato invece di CancelRequested quando il pulsante viene
+        // premuto mentre siamo in attesa della risposta AI (Groq) — vedi
+        // EnterAiWaitPhase: in quella fase il pulsante diventa "OK" e
+        // smette di significare "annulla tutta la ricerca", significa
+        // "non aspettare più l'AI, mostrami quello che hai già trovato col
+        // solo punteggio locale" (MainWindow.RunCategorySearchAsync). La
+        // finestra NON si chiude da sola in questo caso: la ricerca
+        // prosegue e la chiude lei stessa a fine operazione, come al solito.
+        public event Action? SkipAiRequested;
+
         private readonly StackPanel   _logPanel;
         private readonly ScrollViewer _scroll;
+        private readonly Button       _actionBtn;
         private bool _closingProgrammatically = false;
+        private bool _aiWaitPhase = false;
 
         // Impostato da LogError: MainWindow.OnPoiSearchAsync lo controlla
         // prima di chiudere la finestra da sé a fine ricerca — se c'è stato
@@ -61,21 +73,28 @@ namespace StradarioApp.UI
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto
             };
 
-            var cancelBtn = new Button
+            _actionBtn = new Button
             {
                 Content = Strings.Get("PoiSearchLogWindow_Annulla"),
                 HorizontalAlignment = HorizontalAlignment.Right,
                 Margin  = new Thickness(10)
             };
-            cancelBtn.Click += (s, e) =>
+            _actionBtn.Click += (s, e) =>
             {
+                if (_aiWaitPhase)
+                {
+                    // Non chiude la finestra: la ricerca prosegue e la
+                    // chiuderà da sola a operazione conclusa.
+                    SkipAiRequested?.Invoke();
+                    return;
+                }
                 CancelRequested?.Invoke();
                 CloseProgrammatically();
             };
 
             var root = new DockPanel();
-            DockPanel.SetDock(cancelBtn, Dock.Bottom);
-            root.Children.Add(cancelBtn);
+            DockPanel.SetDock(_actionBtn, Dock.Bottom);
+            root.Children.Add(_actionBtn);
             root.Children.Add(_scroll);
 
             Content = root;
@@ -110,6 +129,23 @@ namespace StradarioApp.UI
                 TextWrapping = TextWrapping.Wrap
             });
             _scroll.ScrollToEnd();
+        }
+
+        // Segnala che si sta per attendere la risposta AI (Groq): il
+        // pulsante cambia etichetta in "OK" e il suo significato cambia
+        // (vedi SkipAiRequested sopra). ExitAiWaitPhase va chiamato sempre,
+        // in un finally, non solo sul percorso felice — altrimenti il
+        // pulsante resterebbe "OK" anche dopo, con la ricerca conclusa.
+        public void EnterAiWaitPhase()
+        {
+            _aiWaitPhase = true;
+            _actionBtn.Content = Strings.Get("PoiSearchLogWindow_OK");
+        }
+
+        public void ExitAiWaitPhase()
+        {
+            _aiWaitPhase = false;
+            _actionBtn.Content = Strings.Get("PoiSearchLogWindow_Annulla");
         }
 
         // Chiusura "legittima": a operazione conclusa (successo, errore o

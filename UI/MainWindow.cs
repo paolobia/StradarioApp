@@ -3506,6 +3506,18 @@ namespace StradarioApp.UI
             var logWindow = new PoiSearchLogWindow();
             using var cts = new CancellationTokenSource();
             logWindow.CancelRequested += () => cts.Cancel();
+
+            // Token SEPARATO per la sola attesa della risposta AI (Groq),
+            // agganciato a cts (un annullamento vero lo annulla comunque):
+            // "OK" durante l'attesa AI (vedi PoiSearchLogWindow.
+            // EnterAiWaitPhase/SkipAiRequested) annulla SOLO questo, non
+            // l'intera ricerca — RunCategorySearchAsync tratta la
+            // cancellazione di aiCts come "AI non disponibile", non come un
+            // annullamento dell'utente, e prosegue con il solo punteggio
+            // locale sui risultati già recuperati.
+            using var aiCts = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
+            logWindow.SkipAiRequested += () => aiCts.Cancel();
+
             var dialogTask = logWindow.ShowDialog(this);
 
             logWindow.Log(string.Format(Strings.Get("MainWindow_LogAvvioRicerca"), label) +
@@ -3576,7 +3588,7 @@ namespace StradarioApp.UI
                 }
 
                 await RunCategorySearchAsync(key, value, label, searchBounds, subFilters: null, nameFilter: nameFilter,
-                    logWindow: logWindow, ct: cts.Token);
+                    logWindow: logWindow, ct: cts.Token, aiCt: aiCts.Token);
             }
             catch (OperationCanceledException)
             {
@@ -3621,7 +3633,7 @@ namespace StradarioApp.UI
         // semplice filtro letterale sul nome (sottostringa, case-insensitive).
         private async Task RunCategorySearchAsync(string key, string value, string label, GeoRect viewBounds,
             IEnumerable<string>? subFilters, string? nameFilter = null,
-            PoiSearchLogWindow? logWindow = null, CancellationToken ct = default)
+            PoiSearchLogWindow? logWindow = null, CancellationToken ct = default, CancellationToken aiCt = default)
         {
             ct.ThrowIfCancellationRequested();
             void log(string msg) => logWindow?.Log(msg);
@@ -3736,14 +3748,25 @@ namespace StradarioApp.UI
                 List<PoiSearchService.Result>? aiResults = null;
                 if (aiAvailable)
                 {
+                    // "OK" durante l'attesa (PoiSearchLogWindow.EnterAiWaitPhase/
+                    // SkipAiRequested) annulla SOLO aiCt, non ct: qui sotto va
+                    // trattato come "AI non disponibile" (si passa comunque al
+                    // punteggio locale), non come annullamento della ricerca —
+                    // per questo si controlla ct.IsCancellationRequested prima
+                    // di ripropagare, invece di ripropagare sempre come prima.
+                    logWindow?.EnterAiWaitPhase();
                     try
                     {
                         aiResults = await _poiSearchSvc.FilterAndScoreByQueryAsync(
                             _project.Settings.GroqApiKey, nameFilter, originalCandidates,
-                            viewBounds, viewBounds.CenterLon, viewBounds.CenterLat, log, ct);
+                            viewBounds, viewBounds.CenterLon, viewBounds.CenterLat, log, aiCt);
                         usedAi = true;
                     }
-                    catch (OperationCanceledException) { throw; }
+                    catch (OperationCanceledException)
+                    {
+                        if (ct.IsCancellationRequested) throw; // annullamento vero, propaga come sempre
+                        log(Strings.Get("MainWindow_LogSaltoAttesaAi"));
+                    }
                     catch (Exception ex)
                     {
                         // Non fatale: una chiave Groq scaduta/non valida, i
@@ -3753,6 +3776,10 @@ namespace StradarioApp.UI
                         // ricerca. Loggato come errore (resta visibile,
                         // rosso) ma la ricerca prosegue.
                         logWindow?.LogError(string.Format(Strings.Get("MainWindow_SelezioneAiNonRiuscita"), ex.Message));
+                    }
+                    finally
+                    {
+                        logWindow?.ExitAiWaitPhase();
                     }
                 }
 

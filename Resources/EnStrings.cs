@@ -87,6 +87,7 @@ namespace StradarioApp.Resources
             // UI/PoiSearchLogWindow.cs
             ["PoiSearchLogWindow_Titolo"] = "Searching for POIs...",
             ["PoiSearchLogWindow_Annulla"] = "Cancel",
+            ["PoiSearchLogWindow_OK"] = "OK",
 
             // UI/RouteInstradationPanel.cs
             ["RouteInstradationPanel_Titolo"] = "Route \"{0}\"",
@@ -421,6 +422,7 @@ namespace StradarioApp.Resources
             ["MainWindow_SuggerimentoDatiOfflineNonScaricati"] = "No offline POI database downloaded: the search will use Overpass online (Settings → Offline POI database to download the data).",
             ["MainWindow_LogPunteggioLocale"] = "Computing local score (name/tags) for \"{0}\"...",
             ["MainWindow_SelezioneAiNonRiuscita"] = "AI selection failed: {0}",
+            ["MainWindow_LogSaltoAttesaAi"] = "AI wait interrupted by the user: showing results found so far (local score).",
             ["MainWindow_TooltipAffidabilita"] = "Confidence: {0}%",
             ["MainWindow_LogNessunRisultatoPer"] = "No results for \"{0}\".",
             ["MainWindow_NessunRisultatoAreaRistretta"] = "No results for \"{0}\" around the map center (area too wide, search restricted): try moving/zooming the view.",

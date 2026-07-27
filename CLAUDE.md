@@ -303,6 +303,23 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   (`CloseProgrammatically`, which skips the Closing handler's
   cancel-on-close logic) only once the whole operation has actually
   finished — never before results are already placed on the map.
+  **Exception: while specifically waiting on the Groq call** in a category
+  search with typed text (`RunCategorySearchAsync`), the button relabels to
+  "OK" (`PoiSearchLogWindow.EnterAiWaitPhase`/`ExitAiWaitPhase`) and
+  clicking it fires `SkipAiRequested` instead of `CancelRequested` — this
+  cancels only a second, linked `aiCts` (`CancellationTokenSource.
+  CreateLinkedTokenSource(cts.Token)` in `OnPoiSearchAsync`), NOT the main
+  `cts`, so the window stays open and the search proceeds using only the
+  local match score (`PoiSearchService.ComputeLocalMatchScore`) on the
+  candidates already fetched, instead of throwing everything away — the
+  user asked specifically to still see whatever was already found rather
+  than get nothing just because Groq was slow/unreachable. The window's own
+  X still means a full cancel regardless of this phase. `ct.
+  IsCancellationRequested` (the outer token, unaffected by an `aiCts`-only
+  cancel since a linked source only inherits cancellation *from* its parent,
+  never propagates back to it) is what `RunCategorySearchAsync` checks to
+  tell a real cancel apart from an AI-only skip inside the `catch
+  (OperationCanceledException)` around the Groq call.
 
 - **`Services/GroqClient`** now backs only `FilterAndScoreByQueryAsync`
   above (`CompoundModel`/web-search-integrated calls were removed along
