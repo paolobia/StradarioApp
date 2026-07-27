@@ -45,9 +45,38 @@ namespace StradarioApp.Services
         })
         { Timeout = TimeSpan.FromSeconds(25) };
 
+        // Client di fallback, solo TLS 1.2: riscontrato in un secondo test
+        // (PC domestico, nessun antivirus/proxy di mezzo — quindi non
+        // interferenza di rete) un vero TLS alert "HandshakeFailure" con
+        // Http sopra, sintomo tipico di un supporto TLS 1.3 instabile nello
+        // stack SChannel di quella specifica installazione Windows. Invece
+        // di indovinare la versione di Windows dell'utente, si ritenta UNA
+        // volta con solo Tls12 (protocollo maturo, supportato ovunque) solo
+        // quando il primo tentativo fallisce con un errore riconducibile a
+        // SSL/handshake.
+        private static readonly HttpClient HttpTls12Only = new HttpClient(new SocketsHttpHandler
+        {
+            SslOptions = new SslClientAuthenticationOptions
+            {
+                EnabledSslProtocols = SslProtocols.Tls12
+            }
+        })
+        { Timeout = TimeSpan.FromSeconds(25) };
+
         static RouteInstradationService()
         {
             Http.DefaultRequestHeaders.UserAgent.ParseAdd("StradarioApp/1.0 (educational use)");
+            HttpTls12Only.DefaultRequestHeaders.UserAgent.ParseAdd("StradarioApp/1.0 (educational use)");
+        }
+
+        private static bool IsSslRelated(Exception ex)
+        {
+            for (var e = ex; e != null; e = e.InnerException)
+            {
+                if (e is AuthenticationException) return true;
+                if (e.GetType().Name.Contains("Win32Exception")) return true;
+            }
+            return false;
         }
 
         private DateTime _lastCallUtc = DateTime.MinValue;
@@ -102,13 +131,36 @@ namespace StradarioApp.Services
         public async Task<LegResult> RouteLegAsync(GeoPoint from, GeoPoint to, Profile profile, CancellationToken ct)
         {
             await ThrottleAsync(ct).ConfigureAwait(false);
+
+            string url = "https://router.project-osrm.org/route/v1/" +
+                $"{ProfileSegment(profile)}/{FmtCoord(from.Lon)},{FmtCoord(from.Lat)};{FmtCoord(to.Lon)},{FmtCoord(to.Lat)}" +
+                "?alternatives=true&overview=full&geometries=geojson&steps=false";
+
+            string json;
             try
             {
-                string url = "https://router.project-osrm.org/route/v1/" +
-                    $"{ProfileSegment(profile)}/{FmtCoord(from.Lon)},{FmtCoord(from.Lat)};{FmtCoord(to.Lon)},{FmtCoord(to.Lat)}" +
-                    "?alternatives=true&overview=full&geometries=geojson&steps=false";
+                json = await Http.GetStringAsync(url, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception firstEx) when (IsSslRelated(firstEx))
+            {
+                try
+                {
+                    json = await HttpTls12Only.GetStringAsync(url, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    return new LegResult(from, to, new List<RouteAlternative>(), -1, Failed: true, ErrorMessage: DescribeException(ex));
+                }
+            }
+            catch (Exception ex)
+            {
+                return new LegResult(from, to, new List<RouteAlternative>(), -1, Failed: true, ErrorMessage: DescribeException(ex));
+            }
 
-                string json = await Http.GetStringAsync(url, ct).ConfigureAwait(false);
+            try
+            {
                 var root = JObject.Parse(json);
 
                 string? code = (string?)root["code"];
