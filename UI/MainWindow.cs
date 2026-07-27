@@ -3705,46 +3705,62 @@ namespace StradarioApp.UI
             bool usedAi = false;
             if (results.Count > 0 && !string.IsNullOrWhiteSpace(nameFilter))
             {
+                var originalCandidates = results;
                 bool aiAvailable = !string.IsNullOrWhiteSpace(_project.Settings.GroqApiKey);
+                List<PoiSearchService.Result>? aiResults = null;
                 if (aiAvailable)
                 {
                     try
                     {
-                        results = await _poiSearchSvc.FilterAndScoreByQueryAsync(
-                            _project.Settings.GroqApiKey, nameFilter, results,
+                        aiResults = await _poiSearchSvc.FilterAndScoreByQueryAsync(
+                            _project.Settings.GroqApiKey, nameFilter, originalCandidates,
                             viewBounds, viewBounds.CenterLon, viewBounds.CenterLat, log, ct);
                         usedAi = true;
                     }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex)
                     {
-                        // Non fatale: una chiave Groq scaduta/non valida o un
-                        // errore di rete verso l'AI non deve lasciare l'utente
-                        // a mani vuote — si ripiega sullo stesso filtro
-                        // letterale usato quando l'AI non è configurata
-                        // affatto (vedi ramo "else" sotto), invece di
-                        // interrompere la ricerca con zero risultati. Loggato
-                        // come errore (resta visibile, rosso) ma la ricerca
-                        // prosegue.
+                        // Non fatale: una chiave Groq scaduta/non valida, i
+                        // crediti giornalieri esauriti o un errore di rete
+                        // verso l'AI non devono lasciare l'utente a mani
+                        // vuote — il punteggio locale sotto copre comunque la
+                        // ricerca. Loggato come errore (resta visibile,
+                        // rosso) ma la ricerca prosegue.
                         logWindow?.LogError(string.Format(Strings.Get("MainWindow_SelezioneAiNonRiuscita"), ex.Message));
-                        aiAvailable = false;
                     }
                 }
 
-                if (!aiAvailable)
+                // Punteggio locale (offline, PoiSearchService.ComputeLocalMatchScore):
+                // calcolato SEMPRE quando c'è del testo digitato, non solo
+                // come fallback quando l'AI manca — in aggiunta all'AI, non
+                // in alternativa. Motivazione: l'AI può non essere
+                // raggiungibile per tanti motivi indipendenti dalla qualità
+                // della richiesta (niente rete, nessuna chiave configurata,
+                // crediti Groq giornalieri esauriti...), e un match testuale
+                // reale nel nome/tag di un POI non deve dipendere da questo.
+                // Quando lo stesso POI ha sia un punteggio locale sia uno AI,
+                // vince il massimo dei due (richiesto esplicitamente).
+                log(string.Format(Strings.Get("MainWindow_LogPunteggioLocale"), nameFilter));
+                var queryWords = nameFilter.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                var merged = new Dictionary<(double Lon, double Lat, string Name), PoiSearchService.Result>();
+                foreach (var c in originalCandidates)
                 {
-                    // Nessuna chiave AI configurata (o chiamata AI fallita,
-                    // vedi sopra): il testo digitato filtra comunque, ma con
-                    // un semplice confronto sul nome (sottostringa,
-                    // case-insensitive) invece dell'AI — meno capace di
-                    // richieste articolate ("della linea Firenze-Bologna"),
-                    // ma sempre meglio di ignorare il testo o di azzerare i
-                    // risultati.
-                    log(string.Format(Strings.Get("MainWindow_LogFiltroTestoLetterale"), nameFilter));
-                    results = results
-                        .Where(r => r.DisplayName.Contains(nameFilter, StringComparison.OrdinalIgnoreCase))
-                        .ToList();
+                    double localScore = PoiSearchService.ComputeLocalMatchScore(c, queryWords);
+                    if (localScore <= 0) continue;
+                    merged[(c.Lon, c.Lat, c.DisplayName)] = c with { Confidence = (int)Math.Round(localScore) };
                 }
+                if (aiResults != null)
+                {
+                    foreach (var r in aiResults)
+                    {
+                        var mergeKey = (r.Lon, r.Lat, r.DisplayName);
+                        if (merged.TryGetValue(mergeKey, out var existing) && (existing.Confidence ?? 0) > (r.Confidence ?? 0))
+                            merged[mergeKey] = existing with { Motivo = existing.Motivo ?? r.Motivo };
+                        else
+                            merged[mergeKey] = r;
+                    }
+                }
+                results = merged.Values.OrderByDescending(r => r.Confidence ?? 0).ToList();
             }
 
             if (results.Count == 0)

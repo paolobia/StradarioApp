@@ -112,6 +112,38 @@ namespace StradarioApp.Services
         // MainWindow.RunCategorySearchAsync).
         public record Result(string DisplayName, double Lon, double Lat, string? Category, string? Type, string? Address, string? Details = null, int? Confidence = null, string? Motivo = null);
 
+        // Punteggio locale (offline, nessuna rete) del testo digitato contro
+        // un candidato: ogni parola della query vale 100/n_parole se compare
+        // nel nome (DisplayName), altrimenti 50/n_parole se compare solo
+        // negli altri tag OSM (Details) — mai entrambi per la stessa parola.
+        // Girato SEMPRE in MainWindow.RunCategorySearchAsync, in aggiunta
+        // (non in alternativa) al filtro/punteggio AI: un candidato che l'AI
+        // non seleziona (o quando l'AI non è raggiungibile — niente rete,
+        // nessuna chiave configurata, crediti Groq esauriti...) resta
+        // comunque trovabile se il testo cercato compare per davvero nei suoi
+        // dati. Quando lo stesso POI ha sia un punteggio locale sia uno AI,
+        // vince il massimo dei due (vedi RunCategorySearchAsync).
+        public static double ComputeLocalMatchScore(Result candidate, IReadOnlyList<string> queryWords)
+        {
+            if (queryWords.Count == 0) return 0;
+
+            double perWordName = 100.0 / queryWords.Count;
+            double perWordTag  = 50.0  / queryWords.Count;
+            string name = candidate.DisplayName ?? "";
+            string tags = candidate.Details ?? "";
+
+            double score = 0;
+            foreach (var word in queryWords)
+            {
+                if (word.Length == 0) continue;
+                if (name.Contains(word, StringComparison.OrdinalIgnoreCase))
+                    score += perWordName;
+                else if (tags.Contains(word, StringComparison.OrdinalIgnoreCase))
+                    score += perWordTag;
+            }
+            return score;
+        }
+
         // Geocodifica un nome di luogo (città/paese/regione, es. "Pechino" o
         // "Prato") nel suo riquadro geografico su Nominatim, SENZA restringere
         // a un'area: usata da MainWindow.OnPoiSearchAsync quando il testo

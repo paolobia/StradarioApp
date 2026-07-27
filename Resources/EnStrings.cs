@@ -419,7 +419,7 @@ namespace StradarioApp.Resources
             ["MainWindow_LogProvoDatabaseOffline"] = "Trying the offline POI database first...",
             ["MainWindow_LogTrovatiOffline"] = "{0} results found in the offline database: using these (no request sent to Overpass).",
             ["MainWindow_SuggerimentoDatiOfflineNonScaricati"] = "No offline POI database downloaded: the search will use Overpass online (Settings → Offline POI database to download the data).",
-            ["MainWindow_LogFiltroTestoLetterale"] = "No AI key configured: filtering the name for \"{0}\" (simple, non-smart match)...",
+            ["MainWindow_LogPunteggioLocale"] = "Computing local score (name/tags) for \"{0}\"...",
             ["MainWindow_SelezioneAiNonRiuscita"] = "AI selection failed: {0}",
             ["MainWindow_TooltipAffidabilita"] = "Confidence: {0}%",
             ["MainWindow_LogNessunRisultatoPer"] = "No results for \"{0}\".",

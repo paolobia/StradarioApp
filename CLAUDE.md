@@ -167,21 +167,43 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   in a search, persisted via `AppPreferencesService.SaveLastPoiCategory`/
   `LoadLastPoiCategory` (falls back to "ristoranti" the very first time).
   Typed text is always a refinement *within* the chosen category
-  (`MainWindow.OnPoiSearchAsync`): normally a literal name filter
-  (`PoiSearchService.SearchCategoryAsync`, regex on OSM `name`); if that
-  literal filter finds nothing and a Groq API key is configured, it falls
-  back to `FilterCandidatesByQueryAsync`, which asks an LLM to pick which
-  of the (already-fetched, real) OSM candidates in the area satisfy a
-  constraint the name filter can't express (e.g. category "stazioni
-  ferroviarie" + text "della linea firenze bologna" — no station is
-  literally named that, but the model can recognize which ones belong to
-  that line). Every result is by definition a real OSM point — the model
-  only narrows an existing list, it never proposes places from its own
-  knowledge, so there's no verified/unverified distinction to show. This
-  replaced an earlier 3-phase natural-language design (LLM proposes places
-  from world knowledge → verify each against OSM → rank) that showed
-  green/red markers for confirmed/unconfirmed guesses; that whole
-  hypothesis-and-verify flow, and its `Result.Verified`/`Description`
+  (`MainWindow.OnPoiSearchAsync`): `PoiSearchService.SearchCategoryAsync`
+  (or the offline equivalent, `PoiOfflineDatabase.SearchCategory`) always
+  fetches the FULL unfiltered category list for the area first — typed
+  text is applied afterward, client-side, in `MainWindow.RunCategorySearchAsync`,
+  combining TWO independent scoring channels rather than one falling back
+  to the other:
+  1. **AI** (`PoiSearchService.FilterAndScoreByQueryAsync`, only if a Groq
+     API key is configured): asks an LLM to pick which of the candidates
+     satisfy a constraint a literal filter can't express (e.g. category
+     "stazioni ferroviarie" + text "della linea firenze bologna" — no
+     station is literally named that, but the model can recognize which
+     ones belong to that line), returning a 0-100 confidence + a one-line
+     reason (`Result.Confidence`/`Motivo`) per selected candidate. Every
+     result is by definition a real OSM point — the model only narrows an
+     existing list, it never proposes places from its own knowledge.
+  2. **Local score** (`PoiSearchService.ComputeLocalMatchScore`, offline,
+     always computed when there's typed text, unconditionally — not only
+     when the AI is unavailable): each word of the typed text scores
+     `100/n_words` if found in the candidate's name, else `50/n_words` if
+     found only in its other OSM tags (`Result.Details`), else 0. Exists
+     specifically so a real text match still surfaces the POI when the AI
+     channel can't be reached for reasons that have nothing to do with
+     query quality — no network, no Groq key configured, daily Groq
+     credits exhausted, a flaky response.
+
+  The two channels are merged by matching candidates on `(Lon, Lat,
+  DisplayName)` (both trace back to the same unfiltered candidate list, so
+  this key is stable across both paths): a candidate scored by only one
+  channel keeps that score; scored by both, the higher of the two wins
+  (`Confidence` field) — `results.Count == 0` after merging behaves exactly
+  like "no results" always did. This replaced an earlier design where the
+  AI was a fallback tried only after a literal substring filter found
+  nothing (`FilterCandidatesByQueryAsync`, no scoring, binary include/
+  exclude) — and, further back, a 3-phase natural-language design (LLM
+  proposes places from world knowledge → verify each against OSM → rank)
+  that showed green/red markers for confirmed/unconfirmed guesses; that
+  whole hypothesis-and-verify flow, and its `Result.Verified`/`Description`
   fields and marker coloring in `MainWindow`, are gone.
 
 - **The category combo has two "special" entries pinned at the top**
@@ -282,7 +304,7 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   cancel-on-close logic) only once the whole operation has actually
   finished — never before results are already placed on the map.
 
-- **`Services/GroqClient`** now backs only `FilterCandidatesByQueryAsync`
+- **`Services/GroqClient`** now backs only `FilterAndScoreByQueryAsync`
   above (`CompoundModel`/web-search-integrated calls were removed along
   with the hypothesis-generation flow). Every request/response is logged
   via `Services/DebugLog` (append-only file in

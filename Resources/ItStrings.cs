@@ -426,7 +426,7 @@ namespace StradarioApp.Resources
             ["MainWindow_LogProvoDatabaseOffline"] = "Provo prima il database POI offline...",
             ["MainWindow_LogTrovatiOffline"] = "{0} risultati trovati nel database offline: uso questi (nessuna richiesta a Overpass).",
             ["MainWindow_SuggerimentoDatiOfflineNonScaricati"] = "Nessun database POI offline scaricato: la ricerca userà Overpass online (Impostazioni → Database POI offline per scaricare i dati).",
-            ["MainWindow_LogFiltroTestoLetterale"] = "Nessuna chiave AI configurata: filtro il nome per \"{0}\" (confronto semplice, non intelligente)...",
+            ["MainWindow_LogPunteggioLocale"] = "Calcolo il punteggio locale (nome/tag) per \"{0}\"...",
             ["MainWindow_SelezioneAiNonRiuscita"] = "Selezione AI non riuscita: {0}",
             ["MainWindow_TooltipAffidabilita"] = "Affidabilità: {0}%",
             ["MainWindow_LogNessunRisultatoPer"] = "Nessun risultato per \"{0}\".",
