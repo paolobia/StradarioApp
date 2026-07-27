@@ -130,6 +130,30 @@ namespace StradarioApp.UI
         private int       _addRoutePointsSessionCount = 0;
         private bool      _addRoutePointsPrepend      = false;
 
+        // Modalità: "instrada" = instradamento OSRM di un Percorso esistente
+        // sulla rete stradale reale (icona 🧭 nell'albero di navigazione, vedi
+        // BuildPercorsoNavItem/StartInstradaMode). _instradaLegs contiene, per
+        // ogni tratta tra vertici consecutivi del percorso, tutte le
+        // alternative trovate (già ordinate per distanza) e quale è
+        // attualmente selezionata: si aggiorna cliccando direttamente su
+        // un'alternativa disegnata sulla mappa (OnMapPointerPressed) o
+        // ripetendo tutte le richieste dopo un cambio di profilo. Essendo
+        // LegResult un record, la selezione si aggiorna sostituendo l'intero
+        // elemento in lista, non mutandolo in place.
+        private bool                                             _instradaMode;
+        private Percorso?                                        _instradaTargetRoute;
+        private RouteInstradationService.Profile                 _instradaProfile = RouteInstradationService.Profile.Auto;
+        private List<RouteInstradationService.LegResult>         _instradaLegs = new();
+        private RouteInstradationPanel?                          _instradaPanel;
+        private CancellationTokenSource?                         _instradaCts;
+        private readonly RouteInstradationService                _instradaSvc = new();
+        // Percorsi per cui l'ultimo tentativo di instradamento ha avuto
+        // almeno una tratta fallita: usato solo per colorare di rosso
+        // l'icona 🧭 nell'albero (stesso linguaggio visivo di lock/hidden),
+        // non svuotato alla chiusura del pannello — resta un promemoria
+        // finché non si riprova con successo o si elimina il percorso.
+        private readonly HashSet<int> _instradaFailedRouteIds = new();
+
         // Modalità: "righello" = ogni click aggiunge un punto alla spezzata di
         // misurazione (non salvata nel progetto); tasto destro annulla l'ultimo
         // punto (o esce dalla modalità se non ce ne sono), ESC esce e azzera
@@ -213,6 +237,22 @@ namespace StradarioApp.UI
             _addRoutePointsMode         = false;
             _addRoutePointsTarget       = null;
             _addRoutePointsSessionCount = 0;
+
+            // L'ordine conta: _instradaMode va a false PRIMA di chiudere il
+            // pannello, così il suo handler Closed (che richiama
+            // CancelAllAddModes solo "if (_instradaMode)") non rientra qui
+            // una seconda volta quando la chiusura è già stata avviata da noi.
+            _instradaMode        = false;
+            _instradaTargetRoute = null;
+            _instradaLegs        = new();
+            _instradaCts?.Cancel();
+            _instradaCts = null;
+            if (_instradaPanel != null)
+            {
+                var panel = _instradaPanel;
+                _instradaPanel = null;
+                panel.Close();
+            }
 
             _rulerMode = false;
             _rulerPoints.Clear();
@@ -480,7 +520,7 @@ namespace StradarioApp.UI
         private void OnMainWindowKeyDown(object? sender, Avalonia.Input.KeyEventArgs e)
         {
             if (e.Key == Avalonia.Input.Key.Escape &&
-                (_addRouteMode || _addPageMode || _addPoiMode || _addRoutePointsMode || _rulerMode || _poiSearchMode || _identifyMode))
+                (_addRouteMode || _addPageMode || _addPoiMode || _addRoutePointsMode || _instradaMode || _rulerMode || _poiSearchMode || _identifyMode))
             {
                 CancelAllAddModes();
                 _mapCanvas?.InvalidateVisual();
@@ -1611,7 +1651,7 @@ namespace StradarioApp.UI
                 Cursor          = new Cursor(StandardCursorType.Hand)
             };
 
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto,Auto,Auto,Auto") };
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto,Auto,Auto,Auto,Auto") };
 
             var swatch = new Border
             {
@@ -1644,14 +1684,22 @@ namespace StradarioApp.UI
             Grid.SetColumn(addPtsBtn, 2);
             row.Children.Add(addPtsBtn);
 
+            bool instradaFailed = _instradaFailedRouteIds.Contains(route.Id);
+            var instradaBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Compass,
+                Strings.Get(instradaFailed ? "MainWindow_InstradaFallitoTooltip" : "MainWindow_InstradaTooltip"),
+                instradaFailed ? Brushes.Crimson : Brushes.SteelBlue,
+                () => StartInstradaMode(route));
+            Grid.SetColumn(instradaBtn, 3);
+            row.Children.Add(instradaBtn);
+
             var editBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Pencil, Strings.Get("MainWindow_ModificaPercorsoTooltip"), Brushes.SteelBlue,
                 async () => await OnEditPercorso(route));
-            Grid.SetColumn(editBtn, 3);
+            Grid.SetColumn(editBtn, 4);
             row.Children.Add(editBtn);
 
             var delBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("MainWindow_EliminaPercorsoTooltip"), Brushes.Crimson,
                 () => OnDeletePercorso(route));
-            Grid.SetColumn(delBtn, 4);
+            Grid.SetColumn(delBtn, 5);
             row.Children.Add(delBtn);
 
             var eyeBtn = DialogUi.MakeTreeIconButton(visible ? BootstrapIcons.Eye : BootstrapIcons.EyeSlash,
@@ -1663,7 +1711,7 @@ namespace StradarioApp.UI
                 RefreshNavigationTree();
                 _mapCanvas?.InvalidateVisual();
             });
-            Grid.SetColumn(eyeBtn, 5);
+            Grid.SetColumn(eyeBtn, 6);
             row.Children.Add(eyeBtn);
 
             var lockBtn = DialogUi.MakeTreeIconButton(route.IsLocked ? BootstrapIcons.LockClosed : BootstrapIcons.LockOpen,
@@ -1675,7 +1723,7 @@ namespace StradarioApp.UI
                 _isDirty = true;
                 RefreshNavigationTree();
             });
-            Grid.SetColumn(lockBtn, 6);
+            Grid.SetColumn(lockBtn, 7);
             row.Children.Add(lockBtn);
 
             border.Child = row;
@@ -1912,6 +1960,9 @@ namespace StradarioApp.UI
                 previewRoute: _addRouteMode ? _drawingRoute : null
             );
 
+            if (_instradaMode)
+                DrawInstradaOverlay(e.Canvas, w, h);
+
             // Overlay modalità aggiungi pagina
             if (_addPageMode)
                 DrawOverlayHint(e.Canvas, Strings.Get("MainWindow_OverlayAggiungiPagina"), h);
@@ -1927,6 +1978,10 @@ namespace StradarioApp.UI
             // Overlay modalità estendi percorso esistente
             if (_addRoutePointsMode)
                 DrawOverlayHint(e.Canvas, Strings.Get("MainWindow_OverlayEstendiPercorso"), h);
+
+            // Overlay modalità instrada (selezione alternative)
+            if (_instradaMode)
+                DrawOverlayHint(e.Canvas, Strings.Get("MainWindow_OverlayInstrada"), h);
 
             // Overlay modalità identifica ("cosa c'è qui")
             if (_identifyMode)
@@ -2230,6 +2285,53 @@ namespace StradarioApp.UI
             canvas.DrawText(text, 10, canvasHeight - 12, fill);
         }
 
+        // Disegna, durante l'instradamento, tutte le alternative di ogni
+        // tratta: piena e blu se selezionata, tratteggiata e celeste
+        // altrimenti (disegnata per prima, sotto, così la selezionata resta
+        // sempre visibile sopra). Una tratta fallita mostra invece il
+        // segmento originale (a mano, non instradato) in rosso, così è
+        // subito chiaro quale tratta non si è instradata. drawVertices:false
+        // perché le geometrie OSRM sono dense (centinaia di punti) — i
+        // pallini per vertice avrebbero senso solo per un percorso a mano.
+        private void DrawInstradaOverlay(SKCanvas canvas, float cw, float ch)
+        {
+            var route = _instradaTargetRoute;
+            if (route == null) return;
+
+            (double x, double y) Project(double lon, double lat) =>
+                GeoUtils.GeoToPixel(lon, lat, _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
+
+            var selectedColor      = new SKColor(0x15, 0x65, 0xC0); // blu pieno
+            var alternativeColor   = new SKColor(0x90, 0xCA, 0xF9); // celeste tratteggiato
+
+            for (int li = 0; li < _instradaLegs.Count; li++)
+            {
+                var leg = _instradaLegs[li];
+                if (leg.Failed || leg.Alternatives.Count == 0)
+                {
+                    if (li + 1 < route.Points.Count)
+                    {
+                        var seg = new Percorso { Label = "", Points = new List<GeoPoint> { route.Points[li], route.Points[li + 1] } };
+                        PercorsoRenderer.Draw(canvas, seg, Project, dashed: false, colorOverride: SKColors.Red, drawVertices: false);
+                    }
+                    continue;
+                }
+
+                for (int ai = 0; ai < leg.Alternatives.Count; ai++)
+                {
+                    if (ai == leg.SelectedIndex) continue; // disegnata dopo, sopra le altre
+                    var alt = new Percorso { Label = "", Points = leg.Alternatives[ai].Geometry };
+                    PercorsoRenderer.Draw(canvas, alt, Project, dashed: true, colorOverride: alternativeColor, drawVertices: false);
+                }
+
+                if (leg.SelectedIndex >= 0 && leg.SelectedIndex < leg.Alternatives.Count)
+                {
+                    var sel = new Percorso { Label = "", Points = leg.Alternatives[leg.SelectedIndex].Geometry };
+                    PercorsoRenderer.Draw(canvas, sel, Project, dashed: false, colorOverride: selectedColor, drawVertices: false);
+                }
+            }
+        }
+
         // ---------------------------------------------------------------
         // Interazione mouse sulla mappa
         // ---------------------------------------------------------------
@@ -2271,6 +2373,19 @@ namespace StradarioApp.UI
                     // Nessun marker colpito: non blocca il pan della mappa (i
                     // marker sono ancorati alle coordinate geografiche, restano
                     // visibili anche spostando/zoomando la vista)
+                }
+
+                if (_instradaMode)
+                {
+                    var hit = FindInstradaAlternativeAtPoint(pos, cw, ch);
+                    if (hit != null)
+                    {
+                        var (li, ai) = hit.Value;
+                        _instradaLegs[li] = _instradaLegs[li] with { SelectedIndex = ai };
+                        UpdateInstradaPanel();
+                        _mapCanvas?.InvalidateVisual();
+                    }
+                    return;
                 }
 
                 if (_addRouteMode && _drawingRoute != null)
@@ -2414,7 +2529,7 @@ namespace StradarioApp.UI
                 // per la stessa ricerca inversa "cosa c'è in questo punto GPS"
                 // attivabile anche dal bottone ❓📍 in toolbar (più scopribile)
                 if (e.KeyModifiers.HasFlag(KeyModifiers.Shift) &&
-                    !_addPageMode && !_addRouteMode && !_addPoiMode && !_addRoutePointsMode && !_rulerMode && !_poiSearchMode && !_identifyMode)
+                    !_addPageMode && !_addRouteMode && !_addPoiMode && !_addRoutePointsMode && !_instradaMode && !_rulerMode && !_poiSearchMode && !_identifyMode)
                 {
                     var (lon, lat) = GeoUtils.PixelToGeo(pos.X, pos.Y,
                         _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
@@ -2443,6 +2558,13 @@ namespace StradarioApp.UI
                 {
                     _poiSearchMode    = false;
                     _poiSearchResults = new List<PoiSearchService.Result>();
+                    _mapCanvas?.InvalidateVisual();
+                    return;
+                }
+
+                if (_instradaMode)
+                {
+                    CancelAllAddModes();
                     _mapCanvas?.InvalidateVisual();
                     return;
                 }
@@ -2847,6 +2969,53 @@ namespace StradarioApp.UI
                 }
             }
             return null;
+        }
+
+        // Trova, durante l'instradamento, l'alternativa (di qualunque tratta)
+        // la cui geometria passa più vicina al punto pixel cliccato (entro
+        // RoutePointHitRadiusPx) — a differenza di FindRoutePointAtPoint
+        // sopra, che testa la distanza da un singolo VERTICE, qui si cerca il
+        // punto più vicino su ciascun SEGMENTO consecutivo della geometria
+        // (proiezione con t clampato in [0,1]), perché le alternative sono
+        // linee dense (centinaia di punti OSRM), non poche coordinate isolate.
+        private (int legIndex, int altIndex)? FindInstradaAlternativeAtPoint(Point pt, float cw, float ch)
+        {
+            double bestDistSq = RoutePointHitRadiusPx * RoutePointHitRadiusPx;
+            (int legIndex, int altIndex)? best = null;
+
+            for (int li = 0; li < _instradaLegs.Count; li++)
+            {
+                var leg = _instradaLegs[li];
+                for (int ai = 0; ai < leg.Alternatives.Count; ai++)
+                {
+                    var geom = leg.Alternatives[ai].Geometry;
+                    if (geom.Count < 2) continue;
+
+                    var (x0, y0) = GeoUtils.GeoToPixel(geom[0].Lon, geom[0].Lat,
+                        _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
+                    for (int i = 1; i < geom.Count; i++)
+                    {
+                        var (x1, y1) = GeoUtils.GeoToPixel(geom[i].Lon, geom[i].Lat,
+                            _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
+
+                        double dx = x1 - x0, dy = y1 - y0;
+                        double lenSq = dx * dx + dy * dy;
+                        double t = lenSq > 0 ? ((pt.X - x0) * dx + (pt.Y - y0) * dy) / lenSq : 0;
+                        t = Math.Clamp(t, 0.0, 1.0);
+                        double px = x0 + t * dx, py = y0 + t * dy;
+                        double distSq = (pt.X - px) * (pt.X - px) + (pt.Y - py) * (pt.Y - py);
+
+                        if (distSq <= bestDistSq)
+                        {
+                            bestDistSq = distSq;
+                            best = (li, ai);
+                        }
+
+                        x0 = x1; y0 = y1;
+                    }
+                }
+            }
+            return best;
         }
 
         // Trova il risultato di ricerca POI online più vicino al punto pixel
@@ -4380,6 +4549,182 @@ namespace StradarioApp.UI
             _addRoutePointsMode         = true;
             _addRoutePointsTarget       = route;
             _addRoutePointsSessionCount = 0;
+            _mapCanvas?.InvalidateVisual();
+        }
+
+        // Avvia l'instradamento OSRM di un percorso esistente (mai da zero).
+        // Precondizione: al massimo 5 vertici, altrimenti un messaggio in
+        // status bar e nessuna modalità viene avviata — nessuna
+        // semplificazione automatica, l'utente deve ridurre i punti a mano
+        // (RouteEditWindow/nav tree) se vuole procedere.
+        private void StartInstradaMode(Percorso route)
+        {
+            if (route.Points.Count > 5)
+            {
+                ShowStatusMessage(Strings.Get("MainWindow_InstradaMaxPunti"), seconds: 4);
+                return;
+            }
+
+            CancelAllAddModes();
+            _instradaMode        = true;
+            _instradaTargetRoute = route;
+            _instradaProfile     = RouteInstradationService.Profile.Auto;
+            _instradaLegs        = new List<RouteInstradationService.LegResult>();
+
+            // Il percorso di partenza si blocca subito (come i percorsi
+            // importati): non è un'edit di contenuto, quindi non registrata
+            // in undo/redo, stesso trattamento del blocco automatico
+            // all'apertura progetto/import già esistente in questo file.
+            route.IsLocked = true;
+
+            _instradaPanel = new RouteInstradationPanel(route.Label);
+            _instradaPanel.ProfileChanged += profile =>
+            {
+                _instradaProfile = profile;
+                _ = RunInstradationAsync();
+            };
+            _instradaPanel.CreateRequested += OnCreatePercorsoInstradato;
+            _instradaPanel.Closed += (_, _) => { if (_instradaMode) CancelAllAddModes(); };
+
+            RefreshNavigationTree();
+            _mapCanvas?.InvalidateVisual();
+            _ = _instradaPanel.ShowDialog(this);
+            _ = RunInstradationAsync();
+        }
+
+        // Richiede a OSRM l'instradamento di ogni tratta tra vertici
+        // consecutivi del percorso in _instradaTargetRoute, in sequenza (mai
+        // in parallelo, vedi RouteInstradationService), aggiornando il
+        // pannello progressivamente tratta per tratta.
+        private async Task RunInstradationAsync()
+        {
+            var route = _instradaTargetRoute;
+            var panel = _instradaPanel;
+            if (route == null || panel == null) return;
+
+            _instradaCts?.Cancel();
+            var cts = new CancellationTokenSource();
+            _instradaCts = cts;
+
+            panel.SetBusy(true);
+            try
+            {
+                var vertices = route.Points.ToList();
+                var legs = await _instradaSvc.RouteAllLegsAsync(vertices, _instradaProfile, (_, _) =>
+                {
+                    // Nessun aggiornamento incrementale del pannello qui:
+                    // aspettiamo il risultato completo di tutte le tratte
+                    // prima di ricalcolare i totali, per evitare di mostrare
+                    // numeri parziali fuorvianti mentre le richieste sono
+                    // ancora in corso.
+                }, cts.Token).ConfigureAwait(true);
+
+                if (cts.IsCancellationRequested || !ReferenceEquals(_instradaCts, cts)) return;
+
+                _instradaLegs = legs;
+                if (legs.Any(l => l.Failed)) _instradaFailedRouteIds.Add(route.Id);
+                else                          _instradaFailedRouteIds.Remove(route.Id);
+
+                UpdateInstradaPanel();
+                RefreshNavigationTree();
+                _mapCanvas?.InvalidateVisual();
+            }
+            catch (OperationCanceledException) { /* richiesta di profilo successiva, o modalità annullata: nessun errore da mostrare */ }
+            finally
+            {
+                if (ReferenceEquals(_instradaCts, cts))
+                {
+                    panel.SetBusy(false);
+                    _instradaCts = null;
+                }
+            }
+        }
+
+        // Ricalcola distanza/durata totale (solo tratte con un'alternativa
+        // selezionata) e le righe per tratta, spingendole nel pannello.
+        private void UpdateInstradaPanel()
+        {
+            if (_instradaPanel == null) return;
+
+            double totalKm = 0, totalMin = 0;
+            var rows = new List<(double km, double min, bool failed)>();
+            foreach (var leg in _instradaLegs)
+            {
+                if (leg.Failed || leg.SelectedIndex < 0 || leg.SelectedIndex >= leg.Alternatives.Count)
+                {
+                    rows.Add((0, 0, true));
+                    continue;
+                }
+                var alt = leg.Alternatives[leg.SelectedIndex];
+                double km  = alt.DistanceMeters / 1000.0;
+                double min = alt.DurationSeconds / 60.0;
+                totalKm  += km;
+                totalMin += min;
+                rows.Add((km, min, false));
+            }
+
+            _instradaPanel.SetTotals(totalKm, totalMin);
+            _instradaPanel.SetLegs(rows);
+            _instradaPanel.SetCanCreate(_instradaLegs.Count > 0 && _instradaLegs.Any(l => !l.Failed));
+        }
+
+        // Materializza un NUOVO Percorso dalle alternative attualmente
+        // selezionate per ogni tratta (il percorso originale resta intatto).
+        // Tratte fallite vengono semplicemente saltate nella concatenazione
+        // (non c'è geometria instradata per loro); se TUTTE le tratte sono
+        // fallite il bottone "Crea percorso" nel pannello resta disabilitato
+        // (vedi UpdateInstradaPanel), quindi questo metodo non viene mai
+        // chiamato in quel caso.
+        private void OnCreatePercorsoInstradato()
+        {
+            var original = _instradaTargetRoute;
+            if (original == null || _instradaLegs.Count == 0) return;
+
+            var points = new List<GeoPoint>();
+            foreach (var leg in _instradaLegs)
+            {
+                if (leg.Failed || leg.SelectedIndex < 0 || leg.SelectedIndex >= leg.Alternatives.Count) continue;
+                var geometry = leg.Alternatives[leg.SelectedIndex].Geometry;
+                foreach (var p in geometry)
+                {
+                    // Deduplica il punto di giunzione tra tratte consecutive
+                    // (l'ultimo punto della tratta precedente coincide col
+                    // primo di questa).
+                    if (points.Count > 0)
+                    {
+                        var last = points[^1];
+                        if (Math.Abs(last.Lon - p.Lon) < 1e-9 && Math.Abs(last.Lat - p.Lat) < 1e-9) continue;
+                    }
+                    points.Add(new GeoPoint { Lon = p.Lon, Lat = p.Lat });
+                }
+            }
+            if (points.Count < 2) return;
+
+            string suffix = _instradaProfile switch
+            {
+                RouteInstradationService.Profile.Bici  => "_bici",
+                RouteInstradationService.Profile.Piedi => "_piedi",
+                _                                       => "_auto",
+            };
+
+            var newRoute = new Percorso
+            {
+                Id          = _percorsoSvc.GetNextId(_project.Percorsi),
+                Label       = original.Label + suffix,
+                Description = original.Description,
+                ColorHex    = original.ColorHex,
+                IsLocked    = true, // come i percorsi importati: dato "finalizzato"
+                Points      = points,
+            };
+
+            _project.Percorsi.Add(newRoute);
+            _isDirty = true;
+            PushUndo(
+                undo: () => _project.Percorsi.Remove(newRoute),
+                redo: () => { if (!_project.Percorsi.Contains(newRoute)) _project.Percorsi.Add(newRoute); });
+
+            CancelAllAddModes(); // chiude anche il pannello
+            RefreshNavigationTree();
             _mapCanvas?.InvalidateVisual();
         }
 

@@ -88,6 +88,17 @@ namespace StradarioApp.Resources
             ["PoiSearchLogWindow_Titolo"] = "Searching for POIs...",
             ["PoiSearchLogWindow_Annulla"] = "Cancel",
 
+            // UI/RouteInstradationPanel.cs
+            ["RouteInstradationPanel_Titolo"] = "Route \"{0}\"",
+            ["RouteInstradationPanel_Profilo"] = "Profile:",
+            ["RouteInstradationPanel_ProfiloAuto"] = "Car",
+            ["RouteInstradationPanel_ProfiloBici"] = "Bike",
+            ["RouteInstradationPanel_ProfiloPiedi"] = "Walk",
+            ["RouteInstradationPanel_CreaPercorso"] = "Create route",
+            ["RouteInstradationPanel_Totali"] = "Total distance: {0:F1} km — Estimated duration: {1:F0} min",
+            ["RouteInstradationPanel_Tratta"] = "Leg {0}: {1:F1} km · {2:F0} min",
+            ["RouteInstradationPanel_TrattaFallita"] = "Leg {0}: routing failed",
+
             // UI/ProgressWindow.cs
             ["ProgressWindow_Avvio"] = "Starting...",
 
@@ -352,6 +363,9 @@ namespace StradarioApp.Resources
             ["MainWindow_ModificaPoiTooltip"] = "Edit POI",
             ["MainWindow_EliminaPoiTooltip"] = "Delete POI",
             ["MainWindow_AggiungiPuntiPercorsoTooltip"] = "Add points to this route (click on the map)",
+            ["MainWindow_InstradaTooltip"] = "Route on roads (OSRM)",
+            ["MainWindow_InstradaFallitoTooltip"] = "Routing failed for at least one leg — try again",
+            ["MainWindow_InstradaMaxPunti"] = "Routing is only possible up to 5 points: reduce the route's points before trying again.",
             ["MainWindow_ModificaPercorsoTooltip"] = "Edit route",
             ["MainWindow_PuntoPercorsoNumero"] = "Point {0}",
             ["MainWindow_EliminaPercorsoTooltip"] = "Delete route",
@@ -367,6 +381,7 @@ namespace StradarioApp.Resources
             ["MainWindow_OverlayDisegnaPercorso"] = "Click to add points to the route  (shift+click = finish, right click = undo last point, ESC = cancel)",
             ["MainWindow_OverlayAggiungiPoi"] = "Click on the map to place the new POI  (right click = cancel)",
             ["MainWindow_OverlayEstendiPercorso"] = "Click to extend the route  (shift+click = finish, right click = undo last point, ESC = cancel)",
+            ["MainWindow_OverlayInstrada"] = "Click a dashed alternative to select it  (right click/ESC = cancel)",
             ["MainWindow_OverlayIdentifica"] = "Click on the map to see what's there  (right click/ESC = cancel)",
             ["MainWindow_OverlayRighelloInizio"] = "Ruler: click to start measuring  (right click = cancel, ESC = exit)",
             ["MainWindow_OverlayRighelloProsegui"] = "Ruler: {0} of {1} points  —  click to continue (right click = undo last, ESC = exit)",

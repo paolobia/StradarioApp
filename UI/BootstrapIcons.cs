@@ -119,5 +119,19 @@ namespace StradarioApp.UI
         public const string InfoCircle =
             "M 8 16 A 8 8 0 1 0 8 0 a 8 8 0 0 0 0 16 z m .93 -9.412 -1 4.705 c -.07 .34 .029 .533 .304 .533 .194 0 .487 -.07 .686 -.246 l -.088 .416 c -.287 .346 -.92 .598 -1.465 .598 -.703 0 -1.002 -.422 -.808 -1.319 l .738 -3.468 c .064 -.293 .006 -.399 -.287 -.47 l -.451 -.081 .082 -.381 2.29 -.287 z M 8 5.5 a 1 1 0 1 1 0 -2 1 1 0 0 1 0 2";
 
+        // Bootstrap Icons "compass" (bi-compass): usata per l'icona "Instrada"
+        // nell'albero di navigazione dei percorsi. Combina i due <path>
+        // dell'SVG originale (anello esterno + ago) in un'unica stringa; il
+        // secondo sottotracciato partiva con una "m" relativa (che nell'SVG
+        // originale, come <path> separato, riparte comunque da capo) — qui
+        // convertita in "M" assoluta seguita da "l" relativa esplicita per
+        // preservare i delta originali, altrimenti la "M" assoluta avrebbe
+        // reinterpretato come assolute anche le coppie di coordinate
+        // successive (lineto implicito), spostando l'ago fuori posizione.
+        // Verificata renderizzando con cairosvg (identica all'SVG originale
+        // a due <path>) prima di scriverla qui.
+        public const string Compass =
+            "M 8 16.016 a 7.5 7.5 0 0 0 1.962 -14.74 A 1 1 0 0 0 9 0 H 7 a 1 1 0 0 0 -.962 1.276 A 7.5 7.5 0 0 0 8 16.016 m 6.5 -7.5 a 6.5 6.5 0 1 1 -13 0 6.5 6.5 0 0 1 13 0 M 6.94 7.44 l 4.95 -2.83 -2.83 4.95 -4.949 2.83 2.828 -4.95 z";
+
     }
 }

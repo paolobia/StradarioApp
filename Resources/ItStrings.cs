@@ -95,6 +95,17 @@ namespace StradarioApp.Resources
             ["PoiSearchLogWindow_Titolo"] = "Ricerca POI in corso...",
             ["PoiSearchLogWindow_Annulla"] = "Annulla",
 
+            // UI/RouteInstradationPanel.cs
+            ["RouteInstradationPanel_Titolo"] = "Instrada \"{0}\"",
+            ["RouteInstradationPanel_Profilo"] = "Profilo:",
+            ["RouteInstradationPanel_ProfiloAuto"] = "Auto",
+            ["RouteInstradationPanel_ProfiloBici"] = "Bici",
+            ["RouteInstradationPanel_ProfiloPiedi"] = "Piedi",
+            ["RouteInstradationPanel_CreaPercorso"] = "Crea percorso",
+            ["RouteInstradationPanel_Totali"] = "Distanza totale: {0:F1} km — Durata stimata: {1:F0} min",
+            ["RouteInstradationPanel_Tratta"] = "Tratta {0}: {1:F1} km · {2:F0} min",
+            ["RouteInstradationPanel_TrattaFallita"] = "Tratta {0}: instradamento fallito",
+
             // UI/ProgressWindow.cs
             ["ProgressWindow_Avvio"] = "Avvio...",
 
@@ -359,6 +370,9 @@ namespace StradarioApp.Resources
             ["MainWindow_ModificaPoiTooltip"] = "Modifica POI",
             ["MainWindow_EliminaPoiTooltip"] = "Elimina POI",
             ["MainWindow_AggiungiPuntiPercorsoTooltip"] = "Aggiungi punti a questo percorso (clic sulla mappa)",
+            ["MainWindow_InstradaTooltip"] = "Instrada su strada (OSRM)",
+            ["MainWindow_InstradaFallitoTooltip"] = "Instradamento fallito per almeno una tratta — riprova",
+            ["MainWindow_InstradaMaxPunti"] = "Instradamento possibile solo fino a 5 punti: riduci i punti del percorso prima di riprovare.",
             ["MainWindow_ModificaPercorsoTooltip"] = "Modifica percorso",
             ["MainWindow_PuntoPercorsoNumero"] = "Punto {0}",
             ["MainWindow_EliminaPercorsoTooltip"] = "Elimina percorso",
@@ -374,6 +388,7 @@ namespace StradarioApp.Resources
             ["MainWindow_OverlayDisegnaPercorso"] = "Clicca per aggiungere punti al percorso  (shift+clic = fine, tasto destro = annulla ultimo punto, ESC = annulla)",
             ["MainWindow_OverlayAggiungiPoi"] = "Clicca sulla mappa per posizionare il nuovo POI  (tasto destro = annulla)",
             ["MainWindow_OverlayEstendiPercorso"] = "Clicca per estendere il percorso  (shift+clic = fine, tasto destro = annulla ultimo punto, ESC = annulla)",
+            ["MainWindow_OverlayInstrada"] = "Clicca su un'alternativa tratteggiata per selezionarla  (tasto destro/ESC = annulla)",
             ["MainWindow_OverlayIdentifica"] = "Clicca sulla mappa per vedere cosa c'è in quel punto  (tasto destro/ESC = annulla)",
             ["MainWindow_OverlayRighelloInizio"] = "Righello: clicca per iniziare a misurare  (tasto destro = annulla, ESC = esci)",
             ["MainWindow_OverlayRighelloProsegui"] = "Righello: {0} su {1} punti  —  clicca per continuare (tasto destro = annulla ultimo, ESC = esci)",

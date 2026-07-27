@@ -42,10 +42,14 @@ namespace StradarioApp.Services
         // etichetta accanto al primo punto. "project" converte lon/lat nel
         // sistema di coordinate del canvas di destinazione (schermo o bitmap).
         // "dashed" disegna la linea tratteggiata: usato per il percorso in
-        // corso di disegno (non ancora confermato).
+        // corso di disegno (non ancora confermato). "drawVertices=false"
+        // omette i pallini: pensati per un percorso disegnato a mano (pochi
+        // punti), su una geometria densa (es. un'alternativa OSRM con
+        // centinaia di punti) diventerebbero una fila di pallini fitta e
+        // illeggibile invece di una linea pulita — vedi MainWindow.DrawInstradaOverlay.
         public static void Draw(SKCanvas canvas, Percorso route,
             Func<double, double, (double x, double y)> project, bool dashed = false,
-            SKColor? colorOverride = null)
+            SKColor? colorOverride = null, bool drawVertices = true)
         {
             if (route.Points.Count == 0) return;
 
@@ -82,13 +86,16 @@ namespace StradarioApp.Services
                 canvas.DrawPath(path, stroke);
             }
 
-            using var vertexFill   = new SKPaint { Color = color,          IsAntialias = true };
-            using var vertexBorder = new SKPaint { Color = SKColors.White, IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f };
-            for (int i = 0; i < pts.Count; i++)
+            if (drawVertices)
             {
-                float r = (i == 0 || i == pts.Count - 1) ? 5.5f : 3f;
-                canvas.DrawCircle((float)pts[i].x, (float)pts[i].y, r, vertexFill);
-                canvas.DrawCircle((float)pts[i].x, (float)pts[i].y, r, vertexBorder);
+                using var vertexFill   = new SKPaint { Color = color,          IsAntialias = true };
+                using var vertexBorder = new SKPaint { Color = SKColors.White, IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f };
+                for (int i = 0; i < pts.Count; i++)
+                {
+                    float r = (i == 0 || i == pts.Count - 1) ? 5.5f : 3f;
+                    canvas.DrawCircle((float)pts[i].x, (float)pts[i].y, r, vertexFill);
+                    canvas.DrawCircle((float)pts[i].x, (float)pts[i].y, r, vertexBorder);
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(route.Label))
