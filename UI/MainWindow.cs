@@ -1261,9 +1261,6 @@ namespace StradarioApp.UI
             var visibleGroups = _project.PoiGroups
                 .Where(g => !filtering || Matches(g.Name) || g.Items.Any(it => Matches(it.Label)))
                 .ToList();
-            int visiblePoiCount = filtering
-                ? visibleGroups.Sum(g => Matches(g.Name) ? g.Items.Count : g.Items.Count(it => Matches(it.Label)))
-                : _project.PoiGroups.Sum(g => g.Items.Count);
 
             bool allPoiLocked = _project.PoiGroups.Count > 0 && _project.PoiGroups.All(g => g.IsLocked);
             var poiIcons = new List<Control>
@@ -1295,7 +1292,11 @@ namespace StradarioApp.UI
                     RefreshNavigationTree();
                 })
             });
-            root.Children.Add(BuildNavBranchHeader(Strings.Get("MainWindow_GruppiPoi"), BootstrapIcons.Locate, filtering ? visiblePoiCount : _project.PoiGroups.Sum(g => g.Items.Count),
+            // Il numero mostrato è il conteggio dei GRUPPI, non dei singoli
+            // POI al loro interno — coerente con le altre intestazioni di
+            // ramo (Pagine/Percorsi mostrano il numero di elementi diretti,
+            // non un totale annidato).
+            root.Children.Add(BuildNavBranchHeader(Strings.Get("MainWindow_GruppiPoi"), BootstrapIcons.Locate, filtering ? visibleGroups.Count : _project.PoiGroups.Count,
                 _navPoiExpanded, () => { _navPoiExpanded = !_navPoiExpanded; RefreshNavigationTree(); }, poiIcons));
 
             if (_navPoiExpanded || filtering)
@@ -5473,9 +5474,26 @@ namespace StradarioApp.UI
         // root <gpx> (formato che supporta nativamente entrambi insieme).
         // Rispecchia il caso reale di un KML/KMZ misto POI+percorsi che
         // OnImportKmzUnified sa già leggere in un colpo solo.
+        //
+        // Esporta SOLO i gruppi/percorsi attualmente VISIBILI sulla mappa
+        // (stessi toggle 👁 del nav tree: _poiVisible/_hiddenPoiGroupIds e
+        // _percorsiVisible/_hiddenPercorsoIds), non l'intero progetto —
+        // richiesta esplicita dell'utente: un gruppo nascosto apposta perché
+        // "di lavoro"/non pertinente in un dato momento non deve finire
+        // comunque nell'export "tutto". A differenza del rendering PDF (che
+        // ignora sempre questi toggle, vedi nota altrove in questo file),
+        // qui il filtro si applica perché l'export riflette esplicitamente
+        // "quello che vedo ora", non l'intero progetto.
         private async Task OnExportAll()
         {
-            if (_project.PoiGroups.Count == 0 && _project.Percorsi.Count == 0)
+            var visiblePoiGroups = _poiVisible
+                ? _project.PoiGroups.Where(g => !_hiddenPoiGroupIds.Contains(g.Id)).ToList()
+                : new List<PoiGroup>();
+            var visibleRoutes = _percorsiVisible
+                ? _project.Percorsi.Where(r => !_hiddenPercorsoIds.Contains(r.Id)).ToList()
+                : new List<Percorso>();
+
+            if (visiblePoiGroups.Count == 0 && visibleRoutes.Count == 0)
             {
                 ShowStatusMessage(Strings.Get("MainWindow_NienteDaEsportare"), isError: true);
                 return;
@@ -5516,9 +5534,9 @@ namespace StradarioApp.UI
                 {
                     switch (ext)
                     {
-                        case ".kml": await ExportCombinedKmlAsync(path, embedIcons: false); break;
-                        case ".gpx": await ExportCombinedGpxAsync(path); break;
-                        default:     await ExportCombinedKmzAsync(path); break;
+                        case ".kml": await ExportCombinedKmlAsync(path, embedIcons: false, visiblePoiGroups, visibleRoutes); break;
+                        case ".gpx": await ExportCombinedGpxAsync(path, visiblePoiGroups, visibleRoutes); break;
+                        default:     await ExportCombinedKmzAsync(path, visiblePoiGroups, visibleRoutes); break;
                     }
                 }
                 finally
@@ -5542,24 +5560,24 @@ namespace StradarioApp.UI
         // Unisce i <Style>/<Folder> di PoiService/PercorsoService.BuildKmlDocument
         // sotto un solo <Document> con un unico <name> combinato (Add() clona i
         // nodi già "parentati" in un altro XDocument, non serve clonarli a mano).
-        private XDocument BuildCombinedKmlDocument(bool embedIcons)
+        private XDocument BuildCombinedKmlDocument(bool embedIcons, List<PoiGroup> poiGroups, List<Percorso> routes)
         {
             XNamespace kml = "http://www.opengis.net/kml/2.2";
             var document = new XElement(kml + "Document",
                 new XElement(kml + "name", "Stradario - POI e percorsi"));
 
-            if (_project.PoiGroups.Count > 0)
+            if (poiGroups.Count > 0)
             {
-                var poiDoc = _poiSvc.BuildKmlDocument(_project.PoiGroups, embedIcons);
+                var poiDoc = _poiSvc.BuildKmlDocument(poiGroups, embedIcons);
                 var poiDocEl = poiDoc.Root!.Element(kml + "Document")!;
                 RenameKmlStyleIds(poiDocEl, kml, "poi_");
                 foreach (var child in poiDocEl.Elements())
                     if (child.Name != kml + "name") document.Add(child);
             }
 
-            if (_project.Percorsi.Count > 0)
+            if (routes.Count > 0)
             {
-                var routeDoc = _percorsoSvc.BuildKmlDocument(_project.Percorsi);
+                var routeDoc = _percorsoSvc.BuildKmlDocument(routes);
                 var routeDocEl = routeDoc.Root!.Element(kml + "Document")!;
                 RenameKmlStyleIds(routeDocEl, kml, "route_");
                 foreach (var child in routeDocEl.Elements())
@@ -5591,16 +5609,16 @@ namespace StradarioApp.UI
             }
         }
 
-        private async Task ExportCombinedKmlAsync(string path, bool embedIcons)
+        private async Task ExportCombinedKmlAsync(string path, bool embedIcons, List<PoiGroup> poiGroups, List<Percorso> routes)
         {
-            var kmlDoc = BuildCombinedKmlDocument(embedIcons);
+            var kmlDoc = BuildCombinedKmlDocument(embedIcons, poiGroups, routes);
             await using var writer = new StreamWriter(path, false, new UTF8Encoding(false));
             await writer.WriteAsync(kmlDoc.Declaration + Environment.NewLine + kmlDoc.Root);
         }
 
-        private async Task ExportCombinedKmzAsync(string path)
+        private async Task ExportCombinedKmzAsync(string path, List<PoiGroup> poiGroups, List<Percorso> routes)
         {
-            var kmlDoc = BuildCombinedKmlDocument(embedIcons: true);
+            var kmlDoc = BuildCombinedKmlDocument(embedIcons: true, poiGroups, routes);
 
             using var fs  = File.Create(path);
             using var zip = new ZipArchive(fs, ZipArchiveMode.Create);
@@ -5610,11 +5628,11 @@ namespace StradarioApp.UI
             await using (var writer = new StreamWriter(es, new UTF8Encoding(false)))
                 await writer.WriteAsync(kmlDoc.Declaration + Environment.NewLine + kmlDoc.Root);
 
-            if (_project.PoiGroups.Count > 0)
-                await _poiSvc.WriteIconEntriesAsync(zip, _project.PoiGroups);
+            if (poiGroups.Count > 0)
+                await _poiSvc.WriteIconEntriesAsync(zip, poiGroups);
         }
 
-        private async Task ExportCombinedGpxAsync(string path)
+        private async Task ExportCombinedGpxAsync(string path, List<PoiGroup> poiGroups, List<Percorso> routes)
         {
             XNamespace gpx = "http://www.topografix.com/GPX/1/1";
             var root = new XElement(gpx + "gpx",
@@ -5622,11 +5640,11 @@ namespace StradarioApp.UI
                 new XAttribute("creator", "StradarioApp"),
                 new XAttribute("xmlns", gpx.NamespaceName));
 
-            if (_project.PoiGroups.Count > 0)
-                foreach (var wpt in _poiSvc.BuildGpxWaypoints(_project.PoiGroups))
+            if (poiGroups.Count > 0)
+                foreach (var wpt in _poiSvc.BuildGpxWaypoints(poiGroups))
                     root.Add(wpt);
-            if (_project.Percorsi.Count > 0)
-                foreach (var trk in _percorsoSvc.BuildGpxTracks(_project.Percorsi))
+            if (routes.Count > 0)
+                foreach (var trk in _percorsoSvc.BuildGpxTracks(routes))
                     root.Add(trk);
 
             var gpxDoc = new XDocument(new XDeclaration("1.0", "UTF-8", null), root);
