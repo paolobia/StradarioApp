@@ -526,6 +526,15 @@ namespace StradarioApp.UI
                 _mapCanvas?.InvalidateVisual();
             }
 
+            // ESC annulla anche un taglio POI in corso (icona ✂, vedi
+            // BuildPoiItemLeaf/BuildPoiGroupNavHeader): indipendente dalle
+            // altre modalità sopra, può essere attivo insieme a nessuna di esse
+            if (e.Key == Avalonia.Input.Key.Escape && _multiSelectedPoiKeys.Count > 0)
+            {
+                _multiSelectedPoiKeys.Clear();
+                RefreshNavigationTree();
+            }
+
             // Invio conferma il disegno del percorso in corso, in alternativa
             // a shift+clic sull'ultimo punto (più comodo: non serve tenere
             // premuto shift proprio sul click finale)
@@ -1256,12 +1265,6 @@ namespace StradarioApp.UI
                 DialogUi.MakeTreeIconButton(BootstrapIcons.Export, Strings.Get("MainWindow_EsportaGruppiPoiTooltip"), Brushes.SteelBlue, async () => await OnExportKmz()),
                 DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, Strings.Get("MainWindow_NuovoGruppoPoiTooltip"), Brushes.SteelBlue, async () => await OnNewPoiGroup())
             };
-            if (_multiSelectedPoiKeys.Count > 0)
-            {
-                poiIcons.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Shuffle,
-                    string.Format(Strings.Get("MainWindow_SpostaPoiSelezionatiTooltip"), _multiSelectedPoiKeys.Count),
-                    Brushes.DarkOrange, async () => await MoveSelectedPoiToGroupAsync()));
-            }
             poiIcons.AddRange(new List<Control>
             {
                 DialogUi.MakeTreeIconButton(_poiVisible ? BootstrapIcons.Eye : BootstrapIcons.EyeSlash,
@@ -1506,30 +1509,50 @@ namespace StradarioApp.UI
                 Spacing     = 4,
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
             };
-            actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, Strings.Get("MainWindow_AggiungiPoiAlGruppoTooltip"), Brushes.SteelBlue,
-                () => StartAddPoiMode(group)));
-            actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Pencil, Strings.Get("MainWindow_ModificaGruppoTooltip"), Brushes.SteelBlue,
-                async () => await OnEditPoiGroup(group)));
-            actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("MainWindow_EliminaGruppoTooltip"), Brushes.Crimson,
-                () => OnDeletePoiGroup(group)));
-            actions.Children.Add(DialogUi.MakeTreeIconButton(visible ? BootstrapIcons.Eye : BootstrapIcons.EyeSlash,
-                visible ? Strings.Get("MainWindow_NascondiGruppoTooltip") : Strings.Get("MainWindow_MostraGruppoTooltip"),
-                visible ? Brushes.SteelBlue : Brushes.Gray, () =>
+
+            // Mentre c'è un taglio POI in corso (icona ✂ su un POI, vedi
+            // BuildPoiItemLeaf), ogni ALTRO gruppo (non quello di provenienza
+            // dei POI tagliati) mostra SOLO l'icona "incolla" al posto delle
+            // icone normali — un click la completa direttamente, senza
+            // dialog di scelta: il gruppo di destinazione è quello su cui si
+            // preme. Il gruppo di provenienza mantiene le icone normali,
+            // così restano tagliabili/detagliabili altri suoi POI.
+            bool cutModeActive = _multiSelectedPoiKeys.Count > 0;
+            bool isCutSourceGroup = _multiSelectedPoiKeys.Any(k => k.GroupId == group.Id);
+            if (cutModeActive && !isCutSourceGroup)
             {
-                if (visible) _hiddenPoiGroupIds.Add(group.Id);
-                else         _hiddenPoiGroupIds.Remove(group.Id);
-                RefreshNavigationTree();
-                _mapCanvas?.InvalidateVisual();
-            }));
-            actions.Children.Add(DialogUi.MakeTreeIconButton(group.IsLocked ? BootstrapIcons.LockClosed : BootstrapIcons.LockOpen,
-                group.IsLocked ? Strings.Get("MainWindow_SbloccaGruppoTooltip") : Strings.Get("MainWindow_BloccaGruppoTooltip"),
-                group.IsLocked ? Brushes.Crimson : Brushes.SteelBlue, () =>
+                actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Paste,
+                    string.Format(Strings.Get("MainWindow_IncollaPoiTooltip"), _multiSelectedPoiKeys.Count),
+                    Brushes.SeaGreen, () => PasteSelectedPoiIntoGroup(group)));
+                border.Background = new SolidColorBrush(Color.Parse("#E3F6E8"));
+            }
+            else
             {
-                group.IsLocked = !group.IsLocked;
-                if (!group.IsLocked) TouchPoiGroup(group.Id);
-                _isDirty = true;
-                RefreshNavigationTree();
-            }));
+                actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, Strings.Get("MainWindow_AggiungiPoiAlGruppoTooltip"), Brushes.SteelBlue,
+                    () => StartAddPoiMode(group)));
+                actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Pencil, Strings.Get("MainWindow_ModificaGruppoTooltip"), Brushes.SteelBlue,
+                    async () => await OnEditPoiGroup(group)));
+                actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("MainWindow_EliminaGruppoTooltip"), Brushes.Crimson,
+                    () => OnDeletePoiGroup(group)));
+                actions.Children.Add(DialogUi.MakeTreeIconButton(visible ? BootstrapIcons.Eye : BootstrapIcons.EyeSlash,
+                    visible ? Strings.Get("MainWindow_NascondiGruppoTooltip") : Strings.Get("MainWindow_MostraGruppoTooltip"),
+                    visible ? Brushes.SteelBlue : Brushes.Gray, () =>
+                {
+                    if (visible) _hiddenPoiGroupIds.Add(group.Id);
+                    else         _hiddenPoiGroupIds.Remove(group.Id);
+                    RefreshNavigationTree();
+                    _mapCanvas?.InvalidateVisual();
+                }));
+                actions.Children.Add(DialogUi.MakeTreeIconButton(group.IsLocked ? BootstrapIcons.LockClosed : BootstrapIcons.LockOpen,
+                    group.IsLocked ? Strings.Get("MainWindow_SbloccaGruppoTooltip") : Strings.Get("MainWindow_BloccaGruppoTooltip"),
+                    group.IsLocked ? Brushes.Crimson : Brushes.SteelBlue, () =>
+                {
+                    group.IsLocked = !group.IsLocked;
+                    if (!group.IsLocked) TouchPoiGroup(group.Id);
+                    _isDirty = true;
+                    RefreshNavigationTree();
+                }));
+            }
             Grid.SetColumn(actions, 3);
             row.Children.Add(actions);
 
@@ -1564,7 +1587,7 @@ namespace StradarioApp.UI
                 Cursor          = new Cursor(StandardCursorType.Hand)
             };
 
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto") };
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto,Auto") };
 
             var info = new StackPanel { Spacing = 1 };
             info.Children.Add(new TextBlock { Text = item.Label, FontSize = 12 });
@@ -1593,15 +1616,33 @@ namespace StradarioApp.UI
             Grid.SetColumn(editBtn, 2);
             row.Children.Add(editBtn);
 
+            // Icona "taglia" sempre visibile: alternativa scoperta/intuitiva
+            // al Ctrl+clic (invisibile finché non lo si sa) per selezionare
+            // il POI da spostare in un altro gruppo — vedi BuildPoiGroupNavHeader,
+            // che appena _multiSelectedPoiKeys non è vuoto sostituisce le
+            // icone di ogni ALTRO gruppo con una sola icona "incolla".
+            var cutBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Cut,
+                isMultiSelected ? Strings.Get("MainWindow_AnnullaTaglioPoiTooltip") : Strings.Get("MainWindow_TagliaPoiTooltip"),
+                isMultiSelected ? Brushes.DarkOrange : Brushes.SteelBlue, () =>
+            {
+                var key = (group.Id, item.Id);
+                if (!_multiSelectedPoiKeys.Remove(key))
+                    _multiSelectedPoiKeys.Add(key);
+                RefreshNavigationTree();
+            });
+            Grid.SetColumn(cutBtn, 3);
+            row.Children.Add(cutBtn);
+
             var delBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("MainWindow_EliminaPoiTooltip"), Brushes.Crimson,
                 () => OnDeletePoiItem(group, item));
-            Grid.SetColumn(delBtn, 3);
+            Grid.SetColumn(delBtn, 4);
             row.Children.Add(delBtn);
 
             border.Child = row;
 
             // Click singolo: centra la mappa sul POI. Ctrl+clic: aggiunge/rimuove
-            // il POI dalla selezione multipla (per spostarli in un altro gruppo)
+            // il POI dalla selezione multipla (stessa selezione dell'icona ✂,
+            // resta come scorciatoia per chi la conosce già)
             border.PointerPressed += (s, e) =>
             {
                 if (e.Source is Button || (e.Source is Control c && c.FindAncestorOfType<Button>() != null)) return;
@@ -3987,80 +4028,15 @@ namespace StradarioApp.UI
             return confirmed;
         }
 
-        // Dialog di scelta di un gruppo POI fra una lista data (usato per
-        // spostare i POI selezionati in un altro gruppo): unico punto in cui
-        // resta una ComboBox esplicita, perché qui la scelta è deliberata e
-        // dell'utente, a differenza del gruppo target della ricerca online
-        // (assegnato automaticamente)
-        private async Task<PoiGroup?> ShowGroupPickerDialogAsync(string title, string message, List<PoiGroup> choices)
-        {
-            if (choices.Count == 0) return null;
-
-            PoiGroup? chosen = null;
-            var combo = new ComboBox
-            {
-                ItemsSource   = choices,
-                SelectedIndex = 0,
-                Width         = 260,
-                ItemTemplate  = new Avalonia.Controls.Templates.FuncDataTemplate<object>(
-                    (item, _) => new TextBlock { Text = item is PoiGroup g ? g.Name : "" })
-            };
-
-            var dlg = new Window
-            {
-                Title  = title,
-                Width  = 380,
-                Height = 200,
-                WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                CanResize = false,
-                Content = new StackPanel
-                {
-                    Margin  = new Thickness(18),
-                    Spacing = 14,
-                    Children =
-                    {
-                        new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
-                        combo,
-                        new StackPanel
-                        {
-                            Orientation = Avalonia.Layout.Orientation.Horizontal,
-                            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
-                            Spacing = 10,
-                            Children =
-                            {
-                                DialogUi.MakeDialogButton(Strings.Get("MainWindow_Sposta"), primary: true),
-                                DialogUi.MakeDialogButton(Strings.Get("MainWindow_Annulla"))
-                            }
-                        }
-                    }
-                }
-            };
-
-            var btns = ((StackPanel)((StackPanel)dlg.Content!).Children[2]);
-            ((Button)btns.Children[0]).Click += (_, _) => { chosen = combo.SelectedItem as PoiGroup; dlg.Close(); };
-            ((Button)btns.Children[1]).Click += (_, _) => dlg.Close();
-
-            await dlg.ShowDialog(this);
-            return chosen;
-        }
-
-        // Sposta tutti i POI selezionati con Ctrl+clic nell'albero in un
-        // gruppo scelto dall'utente, riassegnando l'ID (univoco solo per
-        // gruppo) tramite PoiService.GetNextItemId
-        private async Task MoveSelectedPoiToGroupAsync()
+        // Completa uno spostamento POI "taglia e incolla" (vedi icona ✂ in
+        // BuildPoiItemLeaf e icona 📋 in BuildPoiGroupNavHeader): tutti i POI
+        // tagliati (_multiSelectedPoiKeys) vengono spostati nel gruppo su cui
+        // si preme "incolla" — nessun dialog, il gruppo target è quello
+        // cliccato direttamente. Riassegna l'ID (univoco solo per gruppo)
+        // tramite PoiService.GetNextItemId.
+        private void PasteSelectedPoiIntoGroup(PoiGroup target)
         {
             if (_multiSelectedPoiKeys.Count == 0) return;
-
-            var candidates = _project.PoiGroups.ToList();
-            if (candidates.Count < 2)
-            {
-                ShowStatusMessage(Strings.Get("MainWindow_ServeAltroGruppoPoi"), isError: true);
-                return;
-            }
-
-            var target = await ShowGroupPickerDialogAsync(Strings.Get("MainWindow_SpostaPoiTitolo"),
-                string.Format(Strings.Get("MainWindow_SpostaPoiSelezionatiMessaggio"), _multiSelectedPoiKeys.Count), candidates);
-            if (target == null) return;
 
             int moved = 0;
             foreach (var (groupId, itemId) in _multiSelectedPoiKeys.ToList())

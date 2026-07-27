@@ -621,6 +621,24 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   with this order when touching `BuildNavigationTree`/`BuildPoiGroupNavHeader`/
   `BuildPercorsoNavItem`/`BuildPageListItem` etc. in `UI/MainWindow`.
 
+- **Moving a POI to another group is a cut/paste gesture, not a dialog
+  picker.** Each `PoiItem` leaf (`BuildPoiItemLeaf`) has an always-visible
+  ✂ ("Cut") icon — clicking it toggles that POI into `_multiSelectedPoiKeys`
+  (a `HashSet<(GroupId, ItemId)>`, still also toggleable via Ctrl+click on
+  the row as a legacy shortcut). As soon as that set is non-empty,
+  `BuildPoiGroupNavHeader` replaces the *entire* action-icon row of every
+  OTHER group (not the source group(s) of the cut items, which keeps its
+  normal icons so more/fewer POI can still be cut from it) with a single
+  📋 ("Paste") icon and a light-green header background; clicking it calls
+  `PasteSelectedPoiIntoGroup(target)` directly — no group-picker dialog,
+  the target is whichever group's paste icon was clicked. Escape (in
+  `OnMainWindowKeyDown`, independent of the various `_addXMode` checks)
+  clears the selection and cancels the whole operation. Replaced an earlier
+  design (Ctrl+click only, plus a 🔀 shuffle icon opening a `ComboBox`
+  picker dialog) that the user found unintuitive — the previous
+  `ShowGroupPickerDialogAsync`/`MoveSelectedPoiToGroupAsync` were removed
+  outright, not kept as a fallback.
+
 - **Locking (`IsLocked`) prevents accidental map-drag moves, and — unlike
   visibility — is persisted in the project file.** `MapPage`, `PoiGroup`, and
   `Percorso` each carry an `IsLocked` bool (default false). Toggled via the

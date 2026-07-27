@@ -97,6 +97,15 @@ namespace StradarioApp.UI
         public const string Close =
             "M 2.146 2.854 a .5 .5 0 1 1 .708 -.708 L 8 7.293 l 5.146 -5.147 a .5 .5 0 0 1 .708 .708 L 8.707 8 l 5.147 5.146 a .5 .5 0 0 1 -.708 .708 L 8 8.707 l -5.146 5.147 a .5 .5 0 0 1 -.708 -.708 L 7.293 8 z";
 
+        // "Taglia" un POI per spostarlo in un altro gruppo (bi-scissors)
+        public const string Cut =
+            "M 3.5 3.5 c -.614 -.884 -.074 -1.962 .858 -2.5 L 8 7.226 11.642 1 c .932 .538 1.472 1.616 .858 2.5 L 8.81 8.61 l 1.556 2.661 a 2.5 2.5 0 1 1 -.794 .637 L 8 9.73 l -1.572 2.177 a 2.5 2.5 0 1 1 -.794 -.637 L 7.19 8.61 z m 2.5 10 a 1.5 1.5 0 1 0 -3 0 1.5 1.5 0 0 0 3 0 m 7 0 a 1.5 1.5 0 1 0 -3 0 1.5 1.5 0 0 0 3 0";
+
+        // "Incolla" un POI tagliato nel gruppo su cui compare (bi-clipboard-check,
+        // i due <path> del blocco appunti + il segno di spunta combinati in uno)
+        public const string Paste =
+            "M 10.854 7.146 a .5 .5 0 0 1 0 .708 l -3 3 a .5 .5 0 0 1 -.708 0 l -1.5 -1.5 a .5 .5 0 1 1 .708 -.708 L 7.5 9.793 l 2.646 -2.647 a .5 .5 0 0 1 .708 0 M 4 1.5 H 3 a 2 2 0 0 0 -2 2 V 14 a 2 2 0 0 0 2 2 h 10 a 2 2 0 0 0 2 -2 V 3.5 a 2 2 0 0 0 -2 -2 h -1 v 1 h 1 a 1 1 0 0 1 1 1 V 14 a 1 1 0 0 1 -1 1 H 3 a 1 1 0 0 1 -1 -1 V 3.5 a 1 1 0 0 1 1 -1 h 1 z M 9.5 1 a .5 .5 0 0 1 .5 .5 v 1 a .5 .5 0 0 1 -.5 .5 h -3 a .5 .5 0 0 1 -.5 -.5 v -1 a .5 .5 0 0 1 .5 -.5 z m -3 -1 A 1.5 1.5 0 0 0 5 1.5 v 1 A 1.5 1.5 0 0 0 6.5 4 h 3 A 1.5 1.5 0 0 0 11 2.5 v -1 A 1.5 1.5 0 0 0 9.5 0 z";
+
         public const string Locate =
             "M 8 16 s 6 -5.686 6 -10 A 6 6 0 0 0 2 6 c 0 4.314 6 10 6 10 z m 0 -7 a 3 3 0 1 1 0 -6 3 3 0 0 1 0 6 z";
 
