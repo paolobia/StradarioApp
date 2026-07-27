@@ -724,7 +724,38 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   persisted to the project file (contrast with `IsLocked` above, which is).
   They filter what's passed to
   `MapRenderer.RenderMap` on the interactive map only; PDF export always
-  renders everything regardless of these toggles.
+  renders everything regardless of these toggles. `OnExportAll` ("Esporta
+  tutto") is the one exception: it exports only the currently visible POI
+  groups/routes (filtered the same way as the map), not the whole project —
+  explicit user request, "quello che vedo ora" rather than everything ever
+  created; the per-group/per-route single-item export icons and the
+  "esporta tutti i gruppi POI"/"esporta tutti i percorsi" branch actions
+  still export unconditionally, unaffected by visibility.
+
+- **A hidden POI group/route is treated as fully "untouchable", not just
+  invisible on the map.** `BuildPoiGroupNavHeader`/`BuildPercorsoNavItem`
+  compute an *effective* `visible` that combines the per-item hidden set
+  AND the global toggle (`!_hiddenPoiGroupIds.Contains(group.Id) &&
+  _poiVisible`, same pattern for routes/`_percorsiVisible`) — when false:
+  the group/route is forced permanently collapsed (its `expanded` var is
+  `visible && ...`, and the header's own `PointerPressed` toggle handler
+  early-returns without ever expanding it, even while a nav-tree text
+  filter would otherwise force every match open) so its POI/route-point
+  leaves never render at all; every action icon except the 👁 itself is
+  passed `enabled: visible` to `DialogUi.MakeTreeIconButton`'s new
+  `enabled` parameter (`IsEnabled = false` + reduced `Opacity` on the glyph
+  + a "no-entry" cursor, since the button's own disabled pseudostate isn't
+  visually obvious without a fuller theme) — add/edit/delete/lock/export
+  and, for POI groups, the cut→paste "incolla" target role are all blocked.
+  The 👁 button itself stays enabled and reads only `_hiddenPoiGroupIds`/
+  `_hiddenPercorsoIds` directly (not the combined `visible`), so it's
+  always the one way back to re-showing the group even while hidden.
+  Rationale (explicit user request): "se non lo vedi non lo puoi
+  toccare" — this was already true for *map* interaction (`FindPoiAtPoint`/
+  `FindRoutePointAtPoint` already skip hidden groups/routes at hit-test
+  time, so dragging was never possible), this extends the same guarantee
+  to the nav-tree UI itself, which previously let you freely edit/delete/
+  add-to a group you'd hidden.
 
 - **`FontResolver`** implements `IFontResolver` because PdfSharpCore can't find
   system fonts on Linux; it scans standard font dirs on both OSes. Must be

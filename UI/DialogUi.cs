@@ -44,8 +44,13 @@ namespace StradarioApp.UI
 
         // Icona di azione quadrata usata nell'albero di navigazione (pannello
         // sinistro): dimensione fissa, ben visibile, con tooltip esplicativo.
-        // svgPathData è uno dei path in UI/BootstrapIcons.cs.
-        public static Button MakeTreeIconButton(string svgPathData, string tooltip, IBrush foreground, Action onClick, double size = 24)
+        // svgPathData è uno dei path in UI/BootstrapIcons.cs. "enabled" = false
+        // disabilita davvero il click (IsEnabled) E lo segnala visivamente con
+        // opacità ridotta — usato per le azioni di un gruppo POI/percorso
+        // nascosto (vedi BuildPoiGroupNavHeader/BuildPercorsoNavItem: "se non
+        // lo vedi non lo puoi toccare"), dove il tema di base non applicherebbe
+        // da solo uno stile "disabilitato" abbastanza evidente.
+        public static Button MakeTreeIconButton(string svgPathData, string tooltip, IBrush foreground, Action onClick, double size = 24, bool enabled = true)
         {
             var icon = new Path
             {
@@ -53,7 +58,8 @@ namespace StradarioApp.UI
                 Fill    = foreground,
                 Width   = size * 0.62,
                 Height  = size * 0.62,
-                Stretch = Stretch.Uniform
+                Stretch = Stretch.Uniform,
+                Opacity = enabled ? 1.0 : 0.35
             };
             var btn = new Button
             {
@@ -64,7 +70,8 @@ namespace StradarioApp.UI
                 Background = Brushes.Transparent,
                 HorizontalContentAlignment = HorizontalAlignment.Center,
                 VerticalContentAlignment   = VerticalAlignment.Center,
-                Cursor     = new Cursor(StandardCursorType.Hand)
+                Cursor     = new Cursor(enabled ? StandardCursorType.Hand : StandardCursorType.No),
+                IsEnabled  = enabled
             };
             ToolTip.SetTip(btn, tooltip);
             btn.Click += (_, _) => onClick();

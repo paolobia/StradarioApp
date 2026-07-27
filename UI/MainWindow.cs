@@ -1309,7 +1309,12 @@ namespace StradarioApp.UI
                     root.Children.Add(Indent(BuildPoiGroupNavHeader(group)));
 
                     bool groupNameMatches = filtering && Matches(group.Name);
-                    bool groupExpanded = filtering || !_navCollapsedGroupIds.Contains(group.Id);
+                    // Un gruppo nascosto (occhio spento, per sé o globalmente)
+                    // resta sempre collassato, anche durante un filtro attivo:
+                    // "se non lo vedi non lo puoi toccare" include non poterne
+                    // sfogliare/toccare i POI dall'albero.
+                    bool groupHiddenByEye = _hiddenPoiGroupIds.Contains(group.Id) || !_poiVisible;
+                    bool groupExpanded = !groupHiddenByEye && (filtering || !_navCollapsedGroupIds.Contains(group.Id));
                     if (groupExpanded)
                     {
                         var visibleItems = (!filtering || groupNameMatches)
@@ -1367,6 +1372,13 @@ namespace StradarioApp.UI
                 foreach (var route in visibleRoutes)
                 {
                     root.Children.Add(Indent(BuildPercorsoNavItem(route)));
+
+                    // Percorso nascosto: niente sotto-voci (badge C→W/W→C
+                    // compresi) — stesso "se non lo vedi non lo puoi
+                    // toccare" applicato ai gruppi POI.
+                    bool routeHiddenByEye = _hiddenPercorsoIds.Contains(route.Id) || !_percorsiVisible;
+                    if (routeHiddenByEye) continue;
+
                     for (int i = 0; i < route.Points.Count; i++)
                     {
                         if (GcjTransform.IsInChina(route.Points[i].Lat, route.Points[i].Lon))
@@ -1461,8 +1473,12 @@ namespace StradarioApp.UI
         // modifica, elimina)
         private Control BuildPoiGroupNavHeader(PoiGroup group)
         {
-            bool expanded = !_navCollapsedGroupIds.Contains(group.Id);
-            bool visible  = !_hiddenPoiGroupIds.Contains(group.Id);
+            bool visible  = !_hiddenPoiGroupIds.Contains(group.Id) && _poiVisible;
+            // Un gruppo nascosto è trattato come "intoccabile": sempre
+            // collassato (non espandibile) e con ogni azione disabilitata a
+            // parte l'occhio stesso per ririmostrarlo — richiesta esplicita
+            // dell'utente ("se non lo vedi non lo puoi toccare").
+            bool expanded = visible && !_navCollapsedGroupIds.Contains(group.Id);
 
             var border = new Border
             {
@@ -1526,7 +1542,7 @@ namespace StradarioApp.UI
             // così restano tagliabili/detagliabili altri suoi POI.
             bool cutModeActive = _multiSelectedPoiKeys.Count > 0;
             bool isCutSourceGroup = _multiSelectedPoiKeys.Any(k => k.GroupId == group.Id);
-            if (cutModeActive && !isCutSourceGroup)
+            if (visible && cutModeActive && !isCutSourceGroup)
             {
                 actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Paste,
                     string.Format(Strings.Get("MainWindow_IncollaPoiTooltip"), _multiSelectedPoiKeys.Count),
@@ -1535,20 +1551,24 @@ namespace StradarioApp.UI
             }
             else
             {
+                // Un gruppo nascosto ha ogni azione disabilitata (icona
+                // visibilmente sbiadita, click non registrato) tranne
+                // l'occhio stesso, l'unico modo per ririmostrarlo.
                 actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Export, Strings.Get("MainWindow_EsportaGruppoTooltip"), Brushes.SteelBlue,
-                    async () => await OnExportSinglePoiGroup(group)));
+                    async () => await OnExportSinglePoiGroup(group), enabled: visible));
                 actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, Strings.Get("MainWindow_AggiungiPoiAlGruppoTooltip"), Brushes.SteelBlue,
-                    () => StartAddPoiMode(group)));
+                    () => StartAddPoiMode(group), enabled: visible));
                 actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Pencil, Strings.Get("MainWindow_ModificaGruppoTooltip"), Brushes.SteelBlue,
-                    async () => await OnEditPoiGroup(group)));
+                    async () => await OnEditPoiGroup(group), enabled: visible));
                 actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("MainWindow_EliminaGruppoTooltip"), Brushes.Crimson,
-                    () => OnDeletePoiGroup(group)));
+                    () => OnDeletePoiGroup(group), enabled: visible));
                 actions.Children.Add(DialogUi.MakeTreeIconButton(visible ? BootstrapIcons.Eye : BootstrapIcons.EyeSlash,
                     visible ? Strings.Get("MainWindow_NascondiGruppoTooltip") : Strings.Get("MainWindow_MostraGruppoTooltip"),
                     visible ? Brushes.SteelBlue : Brushes.Gray, () =>
                 {
-                    if (visible) _hiddenPoiGroupIds.Add(group.Id);
-                    else         _hiddenPoiGroupIds.Remove(group.Id);
+                    bool currentlyHidden = _hiddenPoiGroupIds.Contains(group.Id);
+                    if (currentlyHidden) _hiddenPoiGroupIds.Remove(group.Id);
+                    else                 _hiddenPoiGroupIds.Add(group.Id);
                     RefreshNavigationTree();
                     _mapCanvas?.InvalidateVisual();
                 }));
@@ -1560,7 +1580,7 @@ namespace StradarioApp.UI
                     if (!group.IsLocked) TouchPoiGroup(group.Id);
                     _isDirty = true;
                     RefreshNavigationTree();
-                }));
+                }, enabled: visible));
             }
             Grid.SetColumn(actions, 3);
             row.Children.Add(actions);
@@ -1569,6 +1589,7 @@ namespace StradarioApp.UI
 
             void ToggleHandler(object? s, PointerPressedEventArgs e)
             {
+                if (!visible) return; // nascosto: sempre collassato, non espandibile
                 if (e.Source is Button || (e.Source is Control c && c.FindAncestorOfType<Button>() != null)) return;
                 if (expanded) _navCollapsedGroupIds.Add(group.Id);
                 else          _navCollapsedGroupIds.Remove(group.Id);
@@ -1710,7 +1731,11 @@ namespace StradarioApp.UI
         // sul primo punto del percorso. Icone: mostra/nascondi, modifica, elimina.
         private Control BuildPercorsoNavItem(Percorso route)
         {
-            bool visible = !_hiddenPercorsoIds.Contains(route.Id);
+            // Un percorso nascosto (occhio spento, per sé o globalmente) è
+            // trattato come "intoccabile": ogni azione disabilitata tranne
+            // l'occhio stesso — richiesta esplicita dell'utente, stesso
+            // trattamento dei gruppi POI in BuildPoiGroupNavHeader.
+            bool visible = !_hiddenPercorsoIds.Contains(route.Id) && _percorsiVisible;
 
             var border = new Border
             {
@@ -1752,12 +1777,12 @@ namespace StradarioApp.UI
             row.Children.Add(info);
 
             var exportBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Export, Strings.Get("MainWindow_EsportaPercorsoTooltip"), Brushes.SteelBlue,
-                async () => await OnExportSinglePercorso(route));
+                async () => await OnExportSinglePercorso(route), enabled: visible);
             Grid.SetColumn(exportBtn, 2);
             row.Children.Add(exportBtn);
 
             var addPtsBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, Strings.Get("MainWindow_AggiungiPuntiPercorsoTooltip"), Brushes.SteelBlue,
-                () => StartAddRoutePointsMode(route));
+                () => StartAddRoutePointsMode(route), enabled: visible);
             Grid.SetColumn(addPtsBtn, 3);
             row.Children.Add(addPtsBtn);
 
@@ -1765,17 +1790,17 @@ namespace StradarioApp.UI
             var instradaBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Compass,
                 Strings.Get(instradaFailed ? "MainWindow_InstradaFallitoTooltip" : "MainWindow_InstradaTooltip"),
                 instradaFailed ? Brushes.Crimson : Brushes.SteelBlue,
-                () => StartInstradaMode(route));
+                () => StartInstradaMode(route), enabled: visible);
             Grid.SetColumn(instradaBtn, 4);
             row.Children.Add(instradaBtn);
 
             var editBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Pencil, Strings.Get("MainWindow_ModificaPercorsoTooltip"), Brushes.SteelBlue,
-                async () => await OnEditPercorso(route));
+                async () => await OnEditPercorso(route), enabled: visible);
             Grid.SetColumn(editBtn, 5);
             row.Children.Add(editBtn);
 
             var delBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("MainWindow_EliminaPercorsoTooltip"), Brushes.Crimson,
-                () => OnDeletePercorso(route));
+                () => OnDeletePercorso(route), enabled: visible);
             Grid.SetColumn(delBtn, 6);
             row.Children.Add(delBtn);
 
@@ -1783,8 +1808,9 @@ namespace StradarioApp.UI
                 visible ? Strings.Get("MainWindow_NascondiPercorsoTooltip") : Strings.Get("MainWindow_MostraPercorsoTooltip"),
                 visible ? Brushes.SteelBlue : Brushes.Gray, () =>
             {
-                if (visible) _hiddenPercorsoIds.Add(route.Id);
-                else         _hiddenPercorsoIds.Remove(route.Id);
+                bool currentlyHidden = _hiddenPercorsoIds.Contains(route.Id);
+                if (currentlyHidden) _hiddenPercorsoIds.Remove(route.Id);
+                else                 _hiddenPercorsoIds.Add(route.Id);
                 RefreshNavigationTree();
                 _mapCanvas?.InvalidateVisual();
             });
@@ -1799,7 +1825,7 @@ namespace StradarioApp.UI
                 if (!route.IsLocked) TouchPercorso(route.Id);
                 _isDirty = true;
                 RefreshNavigationTree();
-            });
+            }, enabled: visible);
             Grid.SetColumn(lockBtn, 8);
             row.Children.Add(lockBtn);
 
