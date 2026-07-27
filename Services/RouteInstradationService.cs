@@ -19,6 +19,9 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Net.Http;
+using System.Net.Security;
+using System.Security.Authentication;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
@@ -28,7 +31,19 @@ namespace StradarioApp.Services
 {
     public class RouteInstradationService
     {
-        private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(25) };
+        // EnabledSslProtocols esplicito invece di affidarsi al default di
+        // sistema: su alcune configurazioni/versioni Windows TLS 1.2 non è
+        // abilitato di default a livello di sistema operativo, causando
+        // "The SSL connection could not be established" con HttpClient —
+        // riscontrato davvero da un utente in beta test su Windows.
+        private static readonly HttpClient Http = new HttpClient(new SocketsHttpHandler
+        {
+            SslOptions = new SslClientAuthenticationOptions
+            {
+                EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
+            }
+        })
+        { Timeout = TimeSpan.FromSeconds(25) };
 
         static RouteInstradationService()
         {
@@ -138,8 +153,27 @@ namespace StradarioApp.Services
                 // di inatteso. Il messaggio arriva fino all'utente tramite
                 // RouteInstradationPanel — è l'unico modo di diagnosticare un
                 // fallimento di rete su un eseguibile pubblicato da remoto.
-                return new LegResult(from, to, new List<RouteAlternative>(), -1, Failed: true, ErrorMessage: $"{ex.GetType().Name}: {ex.Message}");
+                // Fondamentale scendere fino alle InnerException: per una
+                // HttpRequestException di tipo TLS, ex.Message da solo è
+                // spesso solo "The SSL connection could not be established,
+                // see inner exception" — il motivo VERO (es. protocollo TLS
+                // non supportato, certificato non attendibile) sta annidato
+                // più sotto (riscontrato davvero in un test remoto).
+                return new LegResult(from, to, new List<RouteAlternative>(), -1, Failed: true, ErrorMessage: DescribeException(ex));
             }
+        }
+
+        private static string DescribeException(Exception ex)
+        {
+            var sb = new StringBuilder();
+            sb.Append(ex.GetType().Name).Append(": ").Append(ex.Message);
+            var inner = ex.InnerException;
+            while (inner != null)
+            {
+                sb.Append(" -> ").Append(inner.GetType().Name).Append(": ").Append(inner.Message);
+                inner = inner.InnerException;
+            }
+            return sb.ToString();
         }
 
         // Una tratta per ogni coppia di vertici consecutivi, sempre in
