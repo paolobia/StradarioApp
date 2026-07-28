@@ -4035,7 +4035,11 @@ namespace StradarioApp.UI
                 {
                     var mi = new MenuItem { Header = Path.GetFileName(path) };
                     ToolTip.SetTip(mi, path);
-                    mi.Click += async (_, _) => await OpenProjectFromPath(path);
+                    mi.Click += async (_, _) =>
+                    {
+                        if (await ConfirmDiscardCurrentProjectAsync())
+                            await OpenProjectFromPath(path);
+                    };
                     flyout.Items.Add(mi);
                 }
             }
@@ -4282,21 +4286,7 @@ namespace StradarioApp.UI
         // ---------------------------------------------------------------
         private async void OnNewProject(object? sender, RoutedEventArgs e)
         {
-            // Se ci sono modifiche non salvate, chiedi conferma
-            if (_isDirty)
-            {
-                bool save = await AskSaveChanges();
-                if (save)
-                {
-                    if (_currentFilePath != null)
-                        await SaveCurrentProject(_currentFilePath);
-                    else
-                    {
-                        OnSaveProjectAs(sender, e);
-                        return; // il salvataggio async porta avanti il flusso da solo
-                    }
-                }
-            }
+            if (!await ConfirmDiscardCurrentProjectAsync()) return;
 
             // Crea nuovo progetto vuoto centrato su Roma
             _project         = new StradarioProject { ProjectName = Strings.Get("MainWindow_NuovoStradarioProjectName") };
@@ -4345,6 +4335,8 @@ namespace StradarioApp.UI
 
         private async void OnOpenProject(object? sender, RoutedEventArgs e)
         {
+            if (!await ConfirmDiscardCurrentProjectAsync()) return;
+
             var files = await StorageProvider.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions
             {
                 Title          = Strings.Get("MainWindow_ApriProgettoTitolo"),
@@ -4430,7 +4422,14 @@ namespace StradarioApp.UI
             await SaveCurrentProject(_currentFilePath);
         }
 
-        private async void OnSaveProjectAs(object? sender, RoutedEventArgs e)
+        private async void OnSaveProjectAs(object? sender, RoutedEventArgs e) => await SaveProjectAsAsync();
+
+        // Estratto da OnSaveProjectAs (che resta il solo event handler per il
+        // pulsante toolbar) così ConfirmDiscardCurrentProjectAsync può sapere
+        // se il "Salva come" è andato a buon fine o è stato annullato
+        // dall'utente (file == null), invece del semplice "return" di prima
+        // che interrompeva il flusso senza dirlo al chiamante.
+        private async Task<bool> SaveProjectAsAsync()
         {
             var file = await StorageProvider.SaveFilePickerAsync(new Avalonia.Platform.Storage.FilePickerSaveOptions
             {
@@ -4445,11 +4444,12 @@ namespace StradarioApp.UI
                 }
             });
 
-            if (file == null) return;
+            if (file == null) return false;
             string path = file.Path.LocalPath;
             RememberLastUsedFolder(path);
             _currentFilePath = path;
             await SaveCurrentProject(path);
+            return true;
         }
 
         private async Task SaveCurrentProject(string path)
@@ -4472,10 +4472,18 @@ namespace StradarioApp.UI
             }
         }
 
-        // Mostra dialog "Vuoi salvare le modifiche?" → true = salva, false = scarta
-        private async Task<bool> AskSaveChanges()
+        // Mostra dialog "Vuoi salvare le modifiche?" → true = salva,
+        // false = scarta, null = annulla. Tre pulsanti, tre esiti DISTINTI:
+        // prima "Scarta" e "Annulla" collassavano entrambi su false, quindi
+        // il chiamante non poteva distinguere "procedi senza salvare" da
+        // "non procedere affatto" — bug reale segnalato dall'utente ("Nuovo"
+        // poi "Annulla" perdeva comunque le modifiche). Il valore iniziale
+        // di "result" resta null anche se la finestra viene chiusa dalla X
+        // invece che da un pulsante, così quel percorso equivale ad Annulla
+        // (comportamento più sicuro come default).
+        private async Task<bool?> AskSaveChanges()
         {
-            bool save = false;
+            bool? result = null;
             var dlg = new Window
             {
                 Title   = Strings.Get("MainWindow_ModificheNonSalvateTitolo"),
@@ -4509,15 +4517,42 @@ namespace StradarioApp.UI
                 }
             };
 
-            bool cancelled = false;
             var btnPanel = ((StackPanel)((StackPanel)dlg.Content!).Children[1]);
-            ((Button)btnPanel.Children[0]).Click += (s, e) => { save = true;  dlg.Close(); };
-            ((Button)btnPanel.Children[1]).Click += (s, e) => { save = false; dlg.Close(); };
-            ((Button)btnPanel.Children[2]).Click += (s, e) => { cancelled = true; dlg.Close(); };
+            ((Button)btnPanel.Children[0]).Click += (s, e) => { result = true;  dlg.Close(); };
+            ((Button)btnPanel.Children[1]).Click += (s, e) => { result = false; dlg.Close(); };
+            ((Button)btnPanel.Children[2]).Click += (s, e) => { result = null;  dlg.Close(); };
 
             await dlg.ShowDialog(this);
-            if (cancelled) return false; // chiamante non deve procedere
-            return save;
+            return result;
+        }
+
+        // Se ci sono modifiche non salvate, chiede all'utente cosa fare
+        // prima di sostituire il progetto corrente (Nuovo/Apri/apri da
+        // Recenti — i tre punti che rimpiazzano _project senza passare da
+        // OnWindowClosing, che ha la propria logica equivalente per la
+        // chiusura dell'app). true = si può procedere (nessuna modifica in
+        // sospeso, oppure l'utente ha scelto salva/scarta e non ci sono
+        // stati intoppi); false = l'operazione va annullata (l'utente ha
+        // scelto "Annulla", oppure il "Salva come" che ne è seguito è stato
+        // a sua volta annullato o è fallito).
+        private async Task<bool> ConfirmDiscardCurrentProjectAsync()
+        {
+            if (!_isDirty) return true;
+
+            bool? choice = await AskSaveChanges();
+            if (choice == null) return false;
+
+            if (choice == true)
+            {
+                if (_currentFilePath != null)
+                    await SaveCurrentProject(_currentFilePath);
+                else if (!await SaveProjectAsAsync())
+                    return false;
+
+                if (_isDirty) return false; // SaveCurrentProject ha fallito (errore già mostrato all'utente)
+            }
+
+            return true;
         }
 
         // Genera il PDF in un file temporaneo, lo apre nel visualizzatore PDF
