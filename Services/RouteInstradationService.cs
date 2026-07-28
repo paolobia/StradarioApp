@@ -54,6 +54,16 @@ namespace StradarioApp.Services
         // volta con solo Tls12 (protocollo maturo, supportato ovunque) solo
         // quando il primo tentativo fallisce con un errore riconducibile a
         // SSL/handshake.
+        //
+        // TERZO tentativo (vedi RouteLegAsync/Services/BouncyCastleHttpClient.cs):
+        // se anche questo fallback fallisce per un errore SSL, il problema NON
+        // è la versione del protocollo — diagnosticato passo passo con un
+        // utente fino a scoprire che SChannel su quella macchina non ha
+        // proprio supporto per le suite cifrate GCM/AEAD moderne (nessuna
+        // combinazione di EnabledSslProtocols può aggirarlo). L'unico modo è
+        // non usare affatto SChannel: BouncyCastleHttpClient fa l'handshake
+        // TLS con un'implementazione interamente gestita che porta con sé il
+        // proprio supporto GCM.
         private static readonly HttpClient HttpTls12Only = new HttpClient(new SocketsHttpHandler
         {
             SslOptions = new SslClientAuthenticationOptions
@@ -149,6 +159,32 @@ namespace StradarioApp.Services
                     json = await HttpTls12Only.GetStringAsync(url, ct).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) { throw; }
+                // Terzo tentativo, SOLO se anche il fallback TLS 1.2 fallisce
+                // per un errore SSL: caso reale diagnosticato passo passo con
+                // un utente — SChannel su quella macchina Windows non supporta
+                // affatto le suite cifrate GCM (confermato guardando l'elenco
+                // Ciphers di IIS Crypto: solo CBC, nessuna voce GCM), e un
+                // server che accetta solo suite moderne/AEAD non ha allora
+                // NESSUNA suite in comune con quel client, qualunque versione
+                // di TLS venga richiesta — non è un problema di versione del
+                // protocollo, quindi nessun'altra combinazione di
+                // EnabledSslProtocols può risolverlo. BouncyCastleHttpClient
+                // fa l'handshake TLS per conto proprio (implementazione
+                // gestita, porta con sé il proprio supporto GCM) bypassando
+                // del tutto SChannel, esattamente come fa un browser con la
+                // propria libreria TLS invece di quella di sistema.
+                catch (Exception secondEx) when (IsSslRelated(secondEx))
+                {
+                    try
+                    {
+                        json = await BouncyCastleHttpClient.GetStringAsync(url, ct).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        return new LegResult(from, to, new List<RouteAlternative>(), -1, Failed: true, ErrorMessage: DescribeException(ex));
+                    }
+                }
                 catch (Exception ex)
                 {
                     return new LegResult(from, to, new List<RouteAlternative>(), -1, Failed: true, ErrorMessage: DescribeException(ex));

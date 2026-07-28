@@ -1020,6 +1020,45 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   point can make its former neighbors newly collinear with each other), not
   a single pass.
 
+- **`Services/RouteInstradationService`'s OSRM calls have a THREE-tier TLS
+  fallback**, added incrementally from real beta-test failures, each one
+  diagnosed on an actual user machine rather than guessed: 1) default
+  `HttpClient` with `EnabledSslProtocols = Tls12 | Tls13`; 2) if that fails
+  with an SSL-related exception (`IsSslRelated`, walks `InnerException`
+  looking for `AuthenticationException`/`Win32Exception`), retry with a
+  second `HttpClient` forcing `Tls12` only (some Windows installs have an
+  unstable TLS 1.3 SChannel implementation); 3) if *that* also fails with
+  an SSL-related exception, retry with `Services/BouncyCastleHttpClient.cs`
+  — a hand-rolled HTTPS GET client using BouncyCastle (fully managed TLS,
+  no native/OS dependency) instead of `HttpClient`/SChannel entirely. Tier
+  3 exists because tier 2 alone wasn't sufficient for one real case: a
+  user's Windows machine had NO cipher suite in common with the server at
+  all (confirmed via IIS Crypto — the OS's SChannel only listed CBC
+  ciphers, no GCM/AEAD entries whatsoever), which no `EnabledSslProtocols`
+  combination can fix since the problem isn't protocol version, it's total
+  absence of modern cipher suite support in the OS's TLS library. Diagnosed
+  step by step (not guessed) before concluding this: antivirus/firewall
+  ruled out, browser reached the server fine (proves DNS/network are fine,
+  but browsers use their own TLS stack, not SChannel — doesn't prove .NET
+  works), `Invoke-WebRequest` in PowerShell on the *same* machine failed
+  identically (PowerShell shares .NET/SChannel with the app, isolating the
+  problem to SChannel itself, not app code or network).
+  `BouncyCastleHttpClient.GetStringAsync` validates the server's
+  certificate itself via `System.Security.Cryptography.X509Certificates.
+  X509Chain` against the OS certificate store (same trust anchors a
+  browser uses) plus manual hostname matching against the certificate's
+  Subject Alternative Names — BouncyCastle only does the cryptographic
+  handshake, it doesn't decide whether to trust the server, so this step
+  is required to keep the same security guarantee as a normal HTTPS
+  request. **The SAN format from `X509Extension.Format(false)` is NOT
+  consistent across platforms** — `"DNS Name=value"` on Windows,
+  `"DNS:value"` on Linux (OpenSSL-backed .NET) — a first version that only
+  recognized the Windows format silently extracted zero names on Linux,
+  which made even `router.project-osrm.org`'s own legitimate certificate
+  fail hostname validation; caught by testing end-to-end against the real
+  server (plus `badssl.com`'s expired/self-signed/wrong-host test
+  endpoints, verified they're correctly *rejected*) before trusting it.
+
 ## Interaction model (MainWindow)
 
 Left click = recenter view; right click = add a page centered on the clicked

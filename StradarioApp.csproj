@@ -28,26 +28,35 @@
 
   <ItemGroup>
     <!-- UI cross-platform Linux/Windows: versioni allineate 11.2.x -->
-    <PackageReference Include="Avalonia"                 Version="11.2.0" />
-    <PackageReference Include="Avalonia.Desktop"         Version="11.2.0" />
-    <PackageReference Include="Avalonia.Themes.Fluent"   Version="11.2.0" />
-    <PackageReference Include="Avalonia.Fonts.Inter"     Version="11.2.0" />
+    <PackageReference Include="Avalonia" Version="11.2.0" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.2.0" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.0" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.2.0" />
 
     <!-- SkiaSharp per disegnare sulla mappa.
          NON esiste "SkiaSharp.Views.Avalonia": il canvas custom
          si implementa sovrascrivendo Render() su un Control Avalonia,
          passando il DrawingContext a SkiaSharp via ISkiaDrawingContextImpl. -->
-    <PackageReference Include="SkiaSharp"                Version="2.88.8" />
-    <PackageReference Include="Avalonia.Skia"            Version="11.2.0" />
+    <PackageReference Include="SkiaSharp" Version="2.88.8" />
+    <PackageReference Include="Avalonia.Skia" Version="11.2.0" />
 
     <!-- Tile OSM: schema URL e TileIndex -->
-    <PackageReference Include="BruTile"                  Version="4.0.0" />
+    <PackageReference Include="BruTile" Version="4.0.0" />
 
     <!-- Generazione PDF -->
-    <PackageReference Include="PdfSharpCore"             Version="1.3.65" />
+    <PackageReference Include="PdfSharpCore" Version="1.3.65" />
 
     <!-- Serializzazione progetto JSON -->
-    <PackageReference Include="Newtonsoft.Json"          Version="13.0.3" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+
+    <!-- Implementazione TLS interamente gestita (C# puro, nessuna dipendenza
+         nativa), usata SOLO da Services/BouncyCastleHttpClient.cs come
+         ultimo tentativo dell'instradamento OSRM quando lo stack TLS di
+         Windows (SChannel) è così datato/rotto da non avere alcuna suite
+         cifrata in comune col server (visto in un caso reale: SChannel
+         senza supporto GCM affatto) — bypassa del tutto SChannel, come fa
+         un browser con la propria libreria TLS. -->
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.2" />
   </ItemGroup>
 
   <ItemGroup>
