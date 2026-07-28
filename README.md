@@ -14,7 +14,7 @@ grazie ad Avalonia UI.
 - **Pagine**: click destro per aggiungere, drag per spostare, blocco manuale/automatico contro spostamenti accidentali, etichette automatiche (A1, B2…)
 - **Gruppi POI**: marker con icona/colore personalizzabili, aggiunta diretta sulla mappa o via ricerca — 43 categorie predefinite più quelle personalizzate, ricerca dal vivo (Overpass, con punteggio locale offline sempre calcolato in aggiunta al filtro AI/Groq opzionale) o offline (database locale scaricabile per continente), ricerca indirizzo e città; spostamento di un POI fra gruppi con un gesto taglia/incolla; un gruppo nascosto (occhio spento) è protetto da modifiche accidentali
 - **Percorsi**: disegno punto-per-punto sulla mappa (Invio o shift+clic per confermare, senza aggiungere punti spuri se si pan durante il disegno), estendibili ed editabili in seguito, instradabili su strada reale via OSRM (auto/bici/piedi, alternative multiple selezionabili direttamente sulla mappa)
-- **Import/export universale**: un solo comando importa KMZ/KML/GPX (POI e percorsi insieme, con colori distinti per i gruppi POI importati); esportazione separata, combinata o di un singolo gruppo/percorso; nomi in script non latino ripuliti automaticamente; punti in Cina (possibile GCJ-02 anziché WGS84) gestiti con correzione automatica o manuale
+- **Import/export universale**: un solo comando importa KMZ/KML/GPX (POI e percorsi insieme, con colori distinti per i gruppi POI importati); esportazione separata, combinata o di un singolo gruppo/percorso; anche in **CSV** (due file tabellari, uno per POI e uno per percorsi, apribili in Excel/LibreOffice); nomi in script non latino ripuliti automaticamente; punti in Cina (possibile GCJ-02 anziché WGS84) gestiti con correzione automatica o manuale
 - **Generazione PDF**: anteprima prima di salvare, indice, mappa riassuntiva, pagine con riferimenti alle adiacenti e scala grafica
 - **Salvataggio progetto**: file `.stradario` (JSON) leggibile e modificabile a mano; le chiavi API restano solo nelle preferenze locali, mai nel progetto
 - **Impostazioni**: tre tab — Generale (formato pagina, DPI, scala di stampa da 1:1.000 a 1:1.000.000, tile server, contrasto mappa nel PDF), Categorie POI (aggiunta di categorie personalizzate), Database POI offline (download facoltativo per continente)
@@ -109,6 +109,7 @@ StradarioApp/
 │   ├── RouteInstradationService.cs # Instradamento OSRM di un Percorso su strada reale (auto/bici/piedi)
 │   ├── GroqClient.cs               # Client HTTP minimo per l'API Groq (filtro POI AI)
 │   ├── KmlIo.cs                    # Caricamento XML KML/KMZ/GPX robusto a BOM/encoding
+│   ├── CsvIo.cs                    # Lettura/scrittura CSV minimale (RFC 4180) per import/export POI/percorsi
 │   ├── CityDatabase.cs             # Database città GeoNames, download automatico se assente
 │   ├── ProjectService.cs           # Salvataggio/caricamento progetto .stradario
 │   ├── AppPreferencesService.cs    # Preferenze globali (chiavi API, ultima categoria POI), non nel progetto

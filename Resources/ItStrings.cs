@@ -496,6 +496,7 @@ namespace StradarioApp.Resources
             ["MainWindow_FiltroKmzIcone"] = "KMZ (zip, con icone)",
             ["MainWindow_FiltroKml"] = "KML",
             ["MainWindow_FiltroGpx"] = "GPX",
+            ["MainWindow_FiltroCsv"] = "CSV",
             ["MainWindow_Esportato"] = "Esportato: {0}",
             ["MainWindow_ErroreEsportazione"] = "Errore esportazione:\n{0}",
             ["MainWindow_FileVuotoDiagnostica"] =
@@ -504,7 +505,8 @@ namespace StradarioApp.Resources
                 "stream.CanSeek: {2}, stream.Length: {3}, " +
                 "FileInfo.Length su path locale: {4}.",
             ["MainWindow_ImportaPoiPercorsiTitolo"] = "Importa POI e/o percorsi da KMZ/KML/GPX",
-            ["MainWindow_FiltroKmzKmlGpx"] = "KMZ/KML/GPX",
+            ["MainWindow_FiltroKmzKmlGpx"] = "KMZ/KML/GPX/CSV",
+            ["MainWindow_CsvNonRiconosciuto"] = "CSV non riconosciuto: mancano le colonne di un export POI (Gruppo/Nome/Lat/Lon) o Percorsi (Percorso/IndicePunto/Lat/Lon) di StradarioApp.",
             ["MainWindow_NessunGruppoPercorsoTrovato"] = "Nessun gruppo POI o percorso trovato nel file.",
             ["MainWindow_ImportatiGruppiPoiConteggio"] = "{0} gruppi POI ({1} POI)",
             ["MainWindow_ImportatiPercorsiConteggio"] = "{0} percorsi",

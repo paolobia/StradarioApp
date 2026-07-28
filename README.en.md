@@ -14,7 +14,7 @@ Avalonia UI.
 - **Pages**: right-click to add, drag to move, manual/automatic lock against accidental moves, automatic labels (A1, B2…)
 - **POI groups**: markers with customizable icon/color, added directly on the map or via search — 43 built-in categories plus custom ones, live search (Overpass, with an offline local match score always computed alongside the optional AI/Groq filter) or offline (downloadable per-continent local database), address and city search; move a POI between groups with a cut/paste gesture; a hidden group (eye off) is protected from accidental changes
 - **Routes**: point-by-point drawing on the map (Enter or shift+click to confirm, panning while drawing no longer adds a stray point), extendable and editable afterwards, routable onto real roads via OSRM (driving/cycling/walking, multiple alternatives selectable directly on the map)
-- **Universal import/export**: a single command imports KMZ/KML/GPX (POI and routes together, with distinct colors for imported POI groups); export either separate, combined, or a single group/route; names in a non-Latin script are cleaned up automatically; points in China (possibly GCJ-02 instead of WGS84) handled with automatic or manual correction
+- **Universal import/export**: a single command imports KMZ/KML/GPX (POI and routes together, with distinct colors for imported POI groups); export either separate, combined, or a single group/route; also **CSV** (two tabular files, one for POI and one for routes, that open cleanly in Excel/LibreOffice); names in a non-Latin script are cleaned up automatically; points in China (possibly GCJ-02 instead of WGS84) handled with automatic or manual correction
 - **PDF generation**: preview before saving, index, overview map, pages with references to adjacent ones and a graphic scale bar
 - **Project saving**: `.stradario` file (JSON), human-readable and editable by hand; API keys stay only in local preferences, never in the project
 - **Settings**: three tabs — General (page format, DPI, print scale from 1:1,000 to 1:1,000,000, tile server, PDF map contrast), POI categories (add custom categories), Offline POI database (optional per-continent download)
@@ -110,6 +110,7 @@ StradarioApp/
 │   ├── RouteInstradationService.cs # OSRM routing of a Route onto real roads (driving/cycling/walking)
 │   ├── GroqClient.cs               # Minimal HTTP client for the Groq API (AI POI filter)
 │   ├── KmlIo.cs                    # KML/KMZ/GPX XML loading, robust to BOM/encoding
+│   ├── CsvIo.cs                    # Minimal RFC 4180 CSV read/write for POI/route import/export
 │   ├── CityDatabase.cs             # GeoNames city database, automatic download if missing
 │   ├── ProjectService.cs           # Save/load .stradario project
 │   ├── AppPreferencesService.cs    # Global preferences (API keys, last POI category), not in the project

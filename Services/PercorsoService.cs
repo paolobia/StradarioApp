@@ -21,6 +21,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Xml.Linq;
+using SkiaSharp;
 using StradarioApp.Models;
 
 namespace StradarioApp.Services
@@ -160,6 +161,100 @@ namespace StradarioApp.Services
             }
 
             return result;
+        }
+
+        // Export come .csv: una riga per PUNTO del percorso (etichetta/colore/
+        // descrizione ripetuti su ogni riga dello stesso percorso) — formato
+        // piatto tabellare, non annidato come KML. Sempre WGS84, stesso
+        // motivo di PoiService.ExportCsvAsync: il CSV è un formato nativo
+        // dell'app, nessuna correzione/domanda GCJ-02 in export o import.
+        public async Task ExportCsvAsync(List<Percorso> routes, string path)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine(CsvIo.BuildLine(new[] { "Percorso", "Colore", "Descrizione", "IndicePunto", "Lat", "Lon" }));
+            foreach (var r in routes)
+                for (int i = 0; i < r.Points.Count; i++)
+                    sb.AppendLine(CsvIo.BuildLine(new[]
+                    {
+                        r.Label, r.ColorHex, r.Description, i.ToString(CultureInfo.InvariantCulture),
+                        r.Points[i].Lat.ToString(CultureInfo.InvariantCulture),
+                        r.Points[i].Lon.ToString(CultureInfo.InvariantCulture)
+                    }));
+
+            await using var writer = new StreamWriter(path, false, new UTF8Encoding(false));
+            await writer.WriteAsync(sb.ToString());
+        }
+
+        // Import da .csv (stesso formato di ExportCsvAsync): le righe con lo
+        // stesso nome percorso vengono raggruppate, nell'ordine di prima
+        // comparsa, e i punti riordinati per IndicePunto (se assente/non
+        // numerico, si tiene semplicemente l'ordine delle righe nel file —
+        // corretto comunque per un file scritto da ExportCsvAsync, che le
+        // scrive già in ordine). Colore/descrizione presi dalla prima riga
+        // del percorso. Righe con Lat/Lon mancanti o non numerici saltate.
+        public List<Percorso> ImportCsv(byte[] raw, StradarioProject project)
+        {
+            if (raw.Length == 0)
+                throw new InvalidDataException("Il file selezionato risulta vuoto (0 byte letti).");
+
+            string text = CsvIo.DecodeText(raw);
+            var rows = CsvIo.ParseAll(text);
+            if (rows.Count == 0) return new List<Percorso>();
+
+            var header = rows[0];
+            int idxPercorso = Array.IndexOf(header, "Percorso");
+            int idxColore   = Array.IndexOf(header, "Colore");
+            int idxDesc     = Array.IndexOf(header, "Descrizione");
+            int idxIndice   = Array.IndexOf(header, "IndicePunto");
+            int idxLat      = Array.IndexOf(header, "Lat");
+            int idxLon      = Array.IndexOf(header, "Lon");
+            if (idxLat < 0 || idxLon < 0)
+                throw new InvalidDataException("CSV non riconosciuto come export Percorsi di StradarioApp (mancano le colonne Lat/Lon).");
+
+            var routesByName = new Dictionary<string, (Percorso Route, List<(int Index, GeoPoint Point)> Points)>(StringComparer.OrdinalIgnoreCase);
+            var orderedNames = new List<string>();
+            int fallbackCursor = 1;
+
+            for (int i = 1; i < rows.Count; i++)
+            {
+                var row = rows[i];
+                if (row.Length == 1 && row[0].Length == 0) continue; // riga vuota finale
+
+                string Get(int idx) => idx >= 0 && idx < row.Length ? row[idx] : "";
+
+                if (!double.TryParse(Get(idxLat), NumberStyles.Float, CultureInfo.InvariantCulture, out double lat)) continue;
+                if (!double.TryParse(Get(idxLon), NumberStyles.Float, CultureInfo.InvariantCulture, out double lon)) continue;
+
+                string label = idxPercorso >= 0 && !string.IsNullOrWhiteSpace(Get(idxPercorso)) ? Get(idxPercorso) : $"Percorso {fallbackCursor}";
+                if (!routesByName.TryGetValue(label, out var entry))
+                {
+                    string color = idxColore >= 0 && SKColor.TryParse(Get(idxColore), out _) ? Get(idxColore) : PercorsoRenderer.DefaultColorHex;
+                    var route = new Percorso { Label = label, ColorHex = color, Description = idxDesc >= 0 ? Get(idxDesc) : "" };
+                    entry = (route, new List<(int, GeoPoint)>());
+                    routesByName[label] = entry;
+                    orderedNames.Add(label);
+                    if (idxPercorso < 0 || string.IsNullOrWhiteSpace(Get(idxPercorso))) fallbackCursor++;
+                }
+
+                int pointIndex = idxIndice >= 0 && int.TryParse(Get(idxIndice), NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedIdx)
+                    ? parsedIdx : entry.Points.Count;
+                entry.Points.Add((pointIndex, new GeoPoint { Lat = lat, Lon = lon }));
+            }
+
+            var imported = new List<Percorso>();
+            foreach (var name in orderedNames)
+            {
+                var (route, points) = routesByName[name];
+                route.Points = points.OrderBy(p => p.Index).Select(p => p.Point).ToList();
+                if (route.Points.Count < 2) continue; // un percorso con meno di 2 punti non è disegnabile
+                imported.Add(route);
+            }
+
+            int idCursor = GetNextId(project.Percorsi);
+            foreach (var r in imported)
+                r.Id = idCursor++;
+
+            return imported;
         }
 
         // ---------------------------------------------------------------

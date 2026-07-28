@@ -212,6 +212,101 @@ namespace StradarioApp.Services
             return result;
         }
 
+        // Export come .csv: una riga per POI, gruppo/icona/colore ripetuti su
+        // ogni riga dei suoi POI (formato piatto tabellare, non annidato come
+        // KML — pensato per aprire/modificare in Excel/LibreOffice). Sempre
+        // WGS84: a differenza di GPX, il CSV è un formato nativo dell'app,
+        // non tipicamente prodotto da mappe cinesi, quindi nessuna
+        // correzione/domanda GCJ-02 in export o import.
+        public async Task ExportCsvAsync(List<PoiGroup> groups, string path)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine(CsvIo.BuildLine(new[] { "Gruppo", "Icona", "Colore", "Nome", "Lat", "Lon", "Descrizione" }));
+            foreach (var g in groups)
+                foreach (var item in g.Items)
+                    sb.AppendLine(CsvIo.BuildLine(new[]
+                    {
+                        g.Name, g.Icon.ToString(), g.ColorHex, item.Label,
+                        item.Lat.ToString(CultureInfo.InvariantCulture),
+                        item.Lon.ToString(CultureInfo.InvariantCulture),
+                        item.Description
+                    }));
+
+            await using var writer = new StreamWriter(path, false, new UTF8Encoding(false));
+            await writer.WriteAsync(sb.ToString());
+        }
+
+        // Import da .csv (stesso formato di ExportCsvAsync): le righe con lo
+        // stesso nome gruppo vengono raggruppate, nell'ordine di prima
+        // comparsa; icona/colore del gruppo sono presi dalla sua prima riga.
+        // Righe con Nome/Lat/Lon mancanti o non numerici vengono saltate.
+        public List<PoiGroup> ImportCsv(byte[] raw, StradarioProject project, string? fileNameHint = null)
+        {
+            if (raw.Length == 0)
+                throw new InvalidDataException("Il file selezionato risulta vuoto (0 byte letti).");
+
+            string text = CsvIo.DecodeText(raw);
+            var rows = CsvIo.ParseAll(text);
+            if (rows.Count == 0) return new List<PoiGroup>();
+
+            var header = rows[0];
+            int idxGruppo = Array.IndexOf(header, "Gruppo");
+            int idxIcona  = Array.IndexOf(header, "Icona");
+            int idxColore = Array.IndexOf(header, "Colore");
+            int idxNome   = Array.IndexOf(header, "Nome");
+            int idxLat    = Array.IndexOf(header, "Lat");
+            int idxLon    = Array.IndexOf(header, "Lon");
+            int idxDesc   = Array.IndexOf(header, "Descrizione");
+            if (idxNome < 0 || idxLat < 0 || idxLon < 0)
+                throw new InvalidDataException("CSV non riconosciuto come export POI di StradarioApp (mancano le colonne Nome/Lat/Lon).");
+
+            string fallbackName = string.IsNullOrWhiteSpace(fileNameHint) ? "Importati" : fileNameHint!;
+            var groupsByName = new Dictionary<string, PoiGroup>(StringComparer.OrdinalIgnoreCase);
+            var orderedGroups = new List<PoiGroup>();
+
+            for (int i = 1; i < rows.Count; i++)
+            {
+                var row = rows[i];
+                if (row.Length == 1 && row[0].Length == 0) continue; // riga vuota finale
+
+                string Get(int idx) => idx >= 0 && idx < row.Length ? row[idx] : "";
+
+                if (!double.TryParse(Get(idxLat), NumberStyles.Float, CultureInfo.InvariantCulture, out double lat)) continue;
+                if (!double.TryParse(Get(idxLon), NumberStyles.Float, CultureInfo.InvariantCulture, out double lon)) continue;
+                string name = Get(idxNome);
+                if (string.IsNullOrWhiteSpace(name)) continue;
+
+                string groupName = idxGruppo >= 0 && !string.IsNullOrWhiteSpace(Get(idxGruppo)) ? Get(idxGruppo) : fallbackName;
+                if (!groupsByName.TryGetValue(groupName, out var group))
+                {
+                    var icon = idxIcona >= 0 && Enum.TryParse<PoiIconType>(Get(idxIcona), ignoreCase: true, out var parsedIcon) ? parsedIcon : PoiIconType.Pin;
+                    string color = idxColore >= 0 && SKColor.TryParse(Get(idxColore), out _) ? Get(idxColore) : PoiIconRenderer.DefaultColorHex;
+                    group = new PoiGroup { Name = groupName, Icon = icon, ColorHex = color };
+                    groupsByName[groupName] = group;
+                    orderedGroups.Add(group);
+                }
+
+                group.Items.Add(new PoiItem
+                {
+                    Label       = name,
+                    Description = Get(idxDesc),
+                    Lat         = lat,
+                    Lon         = lon
+                });
+            }
+
+            int groupIdCursor = GetNextGroupId(project.PoiGroups);
+            foreach (var g in orderedGroups)
+            {
+                g.Id = groupIdCursor++;
+                int itemIdCursor = 1;
+                foreach (var it in g.Items)
+                    it.Id = itemIdCursor++;
+            }
+
+            return orderedGroups;
+        }
+
         // ---------------------------------------------------------------
         // IMPORT
         // ---------------------------------------------------------------

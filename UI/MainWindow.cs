@@ -5131,7 +5131,8 @@ namespace StradarioApp.UI
                 {
                     new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroKmzIcone")) { Patterns = new[] { "*.kmz" } },
                     new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroKml"))                  { Patterns = new[] { "*.kml" } },
-                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroGpx"))                  { Patterns = new[] { "*.gpx" } }
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroGpx"))                  { Patterns = new[] { "*.gpx" } },
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroCsv"))                  { Patterns = new[] { "*.csv" } }
                 }
             });
             if (file == null) return;
@@ -5139,8 +5140,9 @@ namespace StradarioApp.UI
             RememberLastUsedFolder(path);
 
             // Il dubbio GCJ-02/WGS84 si pone solo per GPX: il formato KML/KMZ
-            // è per specifica (OGC KML 2.2) sempre WGS84, quindi per quei due
-            // non si chiede nulla e non si applica mai la conversione.
+            // è per specifica (OGC KML 2.2) sempre WGS84, e il CSV è un
+            // formato nativo dell'app (mai prodotto da mappe cinesi), quindi
+            // per questi due non si chiede nulla e non si applica mai la conversione.
             bool isGpxExport = string.Equals(Path.GetExtension(path), ".gpx", StringComparison.OrdinalIgnoreCase);
             bool? gcjHint = isGpxExport ? DetectGcjHintFromFileName(Path.GetFileName(path)) : null;
             bool applyGcjConversion = !isGpxExport ? false : gcjHint ?? !(await AskYesNo(
@@ -5157,6 +5159,7 @@ namespace StradarioApp.UI
                     {
                         case ".kml": await _poiSvc.ExportKmlAsync(groups, path); break;
                         case ".gpx": await _poiSvc.ExportGpxAsync(groups, path); break;
+                        case ".csv": await _poiSvc.ExportCsvAsync(groups, path); break;
                         default:     await _poiSvc.ExportKmzAsync(groups, path); break;
                     }
                 }
@@ -5278,7 +5281,7 @@ namespace StradarioApp.UI
                 SuggestedStartLocation = await GetSuggestedStartFolderAsync(),
                 FileTypeFilter = new[]
                 {
-                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroKmzKmlGpx")) { Patterns = new[] { "*.kmz", "*.kml", "*.gpx" } },
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroKmzKmlGpx")) { Patterns = new[] { "*.kmz", "*.kml", "*.gpx", "*.csv" } },
                     new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroTuttiFile")) { Patterns = new[] { "*.*" } }
                 }
             });
@@ -5290,7 +5293,23 @@ namespace StradarioApp.UI
         // Estensioni accettate per l'importazione, sia dal file picker (vedi
         // sopra) sia dal drag&drop (vedi OnWindowDrop): un solo posto da
         // aggiornare se in futuro se ne aggiungono altre
-        private static readonly string[] ImportableExtensions = { ".kmz", ".kml", ".gpx" };
+        private static readonly string[] ImportableExtensions = { ".kmz", ".kml", ".gpx", ".csv" };
+
+        // Un .csv può essere un export di gruppi POI o di percorsi (stesso
+        // formato di PoiService.ExportCsvAsync/PercorsoService.ExportCsvAsync,
+        // vedi lì): a differenza di KML/GPX, che PoiService/PercorsoService
+        // provano entrambi sullo stesso file ignorando ciò che non li
+        // riguarda, i due formati CSV hanno intestazioni diverse e vanno
+        // distinti PRIMA di scegliere quale dei due servizi chiamare.
+        private static string? DetectCsvKind(byte[] raw)
+        {
+            var rows = CsvIo.ParseAll(CsvIo.DecodeText(raw));
+            if (rows.Count == 0) return null;
+            var header = rows[0];
+            if (header.Contains("IndicePunto")) return "percorsi";
+            if (header.Contains("Nome") && header.Contains("Lat") && header.Contains("Lon")) return "poi";
+            return null;
+        }
 
         // Logica di importazione condivisa da toolbar (file picker) e
         // drag&drop: entrambe risolvono a un IStorageFile e la passano qui
@@ -5371,8 +5390,17 @@ namespace StradarioApp.UI
                 List<Percorso> importedRoutes;
                 try
                 {
-                    importedGroups = _poiSvc.ImportKmz(raw, _project, fileNameHint);
-                    importedRoutes = _percorsoSvc.ImportKmz(raw, _project);
+                    if (string.Equals(Path.GetExtension(fileName), ".csv", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string kind = DetectCsvKind(raw) ?? throw new InvalidDataException(Strings.Get("MainWindow_CsvNonRiconosciuto"));
+                        importedGroups = kind == "poi" ? _poiSvc.ImportCsv(raw, _project, fileNameHint) : new List<PoiGroup>();
+                        importedRoutes = kind == "percorsi" ? _percorsoSvc.ImportCsv(raw, _project) : new List<Percorso>();
+                    }
+                    else
+                    {
+                        importedGroups = _poiSvc.ImportKmz(raw, _project, fileNameHint);
+                        importedRoutes = _percorsoSvc.ImportKmz(raw, _project);
+                    }
                 }
                 finally
                 {
@@ -5488,7 +5516,8 @@ namespace StradarioApp.UI
                 {
                     new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroKmzZip")) { Patterns = new[] { "*.kmz" } },
                     new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroKml"))       { Patterns = new[] { "*.kml" } },
-                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroGpx"))       { Patterns = new[] { "*.gpx" } }
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroGpx"))       { Patterns = new[] { "*.gpx" } },
+                    new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroCsv"))       { Patterns = new[] { "*.csv" } }
                 }
             });
             if (file == null) return;
@@ -5496,8 +5525,9 @@ namespace StradarioApp.UI
             RememberLastUsedFolder(path);
 
             // Il dubbio GCJ-02/WGS84 si pone solo per GPX: il formato KML/KMZ
-            // è per specifica (OGC KML 2.2) sempre WGS84, quindi per quei due
-            // non si chiede nulla e non si applica mai la conversione.
+            // è per specifica (OGC KML 2.2) sempre WGS84, e il CSV è un
+            // formato nativo dell'app (mai prodotto da mappe cinesi), quindi
+            // per questi due non si chiede nulla e non si applica mai la conversione.
             bool isGpxExport = string.Equals(Path.GetExtension(path), ".gpx", StringComparison.OrdinalIgnoreCase);
             bool? gcjHint = isGpxExport ? DetectGcjHintFromFileName(Path.GetFileName(path)) : null;
             bool applyGcjConversion = !isGpxExport ? false : gcjHint ?? !(await AskYesNo(
@@ -5514,6 +5544,7 @@ namespace StradarioApp.UI
                     {
                         case ".kml": await _percorsoSvc.ExportKmlAsync(routes, path); break;
                         case ".gpx": await _percorsoSvc.ExportGpxAsync(routes, path); break;
+                        case ".csv": await _percorsoSvc.ExportCsvAsync(routes, path); break;
                         default:     await _percorsoSvc.ExportKmzAsync(routes, path); break;
                     }
                 }

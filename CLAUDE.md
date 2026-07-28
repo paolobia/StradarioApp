@@ -572,6 +572,41 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   concatenates the two official `<path>` subpaths (tray + arrow) of the
   source SVG into one string, verified by rendering before committing.
 
+- **CSV is a fourth import/export format, alongside KMZ/KML/GPX** —
+  `Services/CsvIo.cs` is a small hand-rolled RFC 4180 reader/writer (comma
+  separator, `"..."` quoting for fields containing a comma/quote/newline,
+  doubled `""` for a literal quote inside a quoted field; no NuGet
+  dependency, same reasoning as the XML-based formats already using only
+  the .NET SDK). Two separate flat, tabular CSVs, not one combined/nested
+  file like KML — chosen so each opens cleanly in Excel/LibreOffice with
+  no column meaningless for the other type:
+  - **POI** (`PoiService.ExportCsvAsync`/`ImportCsv`): one row per POI —
+    `Gruppo,Icona,Colore,Nome,Lat,Lon,Descrizione`. Rows sharing the same
+    `Gruppo` become one `PoiGroup`, in first-appearance order;
+    `Icona`/`Colore` are read from that group's *first* row only.
+  - **Routes** (`PercorsoService.ExportCsvAsync`/`ImportCsv`): one row per
+    *point* — `Percorso,Colore,Descrizione,IndicePunto,Lat,Lon`. Rows
+    sharing the same `Percorso` become one `Percorso`, points reordered by
+    `IndicePunto` (not file row order) so a hand-reordered/hand-edited CSV
+    still comes back correct; a route left with fewer than 2 points after
+    parsing is dropped (not drawable).
+
+  Always WGS84 in both directions, no GCJ-02 prompt (`MainWindow.
+  ImportFromFileAsync`/`OnExportPoiGroups`/`OnExportPercorsi` treat `.csv`
+  like KML/KMZ, not like GPX) — CSV is a format native to this app, not one
+  realistically produced by a Chinese mapping app, unlike GPX.
+
+  Import auto-detects which of the two a given `.csv` is
+  (`MainWindow.DetectCsvKind`, header-based: `IndicePunto` present → route
+  CSV, else `Nome`+`Lat`+`Lon` present → POI CSV, else rejected with an
+  explicit error) since — unlike the KML/GPX unified import, where
+  `PoiService`/`PercorsoService` both harmlessly ignore the placemark
+  shapes they don't understand in the *same* file — the two CSV shapes
+  can't both be tried against one file blindly (a route CSV's columns
+  would partially satisfy the POI parser's minimum requirements in
+  degenerate cases, so the header check happens first and only one
+  service's `ImportCsv` runs).
+
 - **OSM tag values in an unfamiliar script are ASCII-only, never left
   garbled.** `Services/AsciiText.cs` centralizes this (used by both the
   live Overpass search in `PoiSearchService.PickBestName`/
