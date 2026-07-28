@@ -88,6 +88,27 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   picks the OSM zoom for a print scale using a **fixed 96 DPI** reference (the
   print DPI does not affect tile zoom). `CalcPageBounds` turns a click center +
   settings into a page's `GeoRect`. Any new geographic calculation belongs here.
+  **`GetPageWidthKm`/`GetPageHeightKm` (hence `CalcPageBounds`/`MapPage.
+  GeoBounds`) are based on the area actually printed INSIDE the page borders**
+  (`pageMm - 2 × StradarioSettings.BorderMarginMm`), not the full sheet —
+  `BorderMarginMm` (15mm) lives in `StradarioSettings`, not `PdfGenerator`,
+  specifically so both share the one constant; `PdfGenerator`'s own
+  `BorderMarginMm` is now just `= StradarioSettings.BorderMarginMm`. A real
+  bug motivated this: `GeoBounds` used to be computed from the FULL sheet
+  width while `PdfGenerator` always rendered the map only in the inner area
+  (border margin excluded) — the two numbers silently drifted apart (e.g.
+  21 km vs the 18 km actually printed, A4@1:100.000), so a route point that
+  fell inside a page's `GeoBounds` rectangle on the overview page could
+  render as cut off / off-canvas (route label clipped mid-word) on that
+  same page's own map. User's explicit choice between the two possible
+  fixes (render full-bleed under the borders vs. shrink `GeoBounds` to the
+  inner area): shrink `GeoBounds` — borders stay pixel-identical, the
+  configured scale is now honored exactly for the area really printed
+  inside them, at the cost of each page covering slightly less real-world
+  ground at a given scale (needs more pages to cover the same total area
+  than before). Only affects pages created after this fix — `GeoBounds` is
+  persisted per-page in `.stradario`, not recomputed from settings on load,
+  so already-placed pages in existing projects are untouched.
 
 - **Two independent tile fetchers.** `MapRenderer` fetches tiles for the
   on-screen map (in-memory `TileCache`, 512-tile cap that clears wholesale,

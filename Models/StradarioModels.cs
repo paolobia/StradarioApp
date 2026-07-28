@@ -283,19 +283,38 @@ namespace StradarioApp.Models
             _                  => "1:100.000"
         };
 
-        // Calcola quanti km coprono la pagina in larghezza
+        // Margine del bordo pagina (mm), dove PdfGenerator disegna cornice,
+        // riferimenti alle pagine adiacenti (N/S/E/O) e righello — definito
+        // qui, non in PdfGenerator, perché GetPageWidthKm/GetPageHeightKm
+        // sotto ne hanno bisogno tanto quanto PdfGenerator: un'unica fonte
+        // di verità, altrimenti rischiano di disallinearsi. Successo
+        // davvero: GeoBounds (calcolato da GeoUtils.CalcPageBounds usando
+        // questi due metodi) era basato sulla larghezza PIENA della pagina,
+        // ma la mappa viene sempre disegnata solo nell'area INTERNA ai
+        // bordi — un punto/percorso vicino al bordo del rettangolo pagina
+        // nella mappa riassuntiva (che usa GeoBounds) poteva quindi cadere
+        // fuori dall'area davvero stampata sulla pagina reale (che usa
+        // pageMm - 2×BorderMarginMm). Sottraendo il margine qui, la scala
+        // impostata (es. 1:100.000) è rispettata esattamente per l'area
+        // DAVVERO stampata dentro i bordi, non per l'intero foglio.
+        public const double BorderMarginMm = 15.0;
+
+        // Calcola quanti km copre l'area di mappa EFFETTIVAMENTE stampata in
+        // larghezza (foglio meno i due margini di bordo, vedi BorderMarginMm)
         public double GetPageWidthKm()
         {
             var (widthMm, _) = GetPageDimensionsMm();
+            double mapWidthMm = widthMm - 2 * BorderMarginMm;
             // larghezza_mm * scala / 1.000.000 = km
-            return widthMm * GetScaleDenominator() / 1_000_000.0;
+            return mapWidthMm * GetScaleDenominator() / 1_000_000.0;
         }
 
-        // Calcola quanti km coprono la pagina in altezza
+        // Calcola quanti km copre l'area di mappa EFFETTIVAMENTE stampata in altezza
         public double GetPageHeightKm()
         {
             var (_, heightMm) = GetPageDimensionsMm();
-            return heightMm * GetScaleDenominator() / 1_000_000.0;
+            double mapHeightMm = heightMm - 2 * BorderMarginMm;
+            return mapHeightMm * GetScaleDenominator() / 1_000_000.0;
         }
     }
 

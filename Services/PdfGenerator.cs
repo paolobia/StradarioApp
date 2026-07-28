@@ -29,8 +29,13 @@ namespace StradarioApp.Services
         private readonly HttpClient _http;
         private const string UserAgent = "StradarioApp/1.0 (educational use)";
 
-        // Margine per i bordi con indicazioni adiacenti (mm)
-        private const double BorderMarginMm = 15.0;
+        // Margine per i bordi con indicazioni adiacenti (mm): definito in
+        // StradarioSettings.BorderMarginMm, non qui, perché anche
+        // GetPageWidthKm/GetPageHeightKm (quindi GeoUtils.CalcPageBounds) ne
+        // hanno bisogno per calcolare GeoBounds sulla stessa area che viene
+        // davvero stampata — vedi il commento lì per il bug reale che questo
+        // ha causato quando le due costanti erano disallineate.
+        private const double BorderMarginMm = StradarioSettings.BorderMarginMm;
 
         public PdfGenerator()
         {
