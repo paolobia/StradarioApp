@@ -128,19 +128,13 @@ namespace StradarioApp.UI
         public const string InfoCircle =
             "M 8 16 A 8 8 0 1 0 8 0 a 8 8 0 0 0 0 16 z m .93 -9.412 -1 4.705 c -.07 .34 .029 .533 .304 .533 .194 0 .487 -.07 .686 -.246 l -.088 .416 c -.287 .346 -.92 .598 -1.465 .598 -.703 0 -1.002 -.422 -.808 -1.319 l .738 -3.468 c .064 -.293 .006 -.399 -.287 -.47 l -.451 -.081 .082 -.381 2.29 -.287 z M 8 5.5 a 1 1 0 1 1 0 -2 1 1 0 0 1 0 2";
 
-        // Bootstrap Icons "compass" (bi-compass): usata per l'icona "Instrada"
-        // nell'albero di navigazione dei percorsi. Combina i due <path>
-        // dell'SVG originale (anello esterno + ago) in un'unica stringa; il
-        // secondo sottotracciato partiva con una "m" relativa (che nell'SVG
-        // originale, come <path> separato, riparte comunque da capo) — qui
-        // convertita in "M" assoluta seguita da "l" relativa esplicita per
-        // preservare i delta originali, altrimenti la "M" assoluta avrebbe
-        // reinterpretato come assolute anche le coppie di coordinate
-        // successive (lineto implicito), spostando l'ago fuori posizione.
-        // Verificata renderizzando con cairosvg (identica all'SVG originale
-        // a due <path>) prima di scriverla qui.
-        public const string Compass =
-            "M 8 16.016 a 7.5 7.5 0 0 0 1.962 -14.74 A 1 1 0 0 0 9 0 H 7 a 1 1 0 0 0 -.962 1.276 A 7.5 7.5 0 0 0 8 16.016 m 6.5 -7.5 a 6.5 6.5 0 1 1 -13 0 6.5 6.5 0 0 1 13 0 M 6.94 7.44 l 4.95 -2.83 -2.83 4.95 -4.949 2.83 2.828 -4.95 z";
+        // Bootstrap Icons "car-front-fill" (bi-car-front-fill): usata per
+        // l'icona "Instrada" nell'albero di navigazione dei percorsi al
+        // posto della bussola — l'instradamento produce sempre un percorso
+        // per veicoli/pedoni/bici su rete stradale reale, un'automobile
+        // comunica il concetto più immediatamente di una bussola generica.
+        public const string CarFront =
+            "M 2.52 3.515 A 2.5 2.5 0 0 1 4.82 2 h 6.362 c 1 0 1.904 .596 2.298 1.515 l .792 1.848 c .075 .175 .21 .319 .38 .404 .5 .25 .855 .715 .965 1.262 l .335 1.679 q .05 .242 .049 .49 v .413 c 0 .814 -.39 1.543 -1 1.997 V 13.5 a .5 .5 0 0 1 -.5 .5 h -2 a .5 .5 0 0 1 -.5 -.5 v -1.338 c -1.292 .048 -2.745 .088 -4 .088 s -2.708 -.04 -4 -.088 V 13.5 a .5 .5 0 0 1 -.5 .5 h -2 a .5 .5 0 0 1 -.5 -.5 v -1.892 c -.61 -.454 -1 -1.183 -1 -1.997 v -.413 a 2.5 2.5 0 0 1 .049 -.49 l .335 -1.68 c .11 -.546 .465 -1.012 .964 -1.261 a .8 .8 0 0 0 .381 -.404 l .792 -1.848 Z M 3 10 a 1 1 0 1 0 0 -2 1 1 0 0 0 0 2 m 10 0 a 1 1 0 1 0 0 -2 1 1 0 0 0 0 2 M 6 8 a 1 1 0 0 0 0 2 h 4 a 1 1 0 1 0 0 -2 z M 2.906 5.189 a .51 .51 0 0 0 .497 .731 c .91 -.073 3.35 -.17 4.597 -.17 s 3.688 .097 4.597 .17 a .51 .51 0 0 0 .497 -.731 l -.956 -1.913 A .5 .5 0 0 0 11.691 3 H 4.309 a .5 .5 0 0 0 -.447 .276 L 2.906 5.19 Z";
 
     }
 }

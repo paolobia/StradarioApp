@@ -1787,7 +1787,7 @@ namespace StradarioApp.UI
             row.Children.Add(addPtsBtn);
 
             bool instradaFailed = _instradaFailedRouteIds.Contains(route.Id);
-            var instradaBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Compass,
+            var instradaBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.CarFront,
                 Strings.Get(instradaFailed ? "MainWindow_InstradaFallitoTooltip" : "MainWindow_InstradaTooltip"),
                 instradaFailed ? Brushes.Crimson : Brushes.SteelBlue,
                 () => StartInstradaMode(route), enabled: visible);
