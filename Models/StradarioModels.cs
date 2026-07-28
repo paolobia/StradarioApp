@@ -72,7 +72,11 @@ namespace StradarioApp.Models
         None,
         Color,
         BlackWhite,
-        RoadEmphasis
+        RoadEmphasis,
+        // Aggiunto in fondo apposta (vedi nota su MapScale sopra): l'enum è
+        // serializzato come intero, inserire/riordinare romperebbe i
+        // progetti .stradario che hanno già salvato una scelta precedente.
+        AdaptiveContrast
     }
 
     // Elenco dei tile server disponibili (nome visualizzato → URL template)
@@ -208,6 +212,14 @@ namespace StradarioApp.Models
 
         // Contrasto applicato alle mappe raster solo nel PDF esportato (vedi PdfContrastMode)
         public PdfContrastMode PdfContrastMode { get; set; } = PdfContrastMode.None;
+
+        // Rinforzo dei contorni (Sobel), applicabile sopra QUALUNQUE PdfContrastMode
+        // (compreso None) — non è un'alternativa alle modalità sopra, le integra.
+        public bool PdfEdgeReinforcement { get; set; } = false;
+
+        // Retinatura Floyd-Steinberg, ha effetto solo quando PdfContrastMode è
+        // BlackWhite (vedi Services/MapContrastFilter.ApplyFloydSteinbergDither).
+        public bool PdfDitherBlackWhite { get; set; } = false;
 
         // Ritorna le dimensioni in mm per il formato scelto
         public (double WidthMm, double HeightMm) GetPageDimensionsMm()

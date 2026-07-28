@@ -868,6 +868,75 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   only ever discards legitimate light-gray road casings. Verified by
   rendering the filter over a downloaded tile before/after the fix.
 
+- **`PdfContrastMode.AdaptiveContrast`** ("Contrasto adattivo (locale)") is
+  CLAHE (Contrast-Limited Adaptive Histogram Equalization) instead of
+  `BlackWhite`'s single global S-curve: it computes a separate tone-mapping
+  CDF per tile of an 8×8 grid (`ClaheGridSize`) and bilinearly interpolates
+  between the 4 nearest tiles' CDFs per pixel — so an area whose brightness
+  distribution differs a lot from the "average" tile the global curve was
+  tuned on (a large near-uniform park, a coastline dominated by water) still
+  gets appropriately stretched contrast, and stays in COLOR (unlike
+  `BlackWhite`). Two things changed from a naive first implementation after
+  rendering the result on real downloaded tiles (zoom-16 Colosseo/Rome, and
+  a tile with a large near-uniform green area chosen specifically to stress
+  the failure mode below):
+  1. **Operates on perceptual luma (Rec.709), not HSL lightness**, scaling
+     each pixel's R/G/B by `newLuma/oldLuma` (like a local exposure
+     correction) instead of reassembling via `SKColor.FromHsl(h, s, newL)`.
+     An HSL-based version produced visibly more saturated/orange roads and
+     buildings — L isn't perceptually decoupled from the rest of an HSL
+     color the way luma is from RGB ratios, so remapping it and
+     reassembling via the same H/S distorted color appearance.
+  2. **Clip limit tuned to 2.0×** the average per-bin histogram height
+     (`ClaheClipLimit`): a more permissive 3.0× produced a visible banding
+     artifact right at the tile grid lines specifically over the large
+     near-uniform green area — a nearly-flat tile's histogram has almost
+     all its mass in 2-3 bins, and even after clipping that spike still
+     dominates the CDF, amplifying tiny real differences between adjacent
+     tiles into a visible seam despite the bilinear blend.
+
+- **`MapContrastFilter.ApplyEdgeReinforcement`** ("Rinforza contorni") is an
+  independent toggle (`StradarioSettings.PdfEdgeReinforcement`), not a
+  `PdfContrastMode` value — it layers on top of whichever mode is selected
+  (including `None`), via `PdfGenerator.ApplyContrastPipeline` (shared by
+  both the per-page map render and the overview render) applying it right
+  after the mode's own transform. Sobel 3×3 on perceptual luma → gradient
+  magnitude → 3×3 max-filter dilation (thickens detected edges by ~1-2px,
+  addressing the motivating problem: OSM Carto's 1px strokes become
+  capillary-thin hairlines at high print DPI) → normalize/threshold →
+  darken the original pixel proportionally (never lightens, unlike a
+  symmetric unsharp mask, so it never washes out already-light fills
+  further). `EdgeThresholdLow`/`High` (0.35/0.7) and `EdgeDarkenFactor`
+  (0.5) were tuned by rendering on the same two real tiles as
+  `AdaptiveContrast` above: an initial attempt (0.08/0.35 threshold, 0.85
+  darken) blackened almost every road and label into illegibility — the
+  3×3 dilation already expands the "edge" area a lot on its own, so it
+  needs a high threshold (only the strongest gradients count) and a
+  moderate darken factor, not both aggressive at once.
+
+- **`MapContrastFilter.ApplyFloydSteinbergDither`** ("Retinatura per stampa
+  B/N") is likewise an independent toggle
+  (`StradarioSettings.PdfDitherBlackWhite`), but unlike edge reinforcement
+  it only has an effect when `PdfContrastMode == BlackWhite`
+  (`SettingsWindow`'s corresponding checkbox is disabled otherwise, and
+  `PdfGenerator.ApplyContrastPipeline` gates the call on the same
+  condition) — classic error-diffusion dithering (7/16 right, 3/16
+  bottom-left, 5/16 bottom, 1/16 bottom-right) only makes sense as a
+  refinement of the grayscale output, not of a still-colored mode.
+  Motivation: on an actual monochrome laser printer, `BlackWhite`'s
+  continuous grayscale gets re-dithered unpredictably by the printer's own
+  driver; an app-controlled dither pattern preserves fills (parks, water)
+  as a recognizable dot texture instead of a flat gray block the driver
+  might collapse differently. Must run on the bitmap **after**
+  `BuildBlackWhiteContrast`'s S-curve, never on raw tile luma — verified by
+  rendering both orders: dithering raw luma (almost all near-white, OSM
+  Carto pastels) produces only noise, while dithering the already-stretched
+  S-curve output preserves the fill/background separation the curve
+  achieved. Also must run **after** `ApplyEdgeReinforcement`, never before
+  — verified the same way: darkening edges on the still-continuous
+  grayscale gives solid, clean road outlines; dithering first and then
+  darkening breaks the outline up into the dither pattern instead.
+
 - **App icon**: `Resources/AppIcon/` holds a hand-drawn (SkiaSharp, not a
   downloaded asset) road+pin glyph at several sizes plus a multi-resolution
   `StradarioApp.ico`. `icon-256.png` is embedded as a resource

@@ -67,6 +67,8 @@ namespace StradarioApp.UI
         private TextBlock? _lblTileApiKey;
         private TextBlock? _tbTileServerInfo;
         private ComboBox?  _cbPdfContrast;
+        private CheckBox?  _cbPdfEdgeReinforcement;
+        private CheckBox?  _cbPdfDitherBlackWhite;
         private TextBox?   _tbAutoLockSeconds;
         private TextBox?   _tbGroqApiKey;
         private TextBlock? _tbPreview;
@@ -227,6 +229,13 @@ namespace StradarioApp.UI
             AddControl(grid, _tbAutoLockSeconds, 4);
 
             // ---- Contrasto mappe nel PDF ----
+            // Combo (5 modalità mutuamente esclusive) + due checkbox indipendenti
+            // sotto, non altre voci del combo: "Rinforza contorni" si applica
+            // SOPRA qualunque modalità (compreso "Nessuno"), "Retinatura B/N"
+            // ha senso solo quando la modalità è "Contrasta B/N" (disabilitata
+            // altrimenti). Tutti e tre in un unico StackPanel dentro la stessa
+            // cella di griglia del combo, per non dover rinumerare le righe
+            // successive della Grid.
             AddLabel(grid, Strings.Get("SettingsWindow_ContrastoMappe"), 5);
             _cbPdfContrast = new ComboBox
             {
@@ -235,19 +244,44 @@ namespace StradarioApp.UI
                     Strings.Get("SettingsWindow_ContrastoNessuno"),
                     Strings.Get("SettingsWindow_ContrastoColore"),
                     Strings.Get("SettingsWindow_ContrastoBN"),
-                    Strings.Get("SettingsWindow_ContrastoStrade")
+                    Strings.Get("SettingsWindow_ContrastoStrade"),
+                    Strings.Get("SettingsWindow_ContrastoAdattivo")
                 },
                 SelectedIndex = s.PdfContrastMode switch
                 {
-                    PdfContrastMode.None         => 0,
-                    PdfContrastMode.Color        => 1,
-                    PdfContrastMode.BlackWhite   => 2,
-                    PdfContrastMode.RoadEmphasis => 3,
-                    _                            => 0
+                    PdfContrastMode.None             => 0,
+                    PdfContrastMode.Color            => 1,
+                    PdfContrastMode.BlackWhite        => 2,
+                    PdfContrastMode.RoadEmphasis      => 3,
+                    PdfContrastMode.AdaptiveContrast  => 4,
+                    _                                 => 0
                 },
                 HorizontalAlignment = HorizontalAlignment.Stretch
             };
-            AddControl(grid, _cbPdfContrast, 5);
+
+            _cbPdfEdgeReinforcement = new CheckBox
+            {
+                Content   = Strings.Get("SettingsWindow_RinforzaContorni"),
+                IsChecked = s.PdfEdgeReinforcement,
+                Margin    = new Thickness(0, 4, 0, 0)
+            };
+            ToolTip.SetTip(_cbPdfEdgeReinforcement, Strings.Get("SettingsWindow_RinforzaContorniTooltip"));
+
+            _cbPdfDitherBlackWhite = new CheckBox
+            {
+                Content   = Strings.Get("SettingsWindow_RetinaturaBN"),
+                IsChecked = s.PdfDitherBlackWhite,
+                IsEnabled = s.PdfContrastMode == PdfContrastMode.BlackWhite
+            };
+            ToolTip.SetTip(_cbPdfDitherBlackWhite, Strings.Get("SettingsWindow_RetinaturaBNTooltip"));
+            _cbPdfContrast.SelectionChanged += (_, _) =>
+                _cbPdfDitherBlackWhite.IsEnabled = _cbPdfContrast.SelectedIndex == 2;
+
+            var contrastPanel = new StackPanel { Spacing = 4 };
+            contrastPanel.Children.Add(_cbPdfContrast);
+            contrastPanel.Children.Add(_cbPdfEdgeReinforcement);
+            contrastPanel.Children.Add(_cbPdfDitherBlackWhite);
+            AddControl(grid, contrastPanel, 5);
 
             // ---- Preview ----
             _tbPreview = new TextBlock
@@ -755,8 +789,11 @@ namespace StradarioApp.UI
                 1 => PdfContrastMode.Color,
                 2 => PdfContrastMode.BlackWhite,
                 3 => PdfContrastMode.RoadEmphasis,
+                4 => PdfContrastMode.AdaptiveContrast,
                 _ => PdfContrastMode.None
             };
+            s.PdfEdgeReinforcement = _cbPdfEdgeReinforcement?.IsChecked ?? false;
+            s.PdfDitherBlackWhite  = _cbPdfDitherBlackWhite?.IsChecked ?? false;
 
             return s;
         }

@@ -564,8 +564,30 @@ namespace StradarioApp.Services
             var bitmap = await RenderTilesAsync(centerLon, centerLat, zoom, pixW, pixH,
                 settings.GetEffectiveTileServerUrl());
 
-            if (bitmap != null && settings.PdfContrastMode != PdfContrastMode.None)
+            bitmap = ApplyContrastPipeline(bitmap, settings);
+
+            return bitmap;
+        }
+
+        // Applica in sequenza le tre trasformazioni raster opzionali
+        // (PdfContrastMode, rinforzo contorni, retinatura B/N) nello stesso
+        // ordine verificato su tile reali in Services/MapContrastFilter.cs:
+        // modalità di contrasto → contorni → retinatura (solo se la
+        // modalità è BlackWhite). Condiviso dai due punti che compongono il
+        // raster di sfondo (pagina mappa e overview), così restano sempre
+        // sincronizzati.
+        private static SKBitmap? ApplyContrastPipeline(SKBitmap? bitmap, StradarioSettings settings)
+        {
+            if (bitmap == null) return null;
+
+            if (settings.PdfContrastMode != PdfContrastMode.None)
                 bitmap = MapContrastFilter.Apply(bitmap, settings.PdfContrastMode);
+
+            if (settings.PdfEdgeReinforcement)
+                bitmap = MapContrastFilter.ApplyEdgeReinforcement(bitmap);
+
+            if (settings.PdfContrastMode == PdfContrastMode.BlackWhite && settings.PdfDitherBlackWhite)
+                bitmap = MapContrastFilter.ApplyFloydSteinbergDither(bitmap);
 
             return bitmap;
         }
@@ -800,8 +822,7 @@ namespace StradarioApp.Services
 
             // Contrasto (solo PDF, su richiesta): applicato al raster dei tile
             // PRIMA di percorsi/POI, così le sovrapposizioni vettoriali restano nitide.
-            if (bitmap != null && settings.PdfContrastMode != PdfContrastMode.None)
-                bitmap = MapContrastFilter.Apply(bitmap, settings.PdfContrastMode);
+            bitmap = ApplyContrastPipeline(bitmap, settings);
 
             bool forceBlackWhite = settings.PdfContrastMode == PdfContrastMode.BlackWhite;
 
