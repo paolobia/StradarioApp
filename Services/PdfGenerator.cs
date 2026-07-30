@@ -48,7 +48,8 @@ namespace StradarioApp.Services
         public async Task GenerateAsync(
             StradarioProject project,
             string outputPath,
-            Action<int, int, string>? progress = null)
+            Action<int, int, string>? progress = null,
+            string? coverTitle = null)
         {
             var settings = project.Settings;
             var pages    = project.Pages;
@@ -71,9 +72,18 @@ namespace StradarioApp.Services
 
             // Calcola dimensioni pagina PDF
             var (pageWidthMm, pageHeightMm) = settings.GetPageDimensionsMm();
+            string title = string.IsNullOrWhiteSpace(coverTitle) ? project.ProjectName : coverTitle!;
+
             var pdfDoc = new PdfDocument();
-            pdfDoc.Info.Title   = project.ProjectName;
+            pdfDoc.Info.Title   = title;
             pdfDoc.Info.Creator = "StradarioApp";
+
+            // ---------------------------------------------------------------
+            // Copertina: titolo grande, prima di tutto il resto.
+            // ---------------------------------------------------------------
+            var coverPage = pdfDoc.AddPage();
+            SetPageSize(coverPage, pageWidthMm, pageHeightMm);
+            DrawCoverPage(coverPage, title, settings);
 
             // ---------------------------------------------------------------
             // Pagine iniziali: elenco dei gruppi di POI (se presenti), prima
@@ -81,11 +91,13 @@ namespace StradarioApp.Services
             // automatica), perciò la numerazione delle pagine mappa successive
             // dipende da quante pagine POI sono state generate.
             // ---------------------------------------------------------------
+            var poiGroupsInPages = FilterPoiGroupsInsidePages(poiGroups, pages);
+
             int poiPageCount = 0;
-            if (poiGroups.Count > 0)
+            if (poiGroupsInPages.Count > 0)
             {
                 progress?.Invoke(0, sorted.Count + 2, "Generazione elenco punti di interesse...");
-                poiPageCount = DrawPoiListPages(pdfDoc, poiGroups, pageWidthMm, pageHeightMm);
+                poiPageCount = DrawPoiListPages(pdfDoc, poiGroupsInPages, pageWidthMm, pageHeightMm);
             }
 
             int percorsiPageCount = 0;
@@ -95,8 +107,8 @@ namespace StradarioApp.Services
                 percorsiPageCount = DrawPercorsiListPages(pdfDoc, percorsi, pageWidthMm, pageHeightMm);
             }
 
-            // Le pagine mappa partono dopo: pagine POI, pagine percorsi, poi indice, poi overview
-            int frontMatterPages = poiPageCount + percorsiPageCount + 2; // +2: indice + overview
+            // Le pagine mappa partono dopo: copertina, pagine POI, pagine percorsi, poi indice, poi overview
+            int frontMatterPages = poiPageCount + percorsiPageCount + 3; // +3: copertina + indice + overview
             for (int i = 0; i < sorted.Count; i++)
                 sorted[i].PageNumber = i + 1 + frontMatterPages;
 
@@ -128,12 +140,17 @@ namespace StradarioApp.Services
                 var mapPage = sorted[i];
                 progress?.Invoke(poiPageCount + percorsiPageCount + 2 + i, totalSteps, $"Pagina {mapPage.PageNumber}: {mapPage.Label}...");
 
+                // Ogni pagina può avere un proprio orientamento/scala (override
+                // rispetto alle impostazioni globali) — vedi MapPage.GetEffectiveSettings.
+                var pageSettings = mapPage.GetEffectiveSettings(settings);
+                var (pageMmW, pageMmH) = pageSettings.GetPageDimensionsMm();
+
                 var pdfPage = pdfDoc.AddPage();
-                SetPageSize(pdfPage, pageWidthMm, pageHeightMm);
+                SetPageSize(pdfPage, pageMmW, pageMmH);
 
                 var adjacent  = FindAdjacentPages(mapPage, sorted);
-                var mapBitmap = await RenderMapPageAsync(mapPage, settings, poiGroups, percorsi);
-                DrawMapPage(pdfPage, mapBitmap, mapPage, adjacent, settings);
+                var mapBitmap = await RenderMapPageAsync(mapPage, pageSettings, poiGroups, percorsi);
+                DrawMapPage(pdfPage, mapBitmap, mapPage, adjacent, pageSettings);
                 mapBitmap?.Dispose();
             }
 
@@ -180,6 +197,39 @@ namespace StradarioApp.Services
             return rows.SelectMany(r => r).ToList();
         }
 
+        // Disegna la copertina: titolo grande centrato (di default il nome
+        // del file .stradario senza estensione, vedi MainWindow.OnGeneratePdf),
+        // una riga sottile di separazione e un sottotitolo con scala/formato
+        // e data di generazione. Stile professionale: nero, nessun corsivo,
+        // nessun colore decorativo.
+        private void DrawCoverPage(PdfPage page, string title, StradarioSettings settings)
+        {
+            using var gfx = XGraphics.FromPdfPage(page);
+            double w = page.Width.Point;
+            double h = page.Height.Point;
+
+            gfx.DrawRectangle(XBrushes.White, 0, 0, w, h);
+
+            var titleFont    = new XFont("Arial", 28, XFontStyle.Bold);
+            var subtitleFont = new XFont("Arial", 11);
+
+            double centerY = h * 0.42;
+
+            gfx.DrawString(title, titleFont, XBrushes.Black,
+                new XRect(40, centerY - 40, w - 80, 60), XStringFormats.Center);
+
+            double ruleY = centerY + 30;
+            gfx.DrawLine(XPens.Black, w * 0.28, ruleY, w * 0.72, ruleY);
+
+            string subtitle = $"Scala {settings.GetScaleLabel()}  |  {settings.PageSize} {settings.Orientation}  |  {DateTime.Now:d MMMM yyyy}";
+            gfx.DrawString(subtitle, subtitleFont, XBrushes.Black,
+                new XRect(40, ruleY + 14, w - 80, 20), XStringFormats.Center);
+
+            var footerFont = new XFont("Arial", 8);
+            gfx.DrawString("StradarioApp", footerFont, XBrushes.Black,
+                new XRect(0, h - 40, w, 16), XStringFormats.BottomCenter);
+        }
+
         // Disegna la pagina indice.
         // Colonne: Etichetta (stretta) | Centro (stretta) | Descrizione (ampia, 2 righe)
         // Senza colonna N° come da richiesta.
@@ -200,7 +250,7 @@ namespace StradarioApp.Services
             // Sottotitolo
             var subFont   = new XFont("Arial", 9);
             string sub    = $"Scala {settings.GetScaleLabel()}  |  {settings.PageSize} {settings.Orientation}  |  {settings.Dpi} DPI";
-            gfx.DrawString(sub, subFont, XBrushes.DarkGray,
+            gfx.DrawString(sub, subFont, XBrushes.Black,
                 new XRect(0, 46, w, 16), XStringFormats.TopCenter);
 
             var cellFont  = new XFont("Arial", 8);
@@ -257,9 +307,9 @@ namespace StradarioApp.Services
                     new XRect(xLabel + 2, y + 2, colLabel - 4, rh - 4), XStringFormats.TopLeft);
 
                 // Centro: lon/lat su due righe corte
-                gfx.DrawString($"{p.GeoBounds.CenterLon:F3}°", cellFont, XBrushes.DimGray,
+                gfx.DrawString($"{p.GeoBounds.CenterLon:F3}°", cellFont, XBrushes.Black,
                     new XRect(xCenter + 2, y + 1,     colCenter - 4, 10), XStringFormats.TopLeft);
-                gfx.DrawString($"{p.GeoBounds.CenterLat:F3}°", cellFont, XBrushes.DimGray,
+                gfx.DrawString($"{p.GeoBounds.CenterLat:F3}°", cellFont, XBrushes.Black,
                     new XRect(xCenter + 2, y + 1 + 11, colCenter - 4, 10), XStringFormats.TopLeft);
 
                 // Descrizione: fino a 2 righe
@@ -292,6 +342,33 @@ namespace StradarioApp.Services
             gfx.DrawLine(colPen, xDesc,   tableTop, xDesc,   y);
         }
 
+        // Spezza un testo in più righe che entrano in maxWidth (word-wrap
+        // greedy: aggiunge parole finché stanno nella larghezza, altrimenti
+        // va a capo). Usata per le descrizioni di gruppi POI/percorsi/singoli
+        // POI nelle pagine elenco: senza wrap una descrizione lunga finiva
+        // tagliata a bordo pagina invece di andare a capo.
+        private static List<string> WrapText(XGraphics gfx, string text, XFont font, double maxWidth)
+        {
+            var lines = new List<string>();
+            var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var current = "";
+            foreach (var word in words)
+            {
+                string candidate = current.Length == 0 ? word : current + " " + word;
+                if (gfx.MeasureString(candidate, font).Width > maxWidth && current.Length > 0)
+                {
+                    lines.Add(current);
+                    current = word;
+                }
+                else
+                {
+                    current = candidate;
+                }
+            }
+            if (current.Length > 0) lines.Add(current);
+            return lines;
+        }
+
         // Disegna l'elenco dei gruppi di POI (icona + nome + descrizione, poi
         // una riga per ogni POI con icona, etichetta e coordinate), in testa
         // al documento prima dell'indice. Crea automaticamente tutte le
@@ -301,16 +378,18 @@ namespace StradarioApp.Services
             double pageWidthMm, double pageHeightMm)
         {
             const double margin      = 24;
-            const double groupRowH   = 20;
-            const double descRowH    = 12;
-            const double itemRowH    = 16;
-            const double iconSize    = 14;
+            const double groupRowH    = 20;
+            const double descRowH     = 12;
+            const double itemRowH     = 16;
+            const double itemDescRowH = 10;
+            const double iconSize     = 14;
 
-            var titleFont = new XFont("Arial", 16, XFontStyle.Bold);
-            var groupFont = new XFont("Arial", 11, XFontStyle.Bold);
-            var descFont  = new XFont("Arial", 8, XFontStyle.Italic);
-            var itemFont  = new XFont("Arial", 9);
-            var coordFont = new XFont("Arial", 8);
+            var titleFont    = new XFont("Arial", 16, XFontStyle.Bold);
+            var groupFont    = new XFont("Arial", 11, XFontStyle.Bold);
+            var descFont     = new XFont("Arial", 8);
+            var itemFont     = new XFont("Arial", 9);
+            var itemDescFont = new XFont("Arial", 6.5);
+            var coordFont    = new XFont("Arial", 8);
 
             var iconCache = new Dictionary<int, XImage>();
             XImage GetIcon(PoiGroup g)
@@ -351,7 +430,21 @@ namespace StradarioApp.Services
 
             foreach (var group in poiGroups)
             {
-                if (y + groupRowH + itemRowH > h - margin)
+                double groupDescWidth = tableWidth - iconSize - 16;
+                bool hasGroupDesc = !string.IsNullOrWhiteSpace(group.Description);
+                var groupDescLines = hasGroupDesc ? WrapText(gfx!, group.Description, descFont, groupDescWidth) : new List<string>();
+
+                // Il primo POI del gruppo deve stare sulla stessa pagina
+                // dell'intestazione (mai un'intestazione "orfana" a fondo
+                // pagina con i suoi POI rimandati alla pagina successiva).
+                bool firstItemHasDesc = group.Items.Count > 0 && !string.IsNullOrWhiteSpace(group.Items[0].Description);
+                double firstItemDescWidth = tableWidth - iconSize - 18;
+                int firstItemDescLines = firstItemHasDesc
+                    ? WrapText(gfx!, group.Items[0].Description, itemDescFont, firstItemDescWidth).Count : 0;
+                double neededFirstItemH = group.Items.Count > 0 ? itemRowH + firstItemDescLines * itemDescRowH : 0;
+
+                double neededGroupStartH = groupRowH + groupDescLines.Count * descRowH + neededFirstItemH;
+                if (y + neededGroupStartH > h - margin)
                     NewPage();
 
                 gfx!.DrawRectangle(new XSolidBrush(XColor.FromArgb(230, 238, 250)), margin, y, tableWidth, groupRowH);
@@ -360,17 +453,20 @@ namespace StradarioApp.Services
                     new XRect(margin + iconSize + 8, y, tableWidth - iconSize - 16, groupRowH), XStringFormats.CenterLeft);
                 y += groupRowH;
 
-                if (!string.IsNullOrWhiteSpace(group.Description))
+                foreach (var line in groupDescLines)
                 {
-                    if (y + descRowH > h - margin) NewPage();
-                    gfx!.DrawString(group.Description, descFont, XBrushes.DimGray,
-                        new XRect(margin + iconSize + 8, y, tableWidth - iconSize - 16, descRowH), XStringFormats.TopLeft);
+                    gfx.DrawString(line, descFont, XBrushes.Black,
+                        new XRect(margin + iconSize + 8, y, groupDescWidth, descRowH), XStringFormats.TopLeft);
                     y += descRowH;
                 }
 
                 foreach (var item in group.Items)
                 {
-                    if (y + itemRowH > h - margin)
+                    bool hasItemDesc = !string.IsNullOrWhiteSpace(item.Description);
+                    double descWidth = tableWidth - iconSize - 18;
+                    var descLines = hasItemDesc ? WrapText(gfx!, item.Description, itemDescFont, descWidth) : new List<string>();
+                    double neededItemH = itemRowH + descLines.Count * itemDescRowH;
+                    if (y + neededItemH > h - margin)
                         NewPage();
 
                     double iconY = y + (itemRowH - iconSize * 0.85) / 2.0;
@@ -378,9 +474,16 @@ namespace StradarioApp.Services
                     gfx.DrawString(item.Label, itemFont, XBrushes.Black,
                         new XRect(margin + iconSize + 14, y, tableWidth * 0.55, itemRowH), XStringFormats.CenterLeft);
                     string coords = $"{item.Lon:F4}°E  {item.Lat:F4}°N";
-                    gfx.DrawString(coords, coordFont, XBrushes.DimGray,
+                    gfx.DrawString(coords, coordFont, XBrushes.Black,
                         new XRect(margin + tableWidth * 0.62, y, tableWidth * 0.38 - 4, itemRowH), XStringFormats.CenterLeft);
                     y += itemRowH;
+
+                    foreach (var line in descLines)
+                    {
+                        gfx.DrawString(line, itemDescFont, XBrushes.Black,
+                            new XRect(margin + iconSize + 14, y, descWidth, itemDescRowH), XStringFormats.TopLeft);
+                        y += itemDescRowH;
+                    }
                 }
 
                 y += 6; // spazio tra gruppi
@@ -403,7 +506,7 @@ namespace StradarioApp.Services
 
             var titleFont = new XFont("Arial", 16, XFontStyle.Bold);
             var nameFont  = new XFont("Arial", 10, XFontStyle.Bold);
-            var descFont  = new XFont("Arial", 8, XFontStyle.Italic);
+            var descFont  = new XFont("Arial", 8);
             var metaFont  = new XFont("Arial", 8);
 
             int pageCount = 0;
@@ -433,7 +536,9 @@ namespace StradarioApp.Services
             foreach (var r in percorsi)
             {
                 bool hasDesc = !string.IsNullOrWhiteSpace(r.Description);
-                double neededH = rowH + (hasDesc ? descRowH : 0);
+                double descWidth = tableWidth - swatchSz - 18;
+                var descLines = hasDesc ? WrapText(gfx!, r.Description, descFont, descWidth) : new List<string>();
+                double neededH = rowH + descLines.Count * descRowH;
                 if (y + neededH > h - margin)
                     NewPage();
 
@@ -450,15 +555,15 @@ namespace StradarioApp.Services
 
                 double lengthKm = PercorsoRenderer.LengthKm(r);
                 string meta = $"{lengthKm:0.##} km  ·  {r.Points.Count} punti";
-                gfx.DrawString(meta, metaFont, XBrushes.DimGray,
+                gfx.DrawString(meta, metaFont, XBrushes.Black,
                     new XRect(margin + tableWidth * 0.62, y, tableWidth * 0.38 - 6, rowH), XStringFormats.CenterLeft);
 
                 y += rowH;
 
-                if (hasDesc)
+                foreach (var line in descLines)
                 {
-                    gfx.DrawString(r.Description, descFont, XBrushes.DimGray,
-                        new XRect(margin + swatchSz + 14, y, tableWidth - swatchSz - 18, descRowH), XStringFormats.TopLeft);
+                    gfx.DrawString(line, descFont, XBrushes.Black,
+                        new XRect(margin + swatchSz + 14, y, descWidth, descRowH), XStringFormats.TopLeft);
                     y += descRowH;
                 }
 
@@ -514,6 +619,37 @@ namespace StradarioApp.Services
         // ---------------------------------------------------------------
         // MAPPA RIASSUNTIVA
         // ---------------------------------------------------------------
+
+        // Un POI che non ricade dentro nessuna pagina non finisce sulla
+        // stampa (nessun quadrante lo mostra), quindi non ha senso elencarlo
+        // nel gazetteer: filtra i gruppi/POI per contenimento geografico
+        // nelle pagine del progetto prima di generare le pagine dell'elenco.
+        // Un gruppo che resta senza POI non compare affatto.
+        private static List<PoiGroup> FilterPoiGroupsInsidePages(List<PoiGroup> groups, List<MapPage> pages)
+        {
+            bool IsInsideAnyPage(double lon, double lat) => pages.Any(p =>
+                lon >= p.GeoBounds.MinLon && lon <= p.GeoBounds.MaxLon &&
+                lat >= p.GeoBounds.MinLat && lat <= p.GeoBounds.MaxLat);
+
+            var result = new List<PoiGroup>();
+            foreach (var g in groups)
+            {
+                var itemsInside = g.Items.Where(i => IsInsideAnyPage(i.Lon, i.Lat)).ToList();
+                if (itemsInside.Count == 0) continue;
+
+                result.Add(new PoiGroup
+                {
+                    Id          = g.Id,
+                    Name        = g.Name,
+                    Description = g.Description,
+                    Icon        = g.Icon,
+                    ColorHex    = g.ColorHex,
+                    IsLocked    = g.IsLocked,
+                    Items       = itemsInside
+                });
+            }
+            return result;
+        }
 
         // Calcola il GeoRect che racchiude tutte le pagine con un margine del 10%
         private static GeoRect CalcOverallBounds(List<MapPage> pages)
@@ -693,11 +829,11 @@ namespace StradarioApp.Services
                 // Label centrata con ombra
                 var labelRect = new XRect(x1 + 1, y1 + 1, rw - 2, rh - 2);
                 gfx.DrawString(page.Label, labelFont, shadowBrush, labelRect, XStringFormats.Center);
-                gfx.DrawString(page.Label, labelFont, XBrushes.DarkBlue, labelRect, XStringFormats.Center);
+                gfx.DrawString(page.Label, labelFont, XBrushes.Black, labelRect, XStringFormats.Center);
 
                 // Numero di pagina in basso a destra (se il rettangolo è abbastanza grande)
                 if (rw > 22 && rh > 14)
-                    gfx.DrawString($"p.{page.PageNumber}", numFont, XBrushes.Gray,
+                    gfx.DrawString($"p.{page.PageNumber}", numFont, XBrushes.Black,
                         new XRect(x1 + 1, y2 - 10, rw - 2, 9), XStringFormats.BottomRight);
             }
 
@@ -833,7 +969,7 @@ namespace StradarioApp.Services
 
             if (bitmap != null && percorsi.Count > 0)
                 DrawRoutesOnBitmap(bitmap, page.GeoBounds.CenterLon, page.GeoBounds.CenterLat,
-                    zoom, tileSizePx, pixW, pixH, percorsi, forceBlackWhite);
+                    zoom, tileSizePx, pixW, pixH, percorsi, poiGroups, forceBlackWhite);
 
             if (bitmap != null && poiGroups.Count > 0)
                 DrawPoisOnBitmap(bitmap, page.GeoBounds.CenterLon, page.GeoBounds.CenterLat,
@@ -852,16 +988,22 @@ namespace StradarioApp.Services
             SKBitmap bitmap,
             double centerLon, double centerLat, int zoom, double tileSizePx,
             int pixW, int pixH,
-            List<Percorso> percorsi, bool forceBlackWhite = false)
+            List<Percorso> percorsi, List<PoiGroup> poiGroups, bool forceBlackWhite = false)
         {
             using var canvas = new SKCanvas(bitmap);
 
             (double x, double y) Project(double lon, double lat) =>
                 GeoUtils.GeoToBitmapPixel(lon, lat, centerLon, centerLat, zoom, tileSizePx, pixW, pixH);
 
+            // Punti da evitare per l'etichetta del percorso: tutti i POI di
+            // questa pagina (vedi PercorsoRenderer.Draw) — coprono anche il
+            // caso di un percorso che coincide con un gruppo di POI.
+            var avoid = poiGroups.SelectMany(g => g.Items).Select(it => (it.Lon, it.Lat)).ToList();
+
             foreach (var route in percorsi)
                 PercorsoRenderer.Draw(canvas, route, Project,
-                    colorOverride: forceBlackWhite ? SKColors.Black : (SKColor?)null);
+                    colorOverride: forceBlackWhite ? SKColors.Black : (SKColor?)null,
+                    avoidLabelNear: avoid);
         }
 
         // Disegna i marker dei POI ricadenti nell'area della pagina (con un
@@ -965,7 +1107,7 @@ namespace StradarioApp.Services
             // Coordinate centro in basso a destra
             var coordFont = new XFont("Arial", 7);
             string coords = $"{page.GeoBounds.CenterLon:F4}°E  {page.GeoBounds.CenterLat:F4}°N";
-            gfx.DrawString(coords, coordFont, XBrushes.DarkGray,
+            gfx.DrawString(coords, coordFont, XBrushes.Black,
                 new XRect(mapX, mapY + mapH - 14, mapW - 4, 14), XStringFormats.BottomRight);
 
             // Righello / barra di scala grafica: nella fascia di margine SUD,
@@ -1034,7 +1176,7 @@ namespace StradarioApp.Services
 
             // Didascalia sotto la barra.
             gfx.DrawString($"{barCm:0} cm = {realLabel}  (scala {settings.GetScaleLabel()})",
-                tickFont, XBrushes.DimGray,
+                tickFont, XBrushes.Black,
                 new XRect(x0, y0 + barH + 1, barLenPt + 70, captionRowH), XStringFormats.TopLeft);
         }
 

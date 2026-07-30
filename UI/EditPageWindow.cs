@@ -14,6 +14,7 @@
 // =============================================================================
 
 using System;
+using System.Collections.Generic;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
@@ -37,7 +38,25 @@ namespace StradarioApp.UI
         private TextBox?   _tbDescription;
         private TextBox?   _tbLon;
         private TextBox?   _tbLat;
+        private ComboBox?  _cbOrientation;
+        private ComboBox?  _cbScale;
         private TextBlock? _tbStatus;
+
+        // Indice 0 = "usa impostazioni globali" (override = null) in entrambi i combo.
+        private static readonly MapScale[] ScaleComboValues =
+        {
+            MapScale.Scale1K, MapScale.Scale5K, MapScale.Scale10K, MapScale.Scale15K,
+            MapScale.Scale20K, MapScale.Scale25K, MapScale.Scale50K, MapScale.Scale100K,
+            MapScale.Scale150K, MapScale.Scale200K, MapScale.Scale250K, MapScale.Scale300K,
+            MapScale.Scale400K, MapScale.Scale500K, MapScale.Scale800K, MapScale.Scale1M
+        };
+        private static readonly string[] ScaleComboLabels =
+        {
+            "1:1.000", "1:5.000", "1:10.000", "1:15.000",
+            "1:20.000", "1:25.000", "1:50.000", "1:100.000",
+            "1:150.000", "1:200.000", "1:250.000", "1:300.000",
+            "1:400.000", "1:500.000", "1:800.000", "1:1.000.000"
+        };
 
         public EditPageWindow(MapPage page, StradarioSettings settings)
         {
@@ -47,7 +66,7 @@ namespace StradarioApp.UI
 
             Title  = string.Format(Strings.Get("EditPageWindow_Titolo"), page.Label);
             Width  = 420;
-            Height = 390;
+            Height = 470;
             CanResize = false;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
@@ -59,7 +78,7 @@ namespace StradarioApp.UI
             var grid = new Grid
             {
                 Margin            = new Thickness(16),
-                RowDefinitions    = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,Auto,Auto"),
+                RowDefinitions    = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto"),
                 ColumnDefinitions = new ColumnDefinitions("110,*")
             };
 
@@ -79,6 +98,40 @@ namespace StradarioApp.UI
             AddLabel(grid, Strings.Get("EditPageWindow_Latitudine"), row);
             _tbLat = new TextBox { Text = $"{p.GeoBounds.CenterLat:F6}" };
             AddControl(grid, _tbLat, row++);
+
+            // ---- Orientamento (override per-pagina, "usa globale" di default) ----
+            AddLabel(grid, Strings.Get("EditPageWindow_Orientamento"), row);
+            _cbOrientation = new ComboBox
+            {
+                ItemsSource = new[]
+                {
+                    Strings.Get("EditPageWindow_UsaGlobale"),
+                    Strings.Get("SettingsWindow_Portrait"),
+                    Strings.Get("SettingsWindow_Landscape")
+                },
+                SelectedIndex = p.OrientationOverride switch
+                {
+                    null                          => 0,
+                    PageOrientation.Portrait      => 1,
+                    PageOrientation.Landscape     => 2,
+                    _                             => 0
+                },
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            AddControl(grid, _cbOrientation, row++);
+
+            // ---- Scala (override per-pagina, "usa globale" di default) ----
+            AddLabel(grid, Strings.Get("EditPageWindow_Scala"), row);
+            var scaleItems = new List<string> { Strings.Get("EditPageWindow_UsaGlobale") };
+            scaleItems.AddRange(ScaleComboLabels);
+            _cbScale = new ComboBox
+            {
+                ItemsSource = scaleItems,
+                SelectedIndex = p.ScaleOverride.HasValue && Array.IndexOf(ScaleComboValues, p.ScaleOverride.Value) is var idx && idx >= 0
+                    ? idx + 1 : 0,
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            AddControl(grid, _cbScale, row++);
 
             // ---- Descrizione multilinea ----
             AddLabel(grid, Strings.Get("EditPageWindow_Descrizione"), row);
@@ -216,15 +269,31 @@ namespace StradarioApp.UI
                 SetStatus(Strings.Get("EditPageWindow_CoordinateNonValide"), true);
                 return;
             }
-            ResultPage = new MapPage
+
+            PageOrientation? orientationOverride = (_cbOrientation?.SelectedIndex ?? 0) switch
             {
-                Id          = _original.Id,
-                Label       = _tbLabel?.Text?.Trim() ?? _original.Label,
-                Description = _tbDescription?.Text?.Trim() ?? "",
-                PageNumber  = _original.PageNumber,
-                GeoBounds   = GeoUtils.CalcPageBounds(lon, lat, _settings)
+                1 => PageOrientation.Portrait,
+                2 => PageOrientation.Landscape,
+                _ => null
             };
-            Confirmed = true;
+            int scaleIdx = (_cbScale?.SelectedIndex ?? 0) - 1;
+            MapScale? scaleOverride = scaleIdx >= 0 && scaleIdx < ScaleComboValues.Length
+                ? ScaleComboValues[scaleIdx] : null;
+
+            var newPage = new MapPage
+            {
+                Id                  = _original.Id,
+                Label               = _tbLabel?.Text?.Trim() ?? _original.Label,
+                Description         = _tbDescription?.Text?.Trim() ?? "",
+                PageNumber          = _original.PageNumber,
+                IsLocked            = _original.IsLocked,
+                OrientationOverride = orientationOverride,
+                ScaleOverride       = scaleOverride
+            };
+            newPage.GeoBounds = GeoUtils.CalcPageBounds(lon, lat, newPage.GetEffectiveSettings(_settings));
+
+            ResultPage = newPage;
+            Confirmed  = true;
             Close();
         }
 

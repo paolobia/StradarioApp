@@ -13,6 +13,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -200,7 +201,7 @@ namespace StradarioApp.Services
             DrawPages(canvas, canvasWidth, canvasHeight, centerLon, centerLat, zoom, pages, selectedPageId);
 
             if (routes != null && routes.Count > 0)
-                DrawRoutes(canvas, canvasWidth, canvasHeight, centerLon, centerLat, zoom, routes);
+                DrawRoutes(canvas, canvasWidth, canvasHeight, centerLon, centerLat, zoom, routes, poiGroups);
 
             if (poiGroups != null && poiGroups.Count > 0)
                 DrawPois(canvas, canvasWidth, canvasHeight, centerLon, centerLat, zoom, poiGroups);
@@ -209,7 +210,8 @@ namespace StradarioApp.Services
             {
                 (double x, double y) Project(double lon, double lat) =>
                     GeoUtils.GeoToPixel(lon, lat, centerLon, centerLat, zoom, canvasWidth, canvasHeight);
-                PercorsoRenderer.Draw(canvas, previewRoute, Project, dashed: true);
+                var avoid = poiGroups?.SelectMany(g => g.Items).Select(it => (it.Lon, it.Lat)).ToList();
+                PercorsoRenderer.Draw(canvas, previewRoute, Project, dashed: true, avoidLabelNear: avoid);
             }
         }
 
@@ -219,13 +221,18 @@ namespace StradarioApp.Services
             float canvasWidth, float canvasHeight,
             double centerLon, double centerLat,
             double zoom,
-            List<Percorso> routes)
+            List<Percorso> routes,
+            List<PoiGroup>? poiGroups)
         {
             (double x, double y) Project(double lon, double lat) =>
                 GeoUtils.GeoToPixel(lon, lat, centerLon, centerLat, zoom, canvasWidth, canvasHeight);
 
+            // Punti da evitare per l'etichetta del percorso: tutti i POI
+            // visibili nella stessa vista (vedi PercorsoRenderer.Draw).
+            var avoid = poiGroups?.SelectMany(g => g.Items).Select(it => (it.Lon, it.Lat)).ToList();
+
             foreach (var route in routes)
-                PercorsoRenderer.Draw(canvas, route, Project);
+                PercorsoRenderer.Draw(canvas, route, Project, avoidLabelNear: avoid);
         }
 
         // Disegna i marker di tutti i gruppi di POI sopra la mappa e le pagine

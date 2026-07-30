@@ -121,6 +121,9 @@ namespace StradarioApp.Resources
             ["EditPageWindow_Longitudine"] = "Longitude:",
             ["EditPageWindow_Latitudine"] = "Latitude:",
             ["EditPageWindow_Descrizione"] = "Description:",
+            ["EditPageWindow_Orientamento"] = "Orientation:",
+            ["EditPageWindow_Scala"] = "Scale:",
+            ["EditPageWindow_UsaGlobale"] = "(use global settings)",
             ["EditPageWindow_CittaPrincipali"] = "Main cities",
             ["EditPageWindow_CittaPrincipaliTooltip"] =
                 "Adds the 3 most populous cities in the area to the description.\n" +

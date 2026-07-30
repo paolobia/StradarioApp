@@ -47,9 +47,15 @@ namespace StradarioApp.Services
         // punti), su una geometria densa (es. un'alternativa OSRM con
         // centinaia di punti) diventerebbero una fila di pallini fitta e
         // illeggibile invece di una linea pulita — vedi MainWindow.DrawInstradaOverlay.
+        // avoidLabelNear: coordinate (tipicamente dei marker POI nella stessa
+        // vista) da cui tenere lontana l'etichetta del percorso. Serve quando
+        // un percorso coincide (anche solo all'inizio) con un gruppo di POI:
+        // l'etichetta di default (sopra-destra del primo punto) finirebbe
+        // sovrapposta all'etichetta del POI nello stesso punto, illeggibile.
         public static void Draw(SKCanvas canvas, Percorso route,
             Func<double, double, (double x, double y)> project, bool dashed = false,
-            SKColor? colorOverride = null, bool drawVertices = true)
+            SKColor? colorOverride = null, bool drawVertices = true,
+            IReadOnlyList<(double Lon, double Lat)>? avoidLabelNear = null)
         {
             if (route.Points.Count == 0) return;
 
@@ -100,11 +106,34 @@ namespace StradarioApp.Services
 
             if (!string.IsNullOrWhiteSpace(route.Label))
             {
-                float lx = (float)pts[0].x + 9;
-                float ly = (float)pts[0].y - 9;
                 float textSize = 12f;
                 using var shadow = new SKPaint { Color = new SKColor(255, 255, 255, 210), IsAntialias = true, TextSize = textSize, FakeBoldText = true };
                 using var text   = new SKPaint { Color = SKColors.Black,                  IsAntialias = true, TextSize = textSize, FakeBoldText = true };
+
+                const float AvoidRadiusPx = 26f;
+                bool tooClose = avoidLabelNear != null && avoidLabelNear.Any(p =>
+                {
+                    var (ax, ay) = project(p.Lon, p.Lat);
+                    double dx = ax - pts[0].x, dy = ay - pts[0].y;
+                    return dx * dx + dy * dy < AvoidRadiusPx * AvoidRadiusPx;
+                });
+
+                float lx, ly;
+                if (tooClose)
+                {
+                    // Un marker (tipicamente un POI) è troppo vicino al primo
+                    // punto: sposta l'etichetta sotto-sinistra invece che
+                    // sopra-destra, più lontana dal punto.
+                    float textWidth = text.MeasureText(route.Label);
+                    lx = (float)pts[0].x - textWidth - 9;
+                    ly = (float)pts[0].y + 22;
+                }
+                else
+                {
+                    lx = (float)pts[0].x + 9;
+                    ly = (float)pts[0].y - 9;
+                }
+
                 canvas.DrawText(route.Label, lx + 1, ly + 1, shadow);
                 canvas.DrawText(route.Label, lx,     ly,     text);
             }

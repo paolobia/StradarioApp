@@ -395,6 +395,32 @@ namespace StradarioApp.UI
         // non sono univoci nel progetto
         private readonly HashSet<(int GroupId, int ItemId)> _multiSelectedPoiKeys = new();
 
+        // Riordino di un POI all'interno del suo gruppo trascinandolo con il
+        // mouse nell'albero di navigazione (vedi BuildPoiItemLeaf). Il riordino
+        // vero e proprio avviene solo al rilascio, confrontando la posizione Y
+        // finale con i bounds delle righe sorelle dello stesso gruppo (tutte
+        // dirette figlie dello stesso StackPanel radice dell'albero, taggate
+        // con il GroupId per riconoscerle) — nessun aggiornamento live durante
+        // il trascinamento per restare semplice (l'albero si ricostruisce
+        // interamente ad ogni azione, quindi un riordino "live" richiederebbe
+        // di invalidare i controlli a metà gesto).
+        private StackPanel? _navTreeRootPanel;
+        private (PoiGroup group, PoiItem item, Control wrapper)? _poiDragCandidate;
+        private Avalonia.Point _poiDragStartPos;
+        private bool _poiDragActive;
+        private const double DragThresholdPx = 6.0;
+
+        // Riordino di una pagina nella LISTA dell'albero di navigazione
+        // trascinandola col mouse (vedi BuildPageListItem) — stesso schema
+        // di _poiDragCandidate ma per MapPage.ManualOrder invece di
+        // PoiGroup.Items: tocca solo l'ordine mostrato nella barra laterale,
+        // MAI la numerazione/ordine di stampa nel PDF (sempre geografico
+        // automatico, PdfGenerator.SortPages).
+        private const string PageRowTag = "pageRow";
+        private (MapPage page, Control wrapper)? _pageDragCandidate;
+        private Avalonia.Point _pageDragStartPos;
+        private bool _pageDragActive;
+
         private void TouchPage(int id)     => _pageLastTouchUtc[id]     = DateTime.UtcNow;
         private void TouchPoiGroup(int id) => _poiGroupLastTouchUtc[id] = DateTime.UtcNow;
         private void TouchPercorso(int id) => _percorsoLastTouchUtc[id] = DateTime.UtcNow;
@@ -1190,19 +1216,69 @@ namespace StradarioApp.UI
             return row;
         }
 
+        // Distanza (km) sotto la quale un POI e un punto di un percorso sono
+        // considerati "coincidenti" per SyncPoiGroupColorsWithRoutes.
+        private const double PoiRouteCoincidenceKm = 0.05; // 50 metri
+
+        // Se un gruppo di POI coincide (anche parzialmente: basta un solo
+        // POI vicino a un solo punto del percorso) con un percorso, il gruppo
+        // prende automaticamente e permanentemente il colore di quel percorso
+        // (scelta esplicita dell'utente: così i due si riconoscono a colpo
+        // d'occhio su mappa/PDF come collegati). Chiamato da BuildNavigationTree,
+        // che di fatto viene invocato dopo quasi ogni azione mutante del
+        // progetto (vedi nota su RefreshNavigationTree) — non serve quindi
+        // agganciarlo a ogni singolo punto di modifica di POI/percorsi.
+        // Se un gruppo coincide con più percorsi di colore diverso vince il
+        // primo trovato (caso limite, ordine deterministico ma arbitrario).
+        private void SyncPoiGroupColorsWithRoutes()
+        {
+            foreach (var group in _project.PoiGroups)
+            {
+                if (group.Items.Count == 0) continue;
+                foreach (var route in _project.Percorsi)
+                {
+                    if (route.Points.Count == 0) continue;
+                    if (string.Equals(group.ColorHex, route.ColorHex, StringComparison.OrdinalIgnoreCase)) break;
+
+                    bool coincide = group.Items.Any(poi => route.Points.Any(pt =>
+                        GeoUtils.DistanceKm(poi.Lon, poi.Lat, pt.Lon, pt.Lat) < PoiRouteCoincidenceKm));
+                    if (coincide)
+                    {
+                        group.ColorHex = route.ColorHex;
+                        _isDirty = true;
+                        break;
+                    }
+                }
+            }
+        }
+
         // Costruisce l'albero di navigazione: ramo "Pagine" e ramo "Gruppi POI"
         // (con i singoli POI come foglie). Cliccando su una foglia (pagina o
         // POI) la mappa si centra sulle sue coordinate.
         private Control BuildNavigationTree()
         {
+            SyncPoiGroupColorsWithRoutes();
+
             var root = new StackPanel { Name = "NavTree", Spacing = 3, Margin = new Thickness(4) };
+            _navTreeRootPanel  = root;
+            _poiDragCandidate  = null;
+            _poiDragActive     = false;
+            _pageDragCandidate = null;
+            _pageDragActive    = false;
 
             string filter = (_navFilterText ?? "").Trim().ToLowerInvariant();
             bool   filtering = filter.Length > 0;
             bool Matches(string? s) => (s ?? "").ToLowerInvariant().Contains(filter);
 
             // ---- Ramo "Pagine" ----
-            var visiblePages = _project.Pages.OrderBy(p => p.PageNumber)
+            // Se l'utente ha già trascinato una pagina almeno una volta, tutte
+            // hanno un ManualOrder e l'elenco segue quello; altrimenti (progetti
+            // mai riordinati manualmente) resta il comportamento storico,
+            // ordinato per PageNumber.
+            bool hasManualPageOrder = _project.Pages.Any(p => p.ManualOrder.HasValue);
+            var visiblePages = (hasManualPageOrder
+                    ? _project.Pages.OrderBy(p => p.ManualOrder ?? int.MaxValue)
+                    : _project.Pages.OrderBy(p => p.PageNumber))
                 .Where(p => !filtering || Matches(p.Label) || Matches(p.Description))
                 .ToList();
 
@@ -1254,7 +1330,11 @@ namespace StradarioApp.UI
                 if (visiblePages.Count == 0)
                     root.Children.Add(Indent(EmptyHint(filtering ? Strings.Get("MainWindow_NessunaPaginaFiltro") : Strings.Get("MainWindow_NessunaPaginaVuota"))));
                 foreach (var page in visiblePages)
-                    root.Children.Add(Indent(BuildPageListItem(page)));
+                {
+                    var pageWrapper = Indent(BuildPageListItem(page));
+                    pageWrapper.Tag = PageRowTag;
+                    root.Children.Add(pageWrapper);
+                }
             }
 
             // ---- Ramo "Gruppi POI" ----
@@ -1324,7 +1404,11 @@ namespace StradarioApp.UI
                         if (visibleItems.Count == 0)
                             root.Children.Add(Indent(EmptyHint(Strings.Get("MainWindow_NessunPoiNelGruppo")), 28));
                         foreach (var item in visibleItems)
-                            root.Children.Add(Indent(BuildPoiItemLeaf(group, item), 28));
+                        {
+                            var wrapper = Indent(BuildPoiItemLeaf(group, item), 28);
+                            wrapper.Tag = group.Id;
+                            root.Children.Add(wrapper);
+                        }
                     }
                 }
             }
@@ -1677,7 +1761,11 @@ namespace StradarioApp.UI
 
             // Click singolo: centra la mappa sul POI. Ctrl+clic: aggiunge/rimuove
             // il POI dalla selezione multipla (stessa selezione dell'icona ✂,
-            // resta come scorciatoia per chi la conosce già)
+            // resta come scorciatoia per chi la conosce già). Un trascinamento
+            // verticale (senza Ctrl, non su un'icona) riordina invece il POI
+            // dentro il proprio gruppo — la decisione click-vs-trascinamento si
+            // prende al rilascio in base alla distanza percorsa, stesso schema
+            // già usato per il disegno dei percorsi sulla mappa.
             border.PointerPressed += (s, e) =>
             {
                 if (e.Source is Button || (e.Source is Control c && c.FindAncestorOfType<Button>() != null)) return;
@@ -1691,12 +1779,86 @@ namespace StradarioApp.UI
                     return;
                 }
 
-                _viewCenterLon = item.Lon;
-                _viewCenterLat = item.Lat;
-                _mapCanvas?.InvalidateVisual();
+                if (_navTreeRootPanel != null && border.Parent is Control wrapper)
+                {
+                    _poiDragCandidate = (group, item, wrapper);
+                    _poiDragStartPos  = e.GetPosition(_navTreeRootPanel);
+                    _poiDragActive    = false;
+                    e.Pointer.Capture(border);
+                }
+            };
+
+            border.PointerMoved += (s, e) =>
+            {
+                if (_navTreeRootPanel == null || _poiDragCandidate is not { } cand || cand.item != item) return;
+                if (_poiDragActive) return;
+
+                var pos = e.GetPosition(_navTreeRootPanel);
+                if (Math.Abs(pos.Y - _poiDragStartPos.Y) < DragThresholdPx) return;
+
+                _poiDragActive = true;
+                border.Opacity = 0.5;
+            };
+
+            border.PointerReleased += (s, e) =>
+            {
+                if (_poiDragCandidate is not { } cand || cand.item != item) return;
+
+                e.Pointer.Capture(null);
+                bool wasDragging = _poiDragActive;
+                _poiDragCandidate = null;
+                _poiDragActive    = false;
+                border.Opacity    = 1.0;
+
+                if (!wasDragging)
+                {
+                    _viewCenterLon = item.Lon;
+                    _viewCenterLat = item.Lat;
+                    _mapCanvas?.InvalidateVisual();
+                    return;
+                }
+
+                if (_navTreeRootPanel == null) return;
+                ReorderPoiItemByDrop(group, item, cand.wrapper, e.GetPosition(_navTreeRootPanel));
             };
 
             return border;
+        }
+
+        // Riordina un POI dentro il proprio gruppo in base a dove è stato
+        // rilasciato durante un trascinamento nell'albero di navigazione:
+        // cerca, tra le righe dirette figlie di _navTreeRootPanel taggate con
+        // lo stesso GroupId (vedi BuildNavigationTree), quella la cui fascia
+        // verticale contiene il punto di rilascio; un rilascio sopra la prima
+        // riga o sotto l'ultima va comunque in testa/coda invece di essere
+        // ignorato.
+        private void ReorderPoiItemByDrop(PoiGroup group, PoiItem item, Control draggedWrapper, Avalonia.Point dropPos)
+        {
+            if (_navTreeRootPanel == null) return;
+
+            var siblings = _navTreeRootPanel.Children
+                .OfType<Control>()
+                .Where(c => c.Tag is int gid && gid == group.Id)
+                .ToList();
+            if (siblings.Count == 0) return;
+
+            Control? targetWrapper = siblings.FirstOrDefault(c => dropPos.Y >= c.Bounds.Top && dropPos.Y <= c.Bounds.Bottom);
+            if (targetWrapper == null)
+                targetWrapper = dropPos.Y < siblings[0].Bounds.Top ? siblings[0] : siblings[^1];
+
+            int oldIndex = group.Items.IndexOf(item);
+            int newIndex = siblings.IndexOf(targetWrapper);
+            if (oldIndex < 0 || targetWrapper == draggedWrapper || newIndex == oldIndex) return;
+
+            group.Items.RemoveAt(oldIndex);
+            group.Items.Insert(newIndex, item);
+
+            TouchPoiGroup(group.Id);
+            _isDirty = true;
+            PushUndo(
+                undo: () => { group.Items.Remove(item); group.Items.Insert(oldIndex, item); },
+                redo: () => { group.Items.Remove(item); group.Items.Insert(newIndex, item); });
+            RefreshNavigationTree();
         }
 
         // Corregge/converte manualmente le coordinate di un POI che ricade
@@ -2006,7 +2168,12 @@ namespace StradarioApp.UI
 
             // Click singolo: seleziona e centra (non su un'icona di azione).
             // Ctrl+clic: aggiunge/rimuove la pagina dalla selezione multipla
-            // (per eliminazione in blocco) senza toccare vista/selezione singola
+            // (per eliminazione in blocco) senza toccare vista/selezione singola.
+            // Un trascinamento verticale (senza Ctrl, non su un'icona, e non
+            // durante un filtro attivo — vedi nota in ReorderPageByDrop) riordina
+            // invece la pagina SOLO nella lista laterale, mai nel PDF: la
+            // decisione click-vs-trascinamento si prende al rilascio, stesso
+            // schema di BuildPoiItemLeaf.
             item.PointerPressed += (s, e) =>
             {
                 if (e.Source is Button || (e.Source is Control c && c.FindAncestorOfType<Button>() != null)) return;
@@ -2019,18 +2186,105 @@ namespace StradarioApp.UI
                     return;
                 }
 
-                _multiSelectedPageIds.Clear();
-                _selectedPageId = page.Id;
-                _viewCenterLon  = page.GeoBounds.CenterLon;
-                _viewCenterLat  = page.GeoBounds.CenterLat;
-                RefreshNavigationTree();
-                _mapCanvas?.InvalidateVisual();
+                if (_navTreeRootPanel != null && string.IsNullOrEmpty((_navFilterText ?? "").Trim()) && item.Parent is Control wrapper)
+                {
+                    _pageDragCandidate = (page, wrapper);
+                    _pageDragStartPos  = e.GetPosition(_navTreeRootPanel);
+                    _pageDragActive    = false;
+                    e.Pointer.Capture(item);
+                }
+            };
+
+            item.PointerMoved += (s, e) =>
+            {
+                if (_navTreeRootPanel == null || _pageDragCandidate is not { } cand || cand.page != page) return;
+                if (_pageDragActive) return;
+
+                var pos = e.GetPosition(_navTreeRootPanel);
+                if (Math.Abs(pos.Y - _pageDragStartPos.Y) < DragThresholdPx) return;
+
+                _pageDragActive = true;
+                item.Opacity    = 0.5;
+            };
+
+            item.PointerReleased += (s, e) =>
+            {
+                if (_pageDragCandidate is not { } cand || cand.page != page) return;
+
+                e.Pointer.Capture(null);
+                bool wasDragging   = _pageDragActive;
+                _pageDragCandidate = null;
+                _pageDragActive    = false;
+                item.Opacity       = 1.0;
+
+                if (!wasDragging)
+                {
+                    _multiSelectedPageIds.Clear();
+                    _selectedPageId = page.Id;
+                    _viewCenterLon  = page.GeoBounds.CenterLon;
+                    _viewCenterLat  = page.GeoBounds.CenterLat;
+                    RefreshNavigationTree();
+                    _mapCanvas?.InvalidateVisual();
+                    return;
+                }
+
+                if (_navTreeRootPanel == null) return;
+                ReorderPageByDrop(page, cand.wrapper, e.GetPosition(_navTreeRootPanel));
             };
 
             // Doppio click: apre il dialog di modifica
             item.DoubleTapped += async (s, e) => await EditPage(page);
 
             return item;
+        }
+
+        // Riordina una pagina SOLO nella lista dell'albero di navigazione, in
+        // base a dove è stata rilasciata durante un trascinamento (vedi
+        // BuildPageListItem): non tocca MAI PageNumber né l'ordine di stampa
+        // nel PDF, che restano sempre quelli geografici automatici calcolati
+        // da PdfGenerator.SortPages. Al primo utilizzo assegna un
+        // MapPage.ManualOrder sequenziale a TUTTE le pagine del progetto —
+        // da quel momento l'elenco segue sempre quell'ordine (vedi
+        // BuildNavigationTree). Disabilitato mentre un filtro testo è attivo:
+        // le righe visibili sarebbero un sottoinsieme e non corrisponderebbero
+        // 1:1 all'elenco completo usato per ricalcolare l'ordine.
+        private void ReorderPageByDrop(MapPage page, Control draggedWrapper, Avalonia.Point dropPos)
+        {
+            if (_navTreeRootPanel == null) return;
+
+            var siblings = _navTreeRootPanel.Children
+                .OfType<Control>()
+                .Where(c => c.Tag is string tag && tag == PageRowTag)
+                .ToList();
+            if (siblings.Count == 0) return;
+
+            Control? targetWrapper = siblings.FirstOrDefault(c => dropPos.Y >= c.Bounds.Top && dropPos.Y <= c.Bounds.Bottom);
+            if (targetWrapper == null)
+                targetWrapper = dropPos.Y < siblings[0].Bounds.Top ? siblings[0] : siblings[^1];
+            if (targetWrapper == draggedWrapper) return;
+
+            bool hasManualOrder = _project.Pages.Any(p => p.ManualOrder.HasValue);
+            var displayOrder = (hasManualOrder
+                    ? _project.Pages.OrderBy(p => p.ManualOrder ?? int.MaxValue)
+                    : _project.Pages.OrderBy(p => p.PageNumber))
+                .ToList();
+
+            int oldIndex = displayOrder.IndexOf(page);
+            int newIndex = siblings.IndexOf(targetWrapper);
+            if (oldIndex < 0 || newIndex == oldIndex || newIndex >= displayOrder.Count) return;
+
+            displayOrder.RemoveAt(oldIndex);
+            displayOrder.Insert(newIndex, page);
+
+            var oldManualOrders = _project.Pages.ToDictionary(p => p.Id, p => p.ManualOrder);
+            for (int i = 0; i < displayOrder.Count; i++)
+                displayOrder[i].ManualOrder = i;
+
+            _isDirty = true;
+            PushUndo(
+                undo: () => { foreach (var p in _project.Pages) if (oldManualOrders.TryGetValue(p.Id, out var mo)) p.ManualOrder = mo; },
+                redo: () => { for (int i = 0; i < displayOrder.Count; i++) displayOrder[i].ManualOrder = i; });
+            RefreshNavigationTree();
         }
 
         // ---------------------------------------------------------------
@@ -2878,7 +3132,7 @@ namespace StradarioApp.UI
                 double centerLon = _pageDragStartLon + dLon;
                 double centerLat = _pageDragStartLat + dLat;
 
-                selPage.GeoBounds = GeoUtils.CalcPageBounds(centerLon, centerLat, _project.Settings);
+                selPage.GeoBounds = GeoUtils.CalcPageBounds(centerLon, centerLat, selPage.GetEffectiveSettings(_project.Settings));
                 _mapCanvas?.InvalidateVisual();
                 return;
             }
@@ -4222,9 +4476,11 @@ namespace StradarioApp.UI
 
             // Applica le modifiche alla pagina nel progetto
             var updated = win.ResultPage;
-            page.Label       = updated.Label;
-            page.Description = updated.Description;
-            page.GeoBounds   = updated.GeoBounds;
+            page.Label               = updated.Label;
+            page.Description         = updated.Description;
+            page.GeoBounds           = updated.GeoBounds;
+            page.OrientationOverride = updated.OrientationOverride;
+            page.ScaleOverride       = updated.ScaleOverride;
 
             TouchPage(page.Id);
             _isDirty = true;
@@ -4573,11 +4829,17 @@ namespace StradarioApp.UI
             progressWin.Show(this);
 
             var generator = new PdfGenerator();
+            // Titolo di copertina: il nome del file .stradario senza estensione
+            // se il progetto è già stato salvato, altrimenti il nome progetto.
+            string coverTitle = _currentFilePath != null
+                ? Path.GetFileNameWithoutExtension(_currentFilePath)
+                : _project.ProjectName;
             try
             {
                 await generator.GenerateAsync(_project, tempPath,
                     (current, total, msg) =>
-                        Dispatcher.UIThread.Post(() => progressWin.Update(current, total, msg)));
+                        Dispatcher.UIThread.Post(() => progressWin.Update(current, total, msg)),
+                    coverTitle);
                 progressWin.Close();
             }
             catch (Exception ex)
@@ -5821,7 +6083,7 @@ namespace StradarioApp.UI
 
                 foreach (var p in _project.Pages)
                     p.GeoBounds = GeoUtils.CalcPageBounds(
-                        p.GeoBounds.CenterLon, p.GeoBounds.CenterLat, _project.Settings);
+                        p.GeoBounds.CenterLon, p.GeoBounds.CenterLat, p.GetEffectiveSettings(_project.Settings));
                 _isDirty = true;
 
                 // Se il tile server è cambiato, svuota la cache per ricaricare i nuovi tile

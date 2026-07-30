@@ -232,9 +232,14 @@ namespace StradarioApp.Services
         {
             await ThrottleNominatimAsync(ct);
 
+            // namedetails=1: fornisce le varianti name:xx (name:en, name:it...)
+            // dello stesso schema usato per i risultati di ricerca via Overpass
+            // (vedi PickBestName sotto) — senza, "display_name" di Nominatim è
+            // spesso nello script locale (es. caratteri cinesi in Cina/Asia),
+            // illeggibile (quadratini) nel font dell'app.
             string url =
                 "https://nominatim.openstreetmap.org/reverse" +
-                $"?lat={Fmt(lat)}&lon={Fmt(lon)}&format=jsonv2&zoom=18&addressdetails=1&accept-language=it,en";
+                $"?lat={Fmt(lat)}&lon={Fmt(lon)}&format=jsonv2&zoom=18&addressdetails=1&namedetails=1&accept-language=it,en";
 
             using var resp = await Http.GetAsync(url, ct);
             resp.EnsureSuccessStatusCode();
@@ -250,29 +255,45 @@ namespace StradarioApp.Services
         {
             double? lon = item["lon"]?.Value<string>() is string lonStr ? double.Parse(lonStr, CultureInfo.InvariantCulture) : null;
             double? lat = item["lat"]?.Value<string>() is string latStr ? double.Parse(latStr, CultureInfo.InvariantCulture) : null;
-            string? name = item["display_name"]?.Value<string>();
-            if (lon == null || lat == null || string.IsNullOrWhiteSpace(name)) return null;
+            string? displayName = item["display_name"]?.Value<string>();
+            if (lon == null || lat == null || string.IsNullOrWhiteSpace(displayName)) return null;
+
+            // Stessa regola "sempre ASCII" usata per i risultati di ricerca
+            // (vedi PickBestName): preferisce una variante name:xx già in
+            // ASCII, altrimenti ripulisce il display_name grezzo invece di
+            // mostrare caratteri non renderizzabili dal font dell'app.
+            var namedetails = (item["namedetails"] as JObject)?
+                .Properties().ToDictionary(p => p.Name, p => p.Value?.Value<string>() ?? "");
+            string name = PickBestName(namedetails, AsciiText.IsAscii(displayName!) ? displayName! : AsciiText.StripNonAscii(displayName!).Trim());
+            if (string.IsNullOrWhiteSpace(name)) name = displayName!;
 
             return new Result(
-                name!, lon.Value, lat.Value,
+                name, lon.Value, lat.Value,
                 item["class"]?.Value<string>(),
                 item["type"]?.Value<string>(),
                 FormatAddress(item["address"] as JObject));
         }
 
         // Compatta i campi strutturati di "address" in una o due righe leggibili:
-        // "Via Roma 12" e "00100 Roma" (solo i pezzi effettivamente presenti)
+        // "Via Roma 12" e "00100 Roma" (solo i pezzi effettivamente presenti).
+        // Ogni componente passa dalla stessa pulizia "solo ASCII" del nome
+        // principale: gli indirizzi restituiti da Nominatim in Cina/Asia hanno
+        // spesso via/città nello script locale anche quando il nome del punto
+        // stesso è stato tradotto.
         private static string? FormatAddress(JObject? addr)
         {
             if (addr == null) return null;
 
-            string? road  = addr["road"]?.Value<string>();
-            string? house = addr["house_number"]?.Value<string>();
-            string? postcode = addr["postcode"]?.Value<string>();
-            string? city = addr["city"]?.Value<string>()
+            static string? Clean(string? s) =>
+                string.IsNullOrWhiteSpace(s) ? null : (AsciiText.IsAscii(s) ? s : AsciiText.StripNonAscii(s).Trim());
+
+            string? road  = Clean(addr["road"]?.Value<string>());
+            string? house = Clean(addr["house_number"]?.Value<string>());
+            string? postcode = Clean(addr["postcode"]?.Value<string>());
+            string? city = Clean(addr["city"]?.Value<string>()
                 ?? addr["town"]?.Value<string>()
                 ?? addr["village"]?.Value<string>()
-                ?? addr["municipality"]?.Value<string>();
+                ?? addr["municipality"]?.Value<string>());
 
             string line1 = string.Join(" ", new[] { road, house }.Where(s => !string.IsNullOrWhiteSpace(s)));
             string line2 = string.Join(" ", new[] { postcode, city }.Where(s => !string.IsNullOrWhiteSpace(s)));

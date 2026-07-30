@@ -221,6 +221,10 @@ namespace StradarioApp.Models
         // BlackWhite (vedi Services/MapContrastFilter.ApplyFloydSteinbergDither).
         public bool PdfDitherBlackWhite { get; set; } = false;
 
+        // Copia superficiale usata da MapPage.GetEffectiveSettings per applicare
+        // override di orientamento/scala senza toccare le impostazioni globali.
+        public StradarioSettings Clone() => (StradarioSettings)MemberwiseClone();
+
         // Ritorna le dimensioni in mm per il formato scelto
         public (double WidthMm, double HeightMm) GetPageDimensionsMm()
         {
@@ -460,6 +464,40 @@ namespace StradarioApp.Models
         // Se true, la pagina non può essere trascinata sulla mappa
         // (protezione da spostamenti accidentali)
         public bool IsLocked { get; set; } = false;
+
+        // Override facoltativi per orientamento/scala di QUESTA pagina
+        // rispetto alle impostazioni globali del progetto (null = usa quella
+        // globale). Permettono a ogni pagina di avere formato/scala diversi
+        // dalle altre (es. una pagina in orizzontale a scala più ampia per
+        // inquadrare un'area più vasta, dentro lo stesso stradario).
+        public PageOrientation? OrientationOverride { get; set; } = null;
+        public MapScale? ScaleOverride { get; set; } = null;
+
+        // Ordine manuale nell'albero di navigazione (trascinamento nella
+        // lista pagine), indipendente dal numero di pagina/ordine di stampa
+        // nel PDF (quello resta sempre quello geografico automatico, vedi
+        // PdfGenerator.SortPages). Null finché l'utente non trascina mai
+        // nessuna pagina: in quel caso l'elenco si ordina per PageNumber
+        // (comportamento storico). Al primo trascinamento TUTTE le pagine del
+        // progetto ricevono un ManualOrder, da quel momento l'elenco segue
+        // sempre quello.
+        public int? ManualOrder { get; set; } = null;
+
+        // Impostazioni effettive di questa pagina: le globali del progetto,
+        // con orientamento/scala sostituiti dagli override se presenti.
+        // Usata ovunque serva calcolare GeoBounds o dimensioni/scala della
+        // pagina (drag sulla mappa, generazione PDF) così ogni pagina rimane
+        // internamente coerente con la propria combinazione orientamento+scala.
+        public StradarioSettings GetEffectiveSettings(StradarioSettings globalSettings)
+        {
+            if (OrientationOverride == null && ScaleOverride == null)
+                return globalSettings;
+
+            var eff = globalSettings.Clone();
+            if (OrientationOverride.HasValue) eff.Orientation = OrientationOverride.Value;
+            if (ScaleOverride.HasValue)       eff.Scale       = ScaleOverride.Value;
+            return eff;
+        }
     }
 
     // Struttura completa del progetto stradario (salvata su file)
