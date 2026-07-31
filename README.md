@@ -21,6 +21,34 @@ grazie ad Avalonia UI.
 
 ---
 
+## Gallery
+
+### 🗺️ Mappa interattiva
+<p align="center">
+  <img src="docs/screenshots/01-mappa-principale.png" width="45%" alt="Mappa principale" />
+  <img src="docs/screenshots/02-mappa-zoom.png" width="45%" alt="Mappa con zoom" />
+</p>
+
+### 🔍 Ricerca POI
+<p align="center">
+  <img src="docs/screenshots/03-ricerca-poi-categoria.png" width="45%" alt="Ricerca per categoria" />
+  <img src="docs/screenshots/04-ricerca-indirizzo.png" width="45%" alt="Ricerca per indirizzo" />
+</p>
+
+### 📍 Gestione POI
+<p align="center">
+  <img src="docs/screenshots/05-poi-gruppi.png" width="45%" alt="Gruppi POI" />
+  <img src="docs/screenshots/06-poi-tree.png" width="45%" alt="Albero POI" />
+</p>
+
+### 🚗 Percorsi e instradamento
+<p align="center">
+  <img src="docs/screenshots/07-percorso-disegno.png" width="45%" alt="Disegno percorso a mano" />
+  <img src="docs/screenshots/08-percorso-osrm.png" width="45%" alt="Percorso instradato OSRM" />
+</p>
+
+---
+
 ## Scale disponibili
 
 1:1.000 · 1:5.000 · 1:10.000 · 1:15.000 · 1:20.000 · 1:25.000 · 1:50.000 ·
