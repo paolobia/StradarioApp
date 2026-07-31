@@ -3589,7 +3589,10 @@ namespace StradarioApp.UI
             if (_project.PoiGroups.Count == 0)
                 return CreateAutoPoiGroup(_poiSearchQueryLabel);
 
-            var expanded = _project.PoiGroups.Where(g => !_navCollapsedGroupIds.Contains(g.Id)).ToList();
+            // "Aperto" = non collassato E non nascosto nel tree (riga effettivamente visibile)
+            var expanded = _project.PoiGroups
+                .Where(g => !_navCollapsedGroupIds.Contains(g.Id) && !_hiddenPoiGroupIds.Contains(g.Id) && _poiVisible)
+                .ToList();
             if (expanded.Count == 1)
                 return expanded[0];
             if (expanded.Count > 1)
