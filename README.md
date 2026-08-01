@@ -23,29 +23,139 @@ grazie ad Avalonia UI.
 
 ## Gallery
 
-### 🗺️ Mappa interattiva
-<p align="center">
-  <img src="docs/screenshots/01-mappa-principale.png" width="45%" alt="Mappa principale" />
-  <img src="docs/screenshots/02-mappa-zoom.png" width="45%" alt="Mappa con zoom" />
-</p>
+21 screenshot reali (dati di esempio, progetto "Firenze Demo" inventato),
+organizzati per area funzionale — dalla mappa interattiva all'output PDF
+finale, che è il vero prodotto dell'app.
+
+### 🗺️ Mappa e pagine multiple
+
+<table>
+<tr>
+<td width="50%">
+<img src="docs/screenshots/01-multi-page-grid.png" width="100%" alt="Multi-page grid" />
+<sub>Four A4 pages tiled in a 2×2 grid over the project area, with POI groups and a route overlaid.</sub>
+</td>
+<td width="50%">
+<img src="docs/screenshots/08-misura-distanza.png" width="100%" alt="Ruler distance" />
+<sub>Ruler tool: click-to-click distance measurement between two points on the map.</sub>
+</td>
+</tr>
+</table>
 
 ### 🔍 Ricerca POI
-<p align="center">
-  <img src="docs/screenshots/03-ricerca-poi-categoria.png" width="45%" alt="Ricerca per categoria" />
-  <img src="docs/screenshots/04-ricerca-indirizzo.png" width="45%" alt="Ricerca per indirizzo" />
-</p>
 
-### 📍 Gestione POI
-<p align="center">
-  <img src="docs/screenshots/05-poi-gruppi.png" width="45%" alt="Gruppi POI" />
-  <img src="docs/screenshots/06-poi-tree.png" width="45%" alt="Albero POI" />
-</p>
+<table>
+<tr>
+<td width="50%">
+<img src="docs/screenshots/02-poi-search-results.png" width="100%" alt="Category search results" />
+<sub>Category search (offline database): hundreds of matches shown as markers, click one to add it.</sub>
+</td>
+<td width="50%">
+<img src="docs/screenshots/03-ricerca-indirizzo.png" width="100%" alt="Address search" />
+<sub>Address search: type a place name to locate and jump to it on the map.</sub>
+</td>
+</tr>
+</table>
 
-### 🚗 Percorsi e instradamento
-<p align="center">
-  <img src="docs/screenshots/07-percorso-disegno.png" width="45%" alt="Disegno percorso a mano" />
-  <img src="docs/screenshots/08-percorso-osrm.png" width="45%" alt="Percorso instradato OSRM" />
-</p>
+### 📍 Gestione POI e percorsi
+
+<table>
+<tr>
+<td width="50%">
+<img src="docs/screenshots/04-poi-gruppi.png" width="100%" alt="POI groups" />
+<sub>Multiple POI groups, each with its own icon and color, managed from the navigation tree.</sub>
+</td>
+<td width="50%">
+<img src="docs/screenshots/05-poi-tree.png" width="100%" alt="POI tree" />
+<sub>A POI group expanded in the tree, listing every point with its coordinates.</sub>
+</td>
+</tr>
+<tr>
+<td width="50%">
+<img src="docs/screenshots/06-percorso-disegno.png" width="100%" alt="Freehand route drawing" />
+<sub>Freehand route drawing, point by point, directly on the map.</sub>
+</td>
+<td width="50%">
+<img src="docs/screenshots/07-percorso-osrm.png" width="100%" alt="OSRM routing" />
+<sub>Road-accurate routing via OSRM, with per-leg distance and duration.</sub>
+</td>
+</tr>
+</table>
+
+### 📄 Output PDF — l'atlante stampato
+
+<table>
+<tr>
+<td width="50%">
+<img src="docs/screenshots/09-pdf-copertina.png" width="100%" alt="PDF cover page" />
+<sub>Cover page: project name, scale, page size and generation date.</sub>
+</td>
+<td width="50%">
+<img src="docs/screenshots/12-pdf-indice.png" width="100%" alt="PDF index page" />
+<sub>Index page: every page listed with its center coordinates and description.</sub>
+</td>
+</tr>
+<tr>
+<td width="50%">
+<img src="docs/screenshots/13-pdf-overview.png" width="100%" alt="PDF overview page" />
+<sub>Overview page: all pages plotted on one map, with page-number references.</sub>
+</td>
+<td width="50%">
+<img src="docs/screenshots/10-pdf-gazetteer.png" width="100%" alt="PDF POI gazetteer" />
+<sub>POI gazetteer page, grouped by category, auto-paginated when it doesn't fit on one page.</sub>
+</td>
+</tr>
+<tr>
+<td width="50%">
+<img src="docs/screenshots/11-pdf-percorsi.png" width="100%" alt="PDF routes summary" />
+<sub>Routes summary page: each route with its total distance and point count.</sub>
+</td>
+<td width="50%">
+<img src="docs/screenshots/15-pdf-pagina-mappa.png" width="100%" alt="PDF map page" />
+<sub>A full map page as it prints: POI, routes and labels inside the page's own borders.</sub>
+</td>
+</tr>
+<tr>
+<td width="50%">
+<img src="docs/screenshots/14-pdf-pagina-bordi.png" width="100%" alt="PDF page borders" />
+<sub>A page's border: neighboring-page references (north/west) and the graphic scale bar.</sub>
+</td>
+<td width="50%">
+<img src="docs/screenshots/16-pdf-salva-dialog.png" width="100%" alt="PDF preview dialog" />
+<sub>The generated PDF opens in the system viewer first for preview; "Save" writes it to a permanent location.</sub>
+</td>
+</tr>
+</table>
+
+### 🎨 Contrasto mappa nel PDF — stessa pagina, 5 modalità
+
+<table>
+<tr>
+<td width="33%">
+<img src="docs/screenshots/17-contrasto-nessuno.png" width="100%" alt="Contrast: none" />
+<sub><b>Nessuno</b> — original OSM Carto colors.</sub>
+</td>
+<td width="33%">
+<img src="docs/screenshots/18-contrasto-colore.png" width="100%" alt="Contrast: boost color" />
+<sub><b>Contrasta colore</b> — boosted saturation and contrast, still full color.</sub>
+</td>
+<td width="33%">
+<img src="docs/screenshots/19-contrasto-bn.png" width="100%" alt="Contrast: black & white" />
+<sub><b>Contrasta B/N</b> — perceptual grayscale tuned for legibility on B/W printers.</sub>
+</td>
+</tr>
+<tr>
+<td width="33%">
+<img src="docs/screenshots/20-contrasto-strade.png" width="100%" alt="Contrast: emphasize roads" />
+<sub><b>Enfatizza strade</b> — road network highlighted, area fills desaturated.</sub>
+</td>
+<td width="33%">
+<img src="docs/screenshots/21-contrasto-adattivo.png" width="100%" alt="Contrast: adaptive" />
+<sub><b>Contrasto adattivo</b> (CLAHE) — local contrast stretching, still in color.</sub>
+</td>
+<td width="33%"></td>
+</tr>
+</table>
 
 ---
 
