@@ -87,10 +87,22 @@ namespace StradarioApp.Services
         // letterali incluse nel testo). Se il nome letto dal placemark somiglia
         // a un path filesystem, ne teniamo solo l'ultimo segmento: è quello
         // l'unica parte con significato per l'utente.
+        private static readonly System.Text.RegularExpressions.Regex WindowsDriveRoot =
+            new(@"^[A-Za-z]:[\\/]", System.Text.RegularExpressions.RegexOptions.Compiled);
+
         public static string SanitizeName(string raw)
         {
             string trimmed = raw.Trim().Trim('"', '\'').Trim();
             if (trimmed.IndexOfAny(new[] { '/', '\\' }) < 0) return trimmed;
+
+            // Un nome "somiglia a un path filesystem" solo se comincia con la
+            // radice di un path assoluto (Unix "/..." o Windows "C:\...");
+            // una "/" in mezzo al testo (es. "Ristoranti/Bar", "2026/03/11",
+            // "A/B roads") è quasi sempre significato reale del nome, non un
+            // path — tagliarla all'ultimo segmento perderebbe informazione.
+            bool looksLikePath = trimmed.StartsWith('/') || trimmed.StartsWith('\\')
+                || WindowsDriveRoot.IsMatch(trimmed);
+            if (!looksLikePath) return trimmed;
 
             var segments = trimmed.Split(new[] { '/', '\\' }, StringSplitOptions.RemoveEmptyEntries);
             return segments.Length > 0 ? segments[^1] : trimmed;

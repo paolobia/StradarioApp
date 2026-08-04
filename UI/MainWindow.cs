@@ -100,10 +100,27 @@ namespace StradarioApp.UI
         // Visibilità sulla mappa (icona "occhio" nell'albero): non tocca il
         // progetto, è solo uno stato di visualizzazione della sessione corrente
         private bool _pagesVisible    = true;
-        private bool _poiVisible      = true;
-        private bool _percorsiVisible = true;
         private readonly HashSet<int> _hiddenPoiGroupIds  = new();
         private readonly HashSet<int> _hiddenPercorsoIds  = new();
+
+        // L'occhio del ramo "Gruppi POI"/"Percorsi" non ha uno stato proprio:
+        // riflette l'aggregato dei singoli gruppi/percorsi sottostanti
+        // (_hiddenPoiGroupIds/_hiddenPercorsoIds) — tutti visibili → occhio
+        // aperto, tutti nascosti → occhio chiuso, misto → vince la
+        // maggioranza (a parità, visibile). Cliccarlo porta TUTTI gli
+        // elementi nello stato opposto a quello mostrato dall'icona.
+        private static bool AggregateVisible(int total, int hiddenCount)
+        {
+            if (total == 0) return true;
+            int visibleCount = total - hiddenCount;
+            return visibleCount * 2 >= total;
+        }
+
+        private bool _poiVisible =>
+            AggregateVisible(_project.PoiGroups.Count, _project.PoiGroups.Count(g => _hiddenPoiGroupIds.Contains(g.Id)));
+
+        private bool _percorsiVisible =>
+            AggregateVisible(_project.Percorsi.Count, _project.Percorsi.Count(r => _hiddenPercorsoIds.Contains(r.Id)));
 
         private readonly PoiService       _poiSvc      = new PoiService();
         private readonly PercorsoService  _percorsoSvc = new PercorsoService();
@@ -283,6 +300,43 @@ namespace StradarioApp.UI
         private readonly Dictionary<int, DateTime> _poiGroupLastTouchUtc = new();
         private readonly Dictionary<int, DateTime> _percorsoLastTouchUtc = new();
         private DispatcherTimer? _autoLockTimer;
+
+        // Click su un POI/percorso nell'albero: oltre a centrare la mappa,
+        // evidenzia per un secondo l'elemento cliccato (POI a icona doppia,
+        // percorso a spessore doppio) così è immediato individuarlo sulla
+        // mappa dopo il centraggio. Stato solo di sessione (non persistito).
+        private (int GroupId, int ItemId)? _highlightedPoi;
+        private int?             _highlightedRouteId;
+        private DispatcherTimer? _highlightTimer;
+        private static readonly TimeSpan HighlightDuration = TimeSpan.FromSeconds(1);
+
+        private void HighlightPoi(int groupId, int itemId)
+        {
+            _highlightedPoi      = (groupId, itemId);
+            _highlightedRouteId  = null;
+            RestartHighlightTimer();
+        }
+
+        private void HighlightRoute(int routeId)
+        {
+            _highlightedRouteId = routeId;
+            _highlightedPoi     = null;
+            RestartHighlightTimer();
+        }
+
+        private void RestartHighlightTimer()
+        {
+            _highlightTimer?.Stop();
+            _highlightTimer = new DispatcherTimer { Interval = HighlightDuration };
+            _highlightTimer.Tick += (_, _) =>
+            {
+                _highlightTimer?.Stop();
+                _highlightedPoi     = null;
+                _highlightedRouteId = null;
+                _mapCanvas?.InvalidateVisual();
+            };
+            _highlightTimer.Start();
+        }
 
         // Autosalvataggio periodico: salva su un file "sidecar" separato
         // (<file>.autosave, o un file temporaneo se il progetto non è mai
@@ -1220,34 +1274,49 @@ namespace StradarioApp.UI
         // considerati "coincidenti" per SyncPoiGroupColorsWithRoutes.
         private const double PoiRouteCoincidenceKm = 0.05; // 50 metri
 
-        // Se un gruppo di POI coincide (anche parzialmente: basta un solo
-        // POI vicino a un solo punto del percorso) con un percorso, il gruppo
-        // prende automaticamente e permanentemente il colore di quel percorso
+        // Se un gruppo di POI coincide con un percorso, il gruppo prende
+        // automaticamente e permanentemente il colore di quel percorso
         // (scelta esplicita dell'utente: così i due si riconoscono a colpo
         // d'occhio su mappa/PDF come collegati). Chiamato da BuildNavigationTree,
         // che di fatto viene invocato dopo quasi ogni azione mutante del
         // progetto (vedi nota su RefreshNavigationTree) — non serve quindi
         // agganciarlo a ogni singolo punto di modifica di POI/percorsi.
-        // Se un gruppo coincide con più percorsi di colore diverso vince il
-        // primo trovato (caso limite, ordine deterministico ma arbitrario).
+        // Il match è per MIGLIOR corrispondenza (più punti coincidenti), non
+        // il primo percorso trovato con anche un solo punto in comune: un
+        // itinerario multi-giorno con una base fissa (es. lo stesso hotel
+        // visitato/attraversato ogni giorno) fa sì che OGNI gruppo e OGNI
+        // percorso condividano quell'unico punto — con "primo trovato"
+        // tutti i gruppi si agganciavano al primo percorso della lista
+        // invece che al proprio giorno, un bug reale riscontrato importando
+        // un itinerario di viaggio reale (tutti i gruppi diventavano dello
+        // stesso colore). Contando invece TUTTI i punti coincidenti, il
+        // percorso del giorno giusto (che condivide l'intero itinerario, non
+        // solo l'hotel) vince sempre sul semplice punto di passaggio comune.
         private void SyncPoiGroupColorsWithRoutes()
         {
             foreach (var group in _project.PoiGroups)
             {
                 if (group.Items.Count == 0) continue;
+
+                Percorso? bestRoute = null;
+                int bestCoincidenceCount = 0;
                 foreach (var route in _project.Percorsi)
                 {
                     if (route.Points.Count == 0) continue;
-                    if (string.Equals(group.ColorHex, route.ColorHex, StringComparison.OrdinalIgnoreCase)) break;
 
-                    bool coincide = group.Items.Any(poi => route.Points.Any(pt =>
+                    int coincidenceCount = group.Items.Count(poi => route.Points.Any(pt =>
                         GeoUtils.DistanceKm(poi.Lon, poi.Lat, pt.Lon, pt.Lat) < PoiRouteCoincidenceKm));
-                    if (coincide)
+                    if (coincidenceCount > bestCoincidenceCount)
                     {
-                        group.ColorHex = route.ColorHex;
-                        _isDirty = true;
-                        break;
+                        bestCoincidenceCount = coincidenceCount;
+                        bestRoute = route;
                     }
+                }
+
+                if (bestRoute != null && !string.Equals(group.ColorHex, bestRoute.ColorHex, StringComparison.OrdinalIgnoreCase))
+                {
+                    group.ColorHex = bestRoute.ColorHex;
+                    _isDirty = true;
                 }
             }
         }
@@ -1290,13 +1359,13 @@ namespace StradarioApp.UI
                     CancelAllAddModes();
                     _addPageMode = true;
                     _mapCanvas?.InvalidateVisual();
-                })
+                }, enabled: _pagesVisible)
             };
             if (_multiSelectedPageIds.Count > 0)
             {
                 pagesIcons.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Trash,
                     string.Format(Strings.Get("MainWindow_EliminaPagineSelezionateTooltip"), _multiSelectedPageIds.Count),
-                    Brushes.Crimson, async () => await DeleteSelectedPagesAsync()));
+                    Brushes.Crimson, async () => await DeleteSelectedPagesAsync(), enabled: _pagesVisible));
             }
             pagesIcons.AddRange(new List<Control>
             {
@@ -1320,12 +1389,22 @@ namespace StradarioApp.UI
                     }
                     _isDirty = true;
                     RefreshNavigationTree();
-                })
+                }, enabled: _pagesVisible)
             });
-            root.Children.Add(BuildNavBranchHeader(Strings.Get("MainWindow_Pagine"), BootstrapIcons.Document, filtering ? visiblePages.Count : _project.Pages.Count,
-                _navPagesExpanded, () => { _navPagesExpanded = !_navPagesExpanded; RefreshNavigationTree(); }, pagesIcons));
 
-            if (_navPagesExpanded || filtering)
+            // Come per gruppi POI/percorsi: se il ramo è nascosto (_pagesVisible
+            // false) resta forzatamente collassato, anche durante un filtro
+            // testuale attivo — "se non lo vedi non lo puoi toccare".
+            bool pagesExpanded = _pagesVisible && (_navPagesExpanded || filtering);
+            root.Children.Add(BuildNavBranchHeader(Strings.Get("MainWindow_Pagine"), BootstrapIcons.Document, filtering ? visiblePages.Count : _project.Pages.Count,
+                pagesExpanded, () =>
+                {
+                    if (!_pagesVisible) return;
+                    _navPagesExpanded = !_navPagesExpanded;
+                    RefreshNavigationTree();
+                }, pagesIcons));
+
+            if (pagesExpanded)
             {
                 if (visiblePages.Count == 0)
                     root.Children.Add(Indent(EmptyHint(filtering ? Strings.Get("MainWindow_NessunaPaginaFiltro") : Strings.Get("MainWindow_NessunaPaginaVuota"))));
@@ -1354,7 +1433,14 @@ namespace StradarioApp.UI
                     _poiVisible ? Strings.Get("MainWindow_NascondiPoiTooltip") : Strings.Get("MainWindow_MostraPoiTooltip"),
                     _poiVisible ? Brushes.SteelBlue : Brushes.Gray, () =>
                 {
-                    _poiVisible = !_poiVisible;
+                    // Porta TUTTI i gruppi nello stato opposto a quello
+                    // attualmente mostrato dall'icona (aggregato), non un
+                    // semplice "not" di un flag proprio — l'icona non ha
+                    // stato proprio, vedi nota su _poiVisible.
+                    if (_poiVisible)
+                        foreach (var g in _project.PoiGroups) _hiddenPoiGroupIds.Add(g.Id);
+                    else
+                        _hiddenPoiGroupIds.Clear();
                     RefreshNavigationTree();
                     _mapCanvas?.InvalidateVisual();
                 }),
@@ -1393,7 +1479,7 @@ namespace StradarioApp.UI
                     // resta sempre collassato, anche durante un filtro attivo:
                     // "se non lo vedi non lo puoi toccare" include non poterne
                     // sfogliare/toccare i POI dall'albero.
-                    bool groupHiddenByEye = _hiddenPoiGroupIds.Contains(group.Id) || !_poiVisible;
+                    bool groupHiddenByEye = _hiddenPoiGroupIds.Contains(group.Id);
                     bool groupExpanded = !groupHiddenByEye && (filtering || !_navCollapsedGroupIds.Contains(group.Id));
                     if (groupExpanded)
                     {
@@ -1427,7 +1513,12 @@ namespace StradarioApp.UI
                     _percorsiVisible ? Strings.Get("MainWindow_NascondiPercorsiTooltip") : Strings.Get("MainWindow_MostraPercorsiTooltip"),
                     _percorsiVisible ? Brushes.SteelBlue : Brushes.Gray, () =>
                 {
-                    _percorsiVisible = !_percorsiVisible;
+                    // Vedi nota su _poiVisible: nessuno stato proprio,
+                    // porta tutti i percorsi nello stato opposto all'aggregato.
+                    if (_percorsiVisible)
+                        foreach (var r in _project.Percorsi) _hiddenPercorsoIds.Add(r.Id);
+                    else
+                        _hiddenPercorsoIds.Clear();
                     RefreshNavigationTree();
                     _mapCanvas?.InvalidateVisual();
                 }),
@@ -1460,7 +1551,7 @@ namespace StradarioApp.UI
                     // Percorso nascosto: niente sotto-voci (badge C→W/W→C
                     // compresi) — stesso "se non lo vedi non lo puoi
                     // toccare" applicato ai gruppi POI.
-                    bool routeHiddenByEye = _hiddenPercorsoIds.Contains(route.Id) || !_percorsiVisible;
+                    bool routeHiddenByEye = _hiddenPercorsoIds.Contains(route.Id);
                     if (routeHiddenByEye) continue;
 
                     for (int i = 0; i < route.Points.Count; i++)
@@ -1557,7 +1648,7 @@ namespace StradarioApp.UI
         // modifica, elimina)
         private Control BuildPoiGroupNavHeader(PoiGroup group)
         {
-            bool visible  = !_hiddenPoiGroupIds.Contains(group.Id) && _poiVisible;
+            bool visible  = !_hiddenPoiGroupIds.Contains(group.Id);
             // Un gruppo nascosto è trattato come "intoccabile": sempre
             // collassato (non espandibile) e con ogni azione disabilitata a
             // parte l'occhio stesso per ririmostrarlo — richiesta esplicita
@@ -1814,6 +1905,7 @@ namespace StradarioApp.UI
                 {
                     _viewCenterLon = item.Lon;
                     _viewCenterLat = item.Lat;
+                    HighlightPoi(group.Id, item.Id);
                     _mapCanvas?.InvalidateVisual();
                     return;
                 }
@@ -1888,16 +1980,41 @@ namespace StradarioApp.UI
                 Strings.Get(toWgs84 ? "Gcj_PoiCorretto" : "Gcj_PoiConvertito"), item.Label));
         }
 
+        // Baricentro della SPEZZATA (non la semplice media dei vertici): ogni
+        // segmento pesa in base alla propria lunghezza, così un percorso con
+        // vertici molto più fitti in un tratto non "tira" il centro verso
+        // quel tratto solo per densità di punti — un lungo segmento diritto
+        // con soli 2 vertici conta quanto un tratto della stessa lunghezza
+        // spezzettato in molti punti ravvicinati.
+        private static (double lon, double lat) ComputePolylineCentroid(IReadOnlyList<GeoPoint> points)
+        {
+            if (points.Count == 1) return (points[0].Lon, points[0].Lat);
+
+            double sumLon = 0, sumLat = 0, sumLen = 0;
+            for (int i = 0; i < points.Count - 1; i++)
+            {
+                var a = points[i];
+                var b = points[i + 1];
+                double len = GeoUtils.DistanceKm(a.Lon, a.Lat, b.Lon, b.Lat);
+                sumLon += (a.Lon + b.Lon) / 2.0 * len;
+                sumLat += (a.Lat + b.Lat) / 2.0 * len;
+                sumLen += len;
+            }
+
+            if (sumLen <= 0) return (points[0].Lon, points[0].Lat);
+            return (sumLon / sumLen, sumLat / sumLen);
+        }
+
         // Voce di un percorso nell'albero: swatch colore, etichetta, lunghezza
         // e numero di punti; cliccando (fuori dai bottoni) si centra la mappa
-        // sul primo punto del percorso. Icone: mostra/nascondi, modifica, elimina.
+        // sul baricentro della spezzata del percorso. Icone: mostra/nascondi, modifica, elimina.
         private Control BuildPercorsoNavItem(Percorso route)
         {
             // Un percorso nascosto (occhio spento, per sé o globalmente) è
             // trattato come "intoccabile": ogni azione disabilitata tranne
             // l'occhio stesso — richiesta esplicita dell'utente, stesso
             // trattamento dei gruppi POI in BuildPoiGroupNavHeader.
-            bool visible = !_hiddenPercorsoIds.Contains(route.Id) && _percorsiVisible;
+            bool visible = !_hiddenPercorsoIds.Contains(route.Id);
 
             var border = new Border
             {
@@ -1997,8 +2114,8 @@ namespace StradarioApp.UI
             {
                 if (e.Source is Button || (e.Source is Control c && c.FindAncestorOfType<Button>() != null)) return;
                 if (route.Points.Count == 0) return;
-                _viewCenterLon = route.Points[0].Lon;
-                _viewCenterLat = route.Points[0].Lat;
+                (_viewCenterLon, _viewCenterLat) = ComputePolylineCentroid(route.Points);
+                HighlightRoute(route.Id);
                 _mapCanvas?.InvalidateVisual();
             };
 
@@ -2296,12 +2413,8 @@ namespace StradarioApp.UI
             float h = e.Height;
 
             var pagesForRender = _pagesVisible ? _project.Pages : new List<MapPage>();
-            var poiForRender = _poiVisible
-                ? _project.PoiGroups.Where(g => !_hiddenPoiGroupIds.Contains(g.Id)).ToList()
-                : new List<PoiGroup>();
-            var routesForRender = _percorsiVisible
-                ? _project.Percorsi.Where(r => !_hiddenPercorsoIds.Contains(r.Id)).ToList()
-                : new List<Percorso>();
+            var poiForRender = _project.PoiGroups.Where(g => !_hiddenPoiGroupIds.Contains(g.Id)).ToList();
+            var routesForRender = _project.Percorsi.Where(r => !_hiddenPercorsoIds.Contains(r.Id)).ToList();
 
             _renderer.RenderMap(
                 e.Canvas, w, h,
@@ -2314,7 +2427,9 @@ namespace StradarioApp.UI
                     () => _mapCanvas?.InvalidateVisual()),
                 poiGroups: poiForRender,
                 routes: routesForRender,
-                previewRoute: _addRouteMode ? _drawingRoute : null
+                previewRoute: _addRouteMode ? _drawingRoute : null,
+                highlightedPoi: _highlightedPoi,
+                highlightedRouteId: _highlightedRouteId
             );
 
             if (_instradaMode)
@@ -2732,18 +2847,12 @@ namespace StradarioApp.UI
                     // visibili anche spostando/zoomando la vista)
                 }
 
-                if (_instradaMode)
-                {
-                    var hit = FindInstradaAlternativeAtPoint(pos, cw, ch);
-                    if (hit != null)
-                    {
-                        var (li, ai) = hit.Value;
-                        _instradaLegs[li] = _instradaLegs[li] with { SelectedIndex = ai };
-                        UpdateInstradaPanel();
-                        _mapCanvas?.InvalidateVisual();
-                    }
-                    return;
-                }
+                // La selezione fra le alternative avviene nel pannello di
+                // instradamento (tab per alternativa), non più cliccando
+                // sulla mappa: il pannello è mostrato con ShowDialog, quindi
+                // modale rispetto alla finestra principale — un click sulla
+                // mappa mentre è aperto non arriva comunque a questo handler.
+                if (_instradaMode) return;
 
                 if (_addRouteMode && _drawingRoute != null)
                 {
@@ -3328,8 +3437,6 @@ namespace StradarioApp.UI
         // i gruppi/POI attualmente visibili sulla mappa
         private (PoiGroup group, PoiItem item)? FindPoiAtPoint(Point pt, float cw, float ch)
         {
-            if (!_poiVisible) return null;
-
             foreach (var group in _project.PoiGroups)
             {
                 if (_hiddenPoiGroupIds.Contains(group.Id)) continue;
@@ -3351,8 +3458,6 @@ namespace StradarioApp.UI
         // solo di spostare accidentalmente il POI, non di vederne i dettagli.
         private (PoiGroup group, PoiItem item)? FindAnyPoiAtPoint(Point pt, float cw, float ch)
         {
-            if (!_poiVisible) return null;
-
             foreach (var group in _project.PoiGroups)
             {
                 if (_hiddenPoiGroupIds.Contains(group.Id)) continue;
@@ -3372,8 +3477,6 @@ namespace StradarioApp.UI
         // RoutePointHitRadiusPx), fra i percorsi attualmente visibili sulla mappa
         private (Percorso route, int index)? FindRoutePointAtPoint(Point pt, float cw, float ch)
         {
-            if (!_percorsiVisible) return null;
-
             foreach (var route in _project.Percorsi)
             {
                 if (_hiddenPercorsoIds.Contains(route.Id)) continue;
@@ -3389,53 +3492,6 @@ namespace StradarioApp.UI
                 }
             }
             return null;
-        }
-
-        // Trova, durante l'instradamento, l'alternativa (di qualunque tratta)
-        // la cui geometria passa più vicina al punto pixel cliccato (entro
-        // RoutePointHitRadiusPx) — a differenza di FindRoutePointAtPoint
-        // sopra, che testa la distanza da un singolo VERTICE, qui si cerca il
-        // punto più vicino su ciascun SEGMENTO consecutivo della geometria
-        // (proiezione con t clampato in [0,1]), perché le alternative sono
-        // linee dense (centinaia di punti OSRM), non poche coordinate isolate.
-        private (int legIndex, int altIndex)? FindInstradaAlternativeAtPoint(Point pt, float cw, float ch)
-        {
-            double bestDistSq = RoutePointHitRadiusPx * RoutePointHitRadiusPx;
-            (int legIndex, int altIndex)? best = null;
-
-            for (int li = 0; li < _instradaLegs.Count; li++)
-            {
-                var leg = _instradaLegs[li];
-                for (int ai = 0; ai < leg.Alternatives.Count; ai++)
-                {
-                    var geom = leg.Alternatives[ai].Geometry;
-                    if (geom.Count < 2) continue;
-
-                    var (x0, y0) = GeoUtils.GeoToPixel(geom[0].Lon, geom[0].Lat,
-                        _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
-                    for (int i = 1; i < geom.Count; i++)
-                    {
-                        var (x1, y1) = GeoUtils.GeoToPixel(geom[i].Lon, geom[i].Lat,
-                            _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
-
-                        double dx = x1 - x0, dy = y1 - y0;
-                        double lenSq = dx * dx + dy * dy;
-                        double t = lenSq > 0 ? ((pt.X - x0) * dx + (pt.Y - y0) * dy) / lenSq : 0;
-                        t = Math.Clamp(t, 0.0, 1.0);
-                        double px = x0 + t * dx, py = y0 + t * dy;
-                        double distSq = (pt.X - px) * (pt.X - px) + (pt.Y - py) * (pt.Y - py);
-
-                        if (distSq <= bestDistSq)
-                        {
-                            bestDistSq = distSq;
-                            best = (li, ai);
-                        }
-
-                        x0 = x1; y0 = y1;
-                    }
-                }
-            }
-            return best;
         }
 
         // Trova il risultato di ricerca POI online più vicino al punto pixel
@@ -3591,7 +3647,7 @@ namespace StradarioApp.UI
 
             // "Aperto" = non collassato E non nascosto nel tree (riga effettivamente visibile)
             var expanded = _project.PoiGroups
-                .Where(g => !_navCollapsedGroupIds.Contains(g.Id) && !_hiddenPoiGroupIds.Contains(g.Id) && _poiVisible)
+                .Where(g => !_navCollapsedGroupIds.Contains(g.Id) && !_hiddenPoiGroupIds.Contains(g.Id))
                 .ToList();
             if (expanded.Count == 1)
                 return expanded[0];
@@ -5013,13 +5069,13 @@ namespace StradarioApp.UI
         }
 
         // Avvia l'instradamento OSRM di un percorso esistente (mai da zero).
-        // Precondizione: al massimo 5 vertici, altrimenti un messaggio in
+        // Precondizione: al massimo 10 vertici, altrimenti un messaggio in
         // status bar e nessuna modalità viene avviata — nessuna
         // semplificazione automatica, l'utente deve ridurre i punti a mano
         // (RouteEditWindow/nav tree) se vuole procedere.
         private void StartInstradaMode(Percorso route)
         {
-            if (route.Points.Count > 5)
+            if (route.Points.Count > 10)
             {
                 ShowStatusMessage(Strings.Get("MainWindow_InstradaMaxPunti"), seconds: 4);
                 return;
@@ -5045,6 +5101,15 @@ namespace StradarioApp.UI
             };
             _instradaPanel.CreateRequested += OnCreatePercorsoInstradato;
             _instradaPanel.Closed += (_, _) => { if (_instradaMode) CancelAllAddModes(); };
+            // Scelta dell'alternativa per una tratta (tab del pannello): non
+            // più via click sulla mappa, impossibile col pannello modale.
+            _instradaPanel.AlternativeSelected += (li, ai) =>
+            {
+                if (li < 0 || li >= _instradaLegs.Count) return;
+                _instradaLegs[li] = _instradaLegs[li] with { SelectedIndex = ai };
+                UpdateInstradaPanel();
+                _mapCanvas?.InvalidateVisual();
+            };
 
             RefreshNavigationTree();
             _mapCanvas?.InvalidateVisual();
@@ -5107,20 +5172,26 @@ namespace StradarioApp.UI
             if (_instradaPanel == null) return;
 
             double totalKm = 0, totalMin = 0;
-            var rows = new List<(double km, double min, bool failed, string? error)>();
+            var rows = new List<RouteInstradationPanel.LegInfo>();
             foreach (var leg in _instradaLegs)
             {
-                if (leg.Failed || leg.SelectedIndex < 0 || leg.SelectedIndex >= leg.Alternatives.Count)
+                if (leg.Failed)
                 {
-                    rows.Add((0, 0, true, leg.ErrorMessage));
+                    rows.Add(new RouteInstradationPanel.LegInfo(
+                        Array.Empty<(double, double)>(), 0, Failed: true, leg.ErrorMessage));
                     continue;
                 }
-                var alt = leg.Alternatives[leg.SelectedIndex];
-                double km  = alt.DistanceMeters / 1000.0;
-                double min = alt.DurationSeconds / 60.0;
-                totalKm  += km;
-                totalMin += min;
-                rows.Add((km, min, false, null));
+
+                var alts = leg.Alternatives
+                    .Select(a => (km: a.DistanceMeters / 1000.0, min: a.DurationSeconds / 60.0))
+                    .ToList();
+                rows.Add(new RouteInstradationPanel.LegInfo(alts, leg.SelectedIndex, Failed: false, Error: null));
+
+                if (leg.SelectedIndex >= 0 && leg.SelectedIndex < alts.Count)
+                {
+                    totalKm  += alts[leg.SelectedIndex].km;
+                    totalMin += alts[leg.SelectedIndex].min;
+                }
             }
 
             _instradaPanel.SetTotals(totalKm, totalMin);
@@ -5639,31 +5710,53 @@ namespace StradarioApp.UI
             return sanitized.Length == 0 ? "export" : sanitized;
         }
 
-        // I gruppi importati da PoiService.ImportKmz arrivano tutti con lo
-        // stesso ColorHex di default (nessuna informazione di colore nel
-        // KML/GPX sorgente) — appiccicati alla stessa icona/colore di un
-        // gruppo già esistente nel progetto sarebbero indistinguibili sulla
-        // mappa. Assegna a ciascuno il primo colore della palette curata
-        // (PoiIconRenderer.Palette) non ancora usato da nessun gruppo del
-        // progetto, tracciando anche i colori appena assegnati così due
-        // gruppi importati nello stesso file non si scontrano fra loro.
-        // Esaurita la palette (più gruppi che colori), si ricicla dall'inizio:
-        // meglio un duplicato dopo il decimo gruppo che nessun colore.
-        private void AssignDistinctColors(IReadOnlyList<PoiGroup> newGroups)
+        // I gruppi POI/percorsi importati arrivano spesso tutti con lo stesso
+        // colore — o perché il formato sorgente non porta informazione di
+        // colore (GPX), o perché più Placemark/LineString nel KML puntano
+        // allo stesso <Style> condiviso (visto in pratica: un itinerario di
+        // viaggio con un unico stile "percorso" riusato da ogni tappa/giorno
+        // — tutti i percorsi finivano identici, indistinguibili sulla
+        // mappa). Assegna quindi SEMPRE, incondizionatamente, un colore
+        // della palette curata (PoiIconRenderer.Palette) a ogni gruppo/
+        // percorso appena importato — ignorando un eventuale colore letto
+        // dal file sorgente, esattamente come già avviene per i gruppi POI
+        // (il cui IconStyle non viene mai letto in importazione) — pescato
+        // dai colori di TUTTI i gruppi POI e percorsi già nel progetto, così
+        // import successivi (in sessioni/file diversi) non ripropongono mai
+        // lo stesso colore, e POI e percorsi condividono un'unica "vasca"
+        // senza mai coincidere fra loro. Esaurita la palette (più elementi
+        // che colori), si ricicla dall'inizio: meglio un duplicato che
+        // nessun colore.
+        private void AssignDistinctColors(IReadOnlyList<PoiGroup> newGroups, IReadOnlyList<Percorso> newRoutes)
         {
             var used = new HashSet<string>(
-                _project.PoiGroups.Except(newGroups)
-                    .Select(g => g.ColorHex)
+                _project.PoiGroups.Except(newGroups).Select(g => g.ColorHex)
+                    .Concat(_project.Percorsi.Except(newRoutes).Select(r => r.ColorHex))
                     .Where(c => !string.IsNullOrWhiteSpace(c)),
                 StringComparer.OrdinalIgnoreCase);
 
-            foreach (var g in newGroups)
+            // Contatore separato per il riciclo, che avanza sempre: used.Count
+            // NON va bene per questo perché HashSet.Add di un duplicato non fa
+            // crescere Count — con più elementi da colorare della palette (es.
+            // 8 gruppi + 8 percorsi = 16, palette da 10), una volta esaurita la
+            // palette used.Count restava bloccato allo stesso valore e ogni
+            // elemento successivo riceveva lo STESSO colore riciclato
+            // (Palette[0]) invece di scorrere la palette.
+            int recycleCursor = 0;
+            string NextColor()
             {
-                string chosen = PoiIconRenderer.Palette.FirstOrDefault(c => !used.Contains(c))
-                                ?? PoiIconRenderer.Palette[used.Count % PoiIconRenderer.Palette.Length];
-                g.ColorHex = chosen;
+                string? chosen = PoiIconRenderer.Palette.FirstOrDefault(c => !used.Contains(c));
+                if (chosen == null)
+                {
+                    chosen = PoiIconRenderer.Palette[recycleCursor % PoiIconRenderer.Palette.Length];
+                    recycleCursor++;
+                }
                 used.Add(chosen);
+                return chosen;
             }
+
+            foreach (var g in newGroups) g.ColorHex = NextColor();
+            foreach (var r in newRoutes) r.ColorHex = NextColor();
         }
 
         private async Task ImportFromFileAsync(Avalonia.Platform.Storage.IStorageFile file)
@@ -5713,7 +5806,7 @@ namespace StradarioApp.UI
                     return;
                 }
 
-                AssignDistinctColors(importedGroups);
+                AssignDistinctColors(importedGroups, importedRoutes);
 
                 // Dati importati da fonte esterna: bloccati subito, per
                 // evitare di spostarli accidentalmente prima ancora di averli
@@ -5886,12 +5979,8 @@ namespace StradarioApp.UI
         // "quello che vedo ora", non l'intero progetto.
         private async Task OnExportAll()
         {
-            var visiblePoiGroups = _poiVisible
-                ? _project.PoiGroups.Where(g => !_hiddenPoiGroupIds.Contains(g.Id)).ToList()
-                : new List<PoiGroup>();
-            var visibleRoutes = _percorsiVisible
-                ? _project.Percorsi.Where(r => !_hiddenPercorsoIds.Contains(r.Id)).ToList()
-                : new List<Percorso>();
+            var visiblePoiGroups = _project.PoiGroups.Where(g => !_hiddenPoiGroupIds.Contains(g.Id)).ToList();
+            var visibleRoutes = _project.Percorsi.Where(r => !_hiddenPercorsoIds.Contains(r.Id)).ToList();
 
             if (visiblePoiGroups.Count == 0 && visibleRoutes.Count == 0)
             {

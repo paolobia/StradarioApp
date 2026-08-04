@@ -129,7 +129,9 @@ namespace StradarioApp.Services
             Action? onTileLoaded,
             List<PoiGroup>? poiGroups = null,
             List<Percorso>? routes = null,
-            Percorso? previewRoute = null)
+            Percorso? previewRoute = null,
+            (int GroupId, int ItemId)? highlightedPoi = null,
+            int? highlightedRouteId = null)
         {
             canvas.Clear(SKColors.LightGray);
 
@@ -201,10 +203,10 @@ namespace StradarioApp.Services
             DrawPages(canvas, canvasWidth, canvasHeight, centerLon, centerLat, zoom, pages, selectedPageId);
 
             if (routes != null && routes.Count > 0)
-                DrawRoutes(canvas, canvasWidth, canvasHeight, centerLon, centerLat, zoom, routes, poiGroups);
+                DrawRoutes(canvas, canvasWidth, canvasHeight, centerLon, centerLat, zoom, routes, poiGroups, highlightedRouteId);
 
             if (poiGroups != null && poiGroups.Count > 0)
-                DrawPois(canvas, canvasWidth, canvasHeight, centerLon, centerLat, zoom, poiGroups);
+                DrawPois(canvas, canvasWidth, canvasHeight, centerLon, centerLat, zoom, poiGroups, highlightedPoi);
 
             if (previewRoute != null)
             {
@@ -222,7 +224,8 @@ namespace StradarioApp.Services
             double centerLon, double centerLat,
             double zoom,
             List<Percorso> routes,
-            List<PoiGroup>? poiGroups)
+            List<PoiGroup>? poiGroups,
+            int? highlightedRouteId = null)
         {
             (double x, double y) Project(double lon, double lat) =>
                 GeoUtils.GeoToPixel(lon, lat, centerLon, centerLat, zoom, canvasWidth, canvasHeight);
@@ -232,7 +235,13 @@ namespace StradarioApp.Services
             var avoid = poiGroups?.SelectMany(g => g.Items).Select(it => (it.Lon, it.Lat)).ToList();
 
             foreach (var route in routes)
-                PercorsoRenderer.Draw(canvas, route, Project, avoidLabelNear: avoid);
+            {
+                // Percorso appena cliccato nell'albero: spessore raddoppiato
+                // per un secondo, per individuarlo subito dopo il centraggio.
+                float strokeMultiplier = route.Id == highlightedRouteId ? 2f : 1f;
+                PercorsoRenderer.Draw(canvas, route, Project, avoidLabelNear: avoid,
+                    strokeWidthMultiplier: strokeMultiplier);
+            }
         }
 
         // Disegna i marker di tutti i gruppi di POI sopra la mappa e le pagine
@@ -241,7 +250,8 @@ namespace StradarioApp.Services
             float canvasWidth, float canvasHeight,
             double centerLon, double centerLat,
             double zoom,
-            List<PoiGroup> poiGroups)
+            List<PoiGroup> poiGroups,
+            (int GroupId, int ItemId)? highlightedPoi = null)
         {
             const float markerSize = 22f;
 
@@ -257,8 +267,13 @@ namespace StradarioApp.Services
                         y < -markerSize || y > canvasHeight + markerSize)
                         continue;
 
+                    // POI appena cliccato nell'albero: icona raddoppiata per
+                    // un secondo, per individuarlo subito dopo il centraggio.
+                    bool isHighlighted = highlightedPoi is { } h && h.GroupId == group.Id && h.ItemId == item.Id;
+                    float size = isHighlighted ? markerSize * 2f : markerSize;
+
                     PoiIconRenderer.DrawWithLabel(canvas, group.Icon, color, item.Label,
-                        (float)x, (float)y, markerSize);
+                        (float)x, (float)y, size);
                 }
             }
         }

@@ -1,19 +1,20 @@
 // =============================================================================
 // UI/RouteInstradationPanel.cs
 //
-// SINOSSI: Pannello non modale mostrato durante l'instradamento OSRM di un
-//   Percorso (MainWindow.StartInstradaMode). Stesso schema non modale di
-//   PoiSearchLogWindow (ShowDialog senza await immediato, cosi' MainWindow
-//   continua a guidare le chiamate asincrone mentre resta aperto) ma senza
-//   la sua semantica "X = Annulla operazione in corso": qui chiudere la
-//   finestra (X, o programmaticamente da CancelAllAddModes) significa
-//   semplicemente uscire dalla modalita' instradamento, gestito da
-//   MainWindow tramite l'evento nativo Closed.
-//
-//   Contenuto volutamente limitato (deciso con l'utente): solo distanza/
-//   durata totale e per tratta. NESSUN elenco di alternative (si selezionano
-//   cliccando direttamente sulla loro geometria sulla mappa) e NESSUN elenco
-//   di vie percorse.
+// SINOSSI: Pannello mostrato durante l'instradamento OSRM di un Percorso
+//   (MainWindow.StartInstradaMode). Mostrato con ShowDialog: è quindi MODALE
+//   rispetto alla finestra principale (input alla mappa sottostante bloccato
+//   finché resta aperto) — per questo la scelta fra le alternative di ogni
+//   tratta avviene interamente QUI dentro, con una riga di pulsanti "a
+//   scheda" ORIZZONTALE per tratta (uno per alternativa generata da OSRM),
+//   non più cliccando sulla geometria sulla mappa: quel meccanismo (rimosso,
+//   vedi FindInstradaAlternativeAtPoint nella cronologia) non poteva mai
+//   scattare proprio perché il dialog è modale — bug reale riscontrato
+//   dall'utente con più tratte/alternative. Cliccare un'alternativa
+//   aggiorna subito l'anteprima sulla mappa (tramite AlternativeSelected),
+//   il bottone "Crea percorso" resta invariato. Finestra ridimensionabile:
+//   il layout (DockPanel, ultimo figlio = ScrollViewer che riempie lo
+//   spazio residuo) si adatta a qualunque dimensione scelta dall'utente.
 // =============================================================================
 
 using System;
@@ -32,6 +33,9 @@ namespace StradarioApp.UI
         public event Action<RouteInstradationService.Profile>? ProfileChanged;
         public event Action? CreateRequested;
 
+        // (legIndex, altIndex) scelto dall'utente cambiando tab per quella tratta.
+        public event Action<int, int>? AlternativeSelected;
+
         private readonly ComboBox    _cbProfile;
         private readonly TextBlock   _tbTotals;
         private readonly StackPanel  _legsPanel;
@@ -40,9 +44,11 @@ namespace StradarioApp.UI
         public RouteInstradationPanel(string routeLabel)
         {
             Title         = string.Format(Strings.Get("RouteInstradationPanel_Titolo"), routeLabel);
-            Width         = 380;
-            Height        = 460;
-            CanResize     = false;
+            Width         = 620;
+            Height        = 720;
+            MinWidth      = 420;
+            MinHeight     = 420;
+            CanResize     = true;
             ShowInTaskbar = false;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
@@ -94,7 +100,7 @@ namespace StradarioApp.UI
             DockPanel.SetDock(_tbTotals, Dock.Top);
             root.Children.Add(_tbTotals);
 
-            _legsPanel = new StackPanel { Spacing = 4 };
+            _legsPanel = new StackPanel { Spacing = 10 };
             var scroll = new ScrollViewer { Content = _legsPanel };
             root.Children.Add(scroll); // ultimo figlio: riempie lo spazio restante
 
@@ -109,33 +115,88 @@ namespace StradarioApp.UI
             _tbTotals.Text = string.Format(Strings.Get("RouteInstradationPanel_Totali"), km, minutes);
         }
 
-        // Una riga per tratta: "Tratta N: X km · Y min", oppure il motivo
-        // reale del fallimento per le tratte senza alternative disponibili
-        // (errore .NET o "code" OSRM — vedi RouteInstradationService.LegResult
-        // .ErrorMessage: unico modo di diagnosticare un problema di rete su
-        // un eseguibile pubblicato, dato che DebugLog non scrive nulla nelle
-        // build Release).
-        public void SetLegs(IReadOnlyList<(double km, double min, bool failed, string? error)> legs)
+        private static readonly IBrush TabSelectedBg   = new SolidColorBrush(Color.Parse("#1E88E5"));
+        private static readonly IBrush TabUnselectedBg = new SolidColorBrush(Color.Parse("#EEEEEE"));
+
+        // Un blocco per tratta: se fallita mostra il motivo (nessun pulsante);
+        // se ha una sola alternativa mostra la riga "Tratta N: X km · Y min"
+        // come prima (una sola scelta non avrebbe senso come pulsante); se ne
+        // ha più di una, una riga ORIZZONTALE (WrapPanel: va a capo da sola
+        // se lo spazio non basta, invece di uscire dal bordo della finestra)
+        // di pulsanti "a scheda", uno per alternativa — cliccarne uno
+        // aggiorna subito l'anteprima sulla mappa tramite AlternativeSelected.
+        public void SetLegs(IReadOnlyList<LegInfo> legs)
         {
             _legsPanel.Children.Clear();
-            for (int i = 0; i < legs.Count; i++)
+            for (int li = 0; li < legs.Count; li++)
             {
-                var (km, min, failed, error) = legs[i];
-                var tb = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap };
-                if (failed)
+                var leg = legs[li];
+                var legLabel = new TextBlock
                 {
-                    tb.Text = string.IsNullOrWhiteSpace(error)
-                        ? string.Format(Strings.Get("RouteInstradationPanel_TrattaFallita"), i + 1)
-                        : string.Format(Strings.Get("RouteInstradationPanel_TrattaFallitaConErrore"), i + 1, error);
-                    tb.Foreground = Brushes.Firebrick;
-                }
-                else
+                    Text       = string.Format(Strings.Get("RouteInstradationPanel_TrattaLabel"), li + 1),
+                    FontWeight = FontWeight.SemiBold,
+                    FontSize   = 12,
+                };
+                _legsPanel.Children.Add(legLabel);
+
+                if (leg.Failed)
                 {
-                    tb.Text = string.Format(Strings.Get("RouteInstradationPanel_Tratta"), i + 1, km, min);
+                    var tb = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = Brushes.Firebrick };
+                    tb.Text = string.IsNullOrWhiteSpace(leg.Error)
+                        ? string.Format(Strings.Get("RouteInstradationPanel_TrattaFallita"), li + 1)
+                        : string.Format(Strings.Get("RouteInstradationPanel_TrattaFallitaConErrore"), li + 1, leg.Error);
+                    _legsPanel.Children.Add(tb);
+                    continue;
                 }
-                _legsPanel.Children.Add(tb);
+
+                if (leg.Alternatives.Count <= 1)
+                {
+                    var (km0, min0) = leg.Alternatives.Count == 1 ? leg.Alternatives[0] : (0.0, 0.0);
+                    var tb = new TextBlock
+                    {
+                        FontSize = 12, TextWrapping = TextWrapping.Wrap,
+                        Text = string.Format(Strings.Get("RouteInstradationPanel_Tratta"), li + 1, km0, min0),
+                    };
+                    _legsPanel.Children.Add(tb);
+                    continue;
+                }
+
+                var row = new WrapPanel { Orientation = Orientation.Horizontal };
+                int selectedIndex = Math.Clamp(leg.SelectedIndex, 0, leg.Alternatives.Count - 1);
+                int capturedLi = li;
+                for (int ai = 0; ai < leg.Alternatives.Count; ai++)
+                {
+                    var (km, min) = leg.Alternatives[ai];
+                    bool isSelected = ai == selectedIndex;
+                    int capturedAi = ai;
+
+                    var btn = new Button
+                    {
+                        Content = string.Format(Strings.Get("RouteInstradationPanel_AlternativaHeader"), ai + 1, km, min),
+                        FontSize = 12,
+                        Padding  = new Thickness(10, 6),
+                        Margin   = new Thickness(0, 0, 6, 6),
+                        CornerRadius = new CornerRadius(4),
+                        Background = isSelected ? TabSelectedBg : TabUnselectedBg,
+                        Foreground = isSelected ? Brushes.White : Brushes.Black,
+                        FontWeight = isSelected ? FontWeight.Bold : FontWeight.Normal,
+                    };
+                    btn.Click += (_, _) => AlternativeSelected?.Invoke(capturedLi, capturedAi);
+                    row.Children.Add(btn);
+                }
+
+                _legsPanel.Children.Add(row);
             }
         }
+
+        // Info necessarie a renderizzare una tratta: km/min di OGNI
+        // alternativa disponibile (non solo quella selezionata, a differenza
+        // della vecchia SetLegs) più quale è correntemente selezionata.
+        public readonly record struct LegInfo(
+            IReadOnlyList<(double km, double min)> Alternatives,
+            int SelectedIndex,
+            bool Failed,
+            string? Error);
 
         private bool _canCreate;
 

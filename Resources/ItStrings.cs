@@ -107,6 +107,8 @@ namespace StradarioApp.Resources
             ["RouteInstradationPanel_Tratta"] = "Tratta {0}: {1:F1} km · {2:F0} min",
             ["RouteInstradationPanel_TrattaFallita"] = "Tratta {0}: instradamento fallito",
             ["RouteInstradationPanel_TrattaFallitaConErrore"] = "Tratta {0}: instradamento fallito ({1})",
+            ["RouteInstradationPanel_TrattaLabel"] = "Tratta {0}",
+            ["RouteInstradationPanel_AlternativaHeader"] = "Alt. {0}\n{1:F1} km · {2:F0} min",
 
             // UI/ProgressWindow.cs
             ["ProgressWindow_Avvio"] = "Avvio...",
@@ -386,7 +388,7 @@ namespace StradarioApp.Resources
             ["MainWindow_AggiungiPuntiPercorsoTooltip"] = "Aggiungi punti a questo percorso (clic sulla mappa)",
             ["MainWindow_InstradaTooltip"] = "Instrada su strada (OSRM)",
             ["MainWindow_InstradaFallitoTooltip"] = "Instradamento fallito per almeno una tratta — riprova",
-            ["MainWindow_InstradaMaxPunti"] = "Instradamento possibile solo fino a 5 punti: riduci i punti del percorso prima di riprovare.",
+            ["MainWindow_InstradaMaxPunti"] = "Instradamento possibile solo fino a 10 punti: riduci i punti del percorso prima di riprovare.",
             ["MainWindow_ModificaPercorsoTooltip"] = "Modifica percorso",
             ["MainWindow_PuntoPercorsoNumero"] = "Punto {0}",
             ["MainWindow_EliminaPercorsoTooltip"] = "Elimina percorso",

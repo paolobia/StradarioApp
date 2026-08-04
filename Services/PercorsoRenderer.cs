@@ -55,7 +55,8 @@ namespace StradarioApp.Services
         public static void Draw(SKCanvas canvas, Percorso route,
             Func<double, double, (double x, double y)> project, bool dashed = false,
             SKColor? colorOverride = null, bool drawVertices = true,
-            IReadOnlyList<(double Lon, double Lat)>? avoidLabelNear = null)
+            IReadOnlyList<(double Lon, double Lat)>? avoidLabelNear = null,
+            float strokeWidthMultiplier = 1f)
         {
             if (route.Points.Count == 0) return;
 
@@ -74,7 +75,7 @@ namespace StradarioApp.Services
                     using var halo = new SKPaint
                     {
                         Color = new SKColor(255, 255, 255, 200), IsAntialias = true,
-                        Style = SKPaintStyle.Stroke, StrokeWidth = 6.5f,
+                        Style = SKPaintStyle.Stroke, StrokeWidth = 6.5f * strokeWidthMultiplier,
                         StrokeCap = SKStrokeCap.Round, StrokeJoin = SKStrokeJoin.Round
                     };
                     canvas.DrawPath(path, halo);
@@ -83,7 +84,7 @@ namespace StradarioApp.Services
                 using var stroke = new SKPaint
                 {
                     Color = color, IsAntialias = true,
-                    Style = SKPaintStyle.Stroke, StrokeWidth = 4f,
+                    Style = SKPaintStyle.Stroke, StrokeWidth = 4f * strokeWidthMultiplier,
                     StrokeCap = SKStrokeCap.Round, StrokeJoin = SKStrokeJoin.Round
                 };
                 using var dashEffect = dashed ? SKPathEffect.CreateDash(new float[] { 10f, 6f }, 0) : null;

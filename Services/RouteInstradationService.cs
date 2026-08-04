@@ -5,10 +5,10 @@
 //   da zero) sulla rete stradale reale tramite il server pubblico OSRM
 //   (router.project-osrm.org — nessuna chiave, nessun self-hosting, soggetto
 //   a rate-limit/fair-use, vedi MainWindow.StartInstradaMode per il limite di
-//   5 vertici). OSRM calcola alternative vere solo per query O-D a due punti,
+//   10 vertici). OSRM calcola alternative vere solo per query O-D a due punti,
 //   non con via multipli: per bypassare questo limite si fa una richiesta
-//   SEPARATA per ogni coppia di vertici consecutivi del percorso (max 4
-//   tratte per 5 vertici), mai in parallelo — throttling identico nello
+//   SEPARATA per ogni coppia di vertici consecutivi del percorso (max 9
+//   tratte per 10 vertici), mai in parallelo — throttling identico nello
 //   spirito a quello già usato per Nominatim in PoiSearchService
 //   (ThrottleNominatimAsync), ma con il proprio semaforo/orario perché è un
 //   host pubblico diverso con la propria policy d'uso.

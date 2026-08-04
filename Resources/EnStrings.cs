@@ -100,6 +100,8 @@ namespace StradarioApp.Resources
             ["RouteInstradationPanel_Tratta"] = "Leg {0}: {1:F1} km · {2:F0} min",
             ["RouteInstradationPanel_TrattaFallita"] = "Leg {0}: routing failed",
             ["RouteInstradationPanel_TrattaFallitaConErrore"] = "Leg {0}: routing failed ({1})",
+            ["RouteInstradationPanel_TrattaLabel"] = "Leg {0}",
+            ["RouteInstradationPanel_AlternativaHeader"] = "Alt. {0}\n{1:F1} km · {2:F0} min",
 
             // UI/ProgressWindow.cs
             ["ProgressWindow_Avvio"] = "Starting...",
@@ -379,7 +381,7 @@ namespace StradarioApp.Resources
             ["MainWindow_AggiungiPuntiPercorsoTooltip"] = "Add points to this route (click on the map)",
             ["MainWindow_InstradaTooltip"] = "Route on roads (OSRM)",
             ["MainWindow_InstradaFallitoTooltip"] = "Routing failed for at least one leg — try again",
-            ["MainWindow_InstradaMaxPunti"] = "Routing is only possible up to 5 points: reduce the route's points before trying again.",
+            ["MainWindow_InstradaMaxPunti"] = "Routing is only possible up to 10 points: reduce the route's points before trying again.",
             ["MainWindow_ModificaPercorsoTooltip"] = "Edit route",
             ["MainWindow_PuntoPercorsoNumero"] = "Point {0}",
             ["MainWindow_EliminaPercorsoTooltip"] = "Delete route",
