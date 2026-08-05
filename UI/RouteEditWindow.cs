@@ -384,46 +384,19 @@ namespace StradarioApp.UI
             return panel;
         }
 
-        // Parole chiave (italiano + inglese, minuscolo) associate a ciascuna
-        // icona POI: la prima che compare come sottostringa di etichetta+
-        // descrizione (in quest'ordine, dal più specifico al più generico)
-        // vince. Copre solo le 16 icone disponibili in PoiIcons.All — per
-        // concetti senza un'icona dedicata (es. moschea/tempio, museo/forte)
-        // si sceglie l'icona disponibile concettualmente più vicina
-        // (rispettivamente Church e Monument).
-        private static readonly (PoiIconType Icon, string[] Keywords)[] IconKeywords =
-        {
-            (PoiIconType.Hospital,   new[] { "ospedale", "clinica", "pronto soccorso", "farmacia", "hospital", "clinic", "emergency", "pharmacy" }),
-            (PoiIconType.Hotel,      new[] { "hotel", "albergo", "resort", "ostello", "lodge", "lodging", "hostel", "b&b", "bed and breakfast", "guesthouse" }),
-            (PoiIconType.Restaurant, new[] { "ristorante", "trattoria", "osteria", "pizzeria", "restaurant", "dining", "diner" }),
-            (PoiIconType.Cafe,       new[] { "caffè", "caffetteria", "bar", "cafe", "coffee", "bistro" }),
-            (PoiIconType.Church,     new[] { "chiesa", "cattedrale", "basilica", "duomo", "abbazia", "santuario", "moschea", "tempio", "church", "cathedral", "mosque", "temple", "shrine", "abbey" }),
-            (PoiIconType.Monument,   new[] { "monumento", "statua", "memoriale", "museo", "forte", "fortezza", "castello", "rovine", "monument", "museum", "memorial", "statue", "fort", "fortress", "castle", "ruins", "landmark" }),
-            (PoiIconType.Viewpoint,  new[] { "belvedere", "panorama", "punto panoramico", "corniche", "viewpoint", "lookout", "scenic" }),
-            (PoiIconType.Camping,    new[] { "campeggio", "camping", "campground" }),
-            (PoiIconType.Fountain,   new[] { "fontana", "fountain" }),
-            (PoiIconType.Parking,    new[] { "parcheggio", "garage", "parking" }),
-            (PoiIconType.Shop,       new[] { "negozio", "mercato", "mercatino", "souk", "bazar", "centro commerciale", "shop", "store", "market", "mall", "boutique" }),
-            (PoiIconType.Home,       new[] { "abitazione", "residenza", "casa", "villa", "home", "house", "residence" }),
-            (PoiIconType.Flag,       new[] { "bandiera", "confine", "frontiera", "flag", "border" }),
-            (PoiIconType.Info,       new[] { "informazioni", "ufficio turistico", "info point", "information", "tourist office" }),
-        };
-
         // Ritorna true se l'icona è cambiata (serve al chiamante per decidere
         // se ricostruire la UI). Non tocca l'icona se nessuna parola chiave
         // combacia — un'icona scelta a mano manualmente in assenza di un
-        // match testuale successivo resta quella dell'utente.
+        // match testuale successivo resta quella dell'utente. Stesse parole
+        // chiave usate anche in import (v. Services/PoiIconSuggestion e
+        // MainWindow.ReconcileImportedPoiWithRoutes), dove serve applicare
+        // il suggerimento subito, senza aspettare un evento di UI.
         private static bool ApplySuggestedIcon(GeoPoint p)
         {
-            string haystack = $"{p.PoiLabel} {p.PoiDescription}".ToLowerInvariant();
-            foreach (var (icon, keywords) in IconKeywords)
-            {
-                if (!keywords.Any(k => haystack.Contains(k, StringComparison.Ordinal))) continue;
-                if (p.PoiIcon == icon) return false;
-                p.PoiIcon = icon;
-                return true;
-            }
-            return false;
+            if (!PoiIconSuggestion.TrySuggest(p.PoiLabel, p.PoiDescription, out var icon)) return false;
+            if (p.PoiIcon == icon) return false;
+            p.PoiIcon = icon;
+            return true;
         }
 
         private void CommitPoint(int index, TextBox tbLon, TextBox tbLat)

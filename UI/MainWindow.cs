@@ -1359,7 +1359,13 @@ namespace StradarioApp.UI
                             pt.IsPoi          = true;
                             pt.PoiLabel       = item.Label;
                             pt.PoiDescription = item.Description;
-                            pt.PoiIcon        = group.Icon;
+                            // Icona suggerita da etichetta/descrizione (v.
+                            // Services/PoiIconSuggestion) se una parola chiave
+                            // combacia, altrimenti l'icona del gruppo di
+                            // provenienza (di norma Pin, mai fidata dallo
+                            // stile KML esterno, v. PoiService.ParsePlacemarks).
+                            pt.PoiIcon = PoiIconSuggestion.TrySuggest(item.Label, item.Description, out var suggestedIcon)
+                                ? suggestedIcon : group.Icon;
                         }
                     if (matchedAny)
                         group.Items.RemoveAt(ii);
