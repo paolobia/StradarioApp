@@ -51,7 +51,11 @@ namespace StradarioApp.UI
             _currentViewLon = currentViewLon;
             _currentViewLat = currentViewLat;
             _selectedColor  = string.IsNullOrWhiteSpace(route.ColorHex) ? PercorsoRenderer.DefaultColorHex : route.ColorHex;
-            _workingPoints  = route.Points.Select(p => new GeoPoint { Lon = p.Lon, Lat = p.Lat }).ToList();
+            _workingPoints  = route.Points.Select(p => new GeoPoint
+            {
+                Lon = p.Lon, Lat = p.Lat,
+                IsPoi = p.IsPoi, PoiLabel = p.PoiLabel, PoiDescription = p.PoiDescription, PoiIcon = p.PoiIcon
+            }).ToList();
 
             Title  = route.Id == 0 ? Strings.Get("RouteEditWindow_TitoloNuovo") : string.Format(Strings.Get("RouteEditWindow_TitoloModifica"), route.Label);
             Width  = 460;
