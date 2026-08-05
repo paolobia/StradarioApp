@@ -400,6 +400,16 @@ namespace StradarioApp.Models
     {
         public double Lon { get; set; }
         public double Lat { get; set; }
+
+        // Se true, questo punto del percorso è anche un punto di interesse:
+        // viene disegnato/esportato come un POI (icona + etichetta), sempre
+        // col colore del percorso proprietario (mai un colore proprio) —
+        // così un utente non deve più creare un gruppo POI separato solo per
+        // marcare una tappa lungo un percorso.
+        public bool IsPoi { get; set; } = false;
+        public string PoiLabel { get; set; } = "";
+        public string PoiDescription { get; set; } = "";
+        public PoiIconType PoiIcon { get; set; } = PoiIconType.Pin;
     }
 
     // Percorso: sequenza ordinata di punti geografici (traccia/itinerario),

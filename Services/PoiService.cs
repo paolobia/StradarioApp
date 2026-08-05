@@ -381,6 +381,16 @@ namespace StradarioApp.Services
 
             foreach (var folder in documentEl.Elements(ns + "Folder"))
             {
+                // Cartella riservata ai punti-POI dei percorsi (v.
+                // PercorsoService.BuildKmlDocument/ParseKmlRoutes): non è un
+                // gruppo POI libero, va letta e correlata solo da
+                // PercorsoService, altrimenti l'import unificato (che esegue
+                // sia PoiService che PercorsoService sugli stessi byte) la
+                // duplicherebbe come gruppo POI a sé stante.
+                string? folderNameForSkip = folder.Element(ns + "name")?.Value?.Trim();
+                if (string.Equals(folderNameForSkip, PercorsoService.RoutePoiFolderName, StringComparison.Ordinal))
+                    continue;
+
                 string folderDesc = folder.Element(ns + "description")?.Value?.Trim() ?? "";
                 var group = new PoiGroup
                 {

@@ -499,15 +499,39 @@ namespace StradarioApp.Services
         private int DrawPercorsiListPages(PdfDocument pdfDoc, List<Percorso> percorsi,
             double pageWidthMm, double pageHeightMm)
         {
-            const double margin    = 24;
-            const double rowH      = 20;
-            const double descRowH  = 12;
-            const double swatchSz  = 12;
+            const double margin       = 24;
+            const double rowH         = 20;
+            const double descRowH     = 12;
+            const double swatchSz     = 12;
+            const double poiItemRowH  = 16;
+            const double poiDescRowH  = 10;
+            const double poiIconSize  = 14;
 
-            var titleFont = new XFont("Arial", 16, XFontStyle.Bold);
-            var nameFont  = new XFont("Arial", 10, XFontStyle.Bold);
-            var descFont  = new XFont("Arial", 8);
-            var metaFont  = new XFont("Arial", 8);
+            var titleFont    = new XFont("Arial", 16, XFontStyle.Bold);
+            var nameFont     = new XFont("Arial", 10, XFontStyle.Bold);
+            var descFont     = new XFont("Arial", 8);
+            var metaFont     = new XFont("Arial", 8);
+            var poiItemFont  = new XFont("Arial", 9);
+            var poiDescFont  = new XFont("Arial", 6.5);
+            var poiCoordFont = new XFont("Arial", 8);
+
+            // Icone dei punti-POI dei percorsi: cache per (routeId, pointIndex)
+            // dato che colore/icona possono differire punto per punto (icona
+            // scelta dall'utente) pur condividendo sempre il colore del
+            // percorso — stesso meccanismo di cache XImage di DrawPoiListPages.
+            var poiIconCache = new Dictionary<string, XImage>();
+            XImage GetRoutePoiIcon(Percorso route, GeoPoint point)
+            {
+                string key = $"{route.Id}_{point.PoiIcon}";
+                if (poiIconCache.TryGetValue(key, out var cached)) return cached;
+                using var bmp = PoiIconRenderer.RenderToBitmap(point.PoiIcon, PercorsoRenderer.ParseColor(route.ColorHex), 48);
+                using var ms  = new MemoryStream();
+                bmp.Encode(ms, SKEncodedImageFormat.Png, 100);
+                ms.Position = 0;
+                var xImg = XImage.FromStream(() => new MemoryStream(ms.ToArray()));
+                poiIconCache[key] = xImg;
+                return xImg;
+            }
 
             int pageCount = 0;
             XGraphics? gfx = null;
@@ -565,6 +589,38 @@ namespace StradarioApp.Services
                     gfx.DrawString(line, descFont, XBrushes.Black,
                         new XRect(margin + swatchSz + 14, y, descWidth, descRowH), XStringFormats.TopLeft);
                     y += descRowH;
+                }
+
+                // Punti del percorso marcati come POI: elencati annidati sotto
+                // il percorso stesso (non nella pagina POI separata, restano
+                // "dentro la definizione del percorso" come richiesto) — stesso
+                // layout icona/etichetta/coordinate/descrizione di DrawPoiListPages.
+                foreach (var point in r.Points)
+                {
+                    if (!point.IsPoi) continue;
+
+                    bool hasPointDesc = !string.IsNullOrWhiteSpace(point.PoiDescription);
+                    double pointDescWidth = tableWidth - poiIconSize - 20;
+                    var pointDescLines = hasPointDesc ? WrapText(gfx!, point.PoiDescription, poiDescFont, pointDescWidth) : new List<string>();
+                    double neededPointH = poiItemRowH + pointDescLines.Count * poiDescRowH;
+                    if (y + neededPointH > h - margin)
+                        NewPage();
+
+                    double iconY = y + (poiItemRowH - poiIconSize * 0.85) / 2.0;
+                    gfx!.DrawImage(GetRoutePoiIcon(r, point), margin + swatchSz + 16, iconY, poiIconSize * 0.85, poiIconSize * 0.85);
+                    gfx.DrawString(point.PoiLabel, poiItemFont, XBrushes.Black,
+                        new XRect(margin + swatchSz + poiIconSize + 20, y, tableWidth * 0.55, poiItemRowH), XStringFormats.CenterLeft);
+                    string pointCoords = $"{point.Lon:F4}°E  {point.Lat:F4}°N";
+                    gfx.DrawString(pointCoords, poiCoordFont, XBrushes.Black,
+                        new XRect(margin + tableWidth * 0.62, y, tableWidth * 0.38 - 4, poiItemRowH), XStringFormats.CenterLeft);
+                    y += poiItemRowH;
+
+                    foreach (var line in pointDescLines)
+                    {
+                        gfx.DrawString(line, poiDescFont, XBrushes.Black,
+                            new XRect(margin + swatchSz + poiIconSize + 20, y, pointDescWidth, poiDescRowH), XStringFormats.TopLeft);
+                        y += poiDescRowH;
+                    }
                 }
 
                 y += 4; // spazio tra percorsi
@@ -860,6 +916,22 @@ namespace StradarioApp.Services
                 if (!string.IsNullOrWhiteSpace(route.Label))
                     gfx.DrawString(route.Label, routeLabelFont, shadowBrush,
                         new XRect(ptsPdf[0].px + 2, ptsPdf[0].py - 8, 80, 9), XStringFormats.TopLeft);
+
+                // Punti marcati come POI: la pagina riassuntiva è puramente
+                // vettoriale (nessun PoiIconRenderer/bitmap qui), quindi un
+                // cerchietto pieno + etichetta breve, stesso stile minimale
+                // già usato per route.Label sopra.
+                var poiBrush = new XSolidBrush(XColor.FromArgb(color.Alpha, color.Red, color.Green, color.Blue));
+                for (int i = 0; i < route.Points.Count; i++)
+                {
+                    if (!route.Points[i].IsPoi) continue;
+                    var (px, py) = ptsPdf[i];
+                    gfx.DrawEllipse(poiBrush, px - 2.2, py - 2.2, 4.4, 4.4);
+                    gfx.DrawEllipse(XPens.White, px - 2.2, py - 2.2, 4.4, 4.4);
+                    if (!string.IsNullOrWhiteSpace(route.Points[i].PoiLabel))
+                        gfx.DrawString(route.Points[i].PoiLabel, routeLabelFont, shadowBrush,
+                            new XRect(px + 3, py - 8, 80, 9), XStringFormats.TopLeft);
+                }
             }
         }
 

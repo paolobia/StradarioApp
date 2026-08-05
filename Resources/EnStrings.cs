@@ -188,6 +188,9 @@ namespace StradarioApp.Resources
             ["RouteEditWindow_SpostaSu"] = "Move up",
             ["RouteEditWindow_SpostaGiu"] = "Move down",
             ["RouteEditWindow_EliminaPunto"] = "Delete point",
+            ["RouteEditWindow_TogglePoi"] = "Mark/unmark as point of interest",
+            ["RouteEditWindow_PoiLabel"] = "Label:",
+            ["RouteEditWindow_PoiDescrizione"] = "Description:",
             ["RouteEditWindow_MinimoDuePunti"] = "The route must have at least 2 points.",
             ["RouteEditWindow_LabelDefault"] = "Route",
 

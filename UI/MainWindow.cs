@@ -195,6 +195,11 @@ namespace StradarioApp.UI
         // DrawPlacedPoiTooltip. Attivo solo fuori dalla modalità ricerca (che
         // ha già il suo overlay/tooltip dedicato) e non durante un drag.
         private (PoiGroup group, PoiItem item)? _hoveredPoi;
+        // Punto di un percorso marcato come POI (GeoPoint.IsPoi) attualmente
+        // sotto il cursore: stesso tooltip dei POI piazzati, vedi
+        // DrawRouteHoveredPointTooltip. I punti "semplici" (senza IsPoi) non
+        // hanno contenuto da mostrare, restano senza tooltip come prima.
+        private (Percorso route, int index)? _hoveredRoutePoint;
         // Testo con cui è stata avviata la ricerca in corso (o "Ricerca GPS"
         // per la ricerca inversa): usato per intitolare un gruppo POI creato
         // automaticamente se il progetto non ne ha ancora nessuno
@@ -286,6 +291,7 @@ namespace StradarioApp.UI
             _poiSearchResults = new List<PoiSearchService.Result>();
             _hoveredPoiSearchResult = null;
             _hoveredPoi = null;
+            _hoveredRoutePoint = null;
             HidePoiSearchBox();
         }
 
@@ -2548,6 +2554,14 @@ namespace StradarioApp.UI
                 DrawPlacedPoiTooltip(e.Canvas, hGroup, hItem, (float)hx, (float)hy, w, h);
             }
 
+            if (_hoveredRoutePoint != null)
+            {
+                var (hRoute, hIndex) = _hoveredRoutePoint.Value;
+                var hPoint = hRoute.Points[hIndex];
+                var (hx, hy) = GeoUtils.GeoToPixel(hPoint.Lon, hPoint.Lat, _viewCenterLon, _viewCenterLat, _viewZoom, w, h);
+                DrawRouteHoveredPointTooltip(e.Canvas, hRoute, hPoint, (float)hx, (float)hy, w, h);
+            }
+
             // Marker "dove sono": pallino blu con alone bianco, stile mappa
             // classico, più un cerchio tratteggiato per l'accuratezza (se nota)
             if (_myLocationActive && _myLocation != null)
@@ -2638,6 +2652,21 @@ namespace StradarioApp.UI
             lines.Add($"{item.Lat:F5}°N, {item.Lon:F5}°E");
 
             SKColor borderColor = SKColor.TryParse(group.ColorHex, out var c) ? c : new SKColor(30, 136, 229);
+            DrawTooltipBox(canvas, lines, markerX, markerY, canvasW, canvasH, borderColor);
+        }
+
+        // Tooltip su un punto di un percorso marcato come POI (GeoPoint.IsPoi):
+        // stesso schema di DrawPlacedPoiTooltip, ma il bordo prende il colore
+        // del PERCORSO (mai un colore proprio del punto).
+        private void DrawRouteHoveredPointTooltip(SKCanvas canvas, Percorso route, GeoPoint point, float markerX, float markerY, float canvasW, float canvasH)
+        {
+            var lines = new List<string> { point.PoiLabel };
+            if (!string.IsNullOrWhiteSpace(point.PoiDescription))
+                foreach (string descLine in point.PoiDescription.Split('\n'))
+                    lines.AddRange(WrapText(descLine.Trim(), 40));
+            lines.Add($"{point.Lat:F5}°N, {point.Lon:F5}°E");
+
+            SKColor borderColor = SKColor.TryParse(route.ColorHex, out var c) ? c : new SKColor(30, 136, 229);
             DrawTooltipBox(canvas, lines, markerX, markerY, canvasW, canvasH, borderColor);
         }
 
@@ -3199,6 +3228,21 @@ namespace StradarioApp.UI
                 _hoveredPoi = null;
             }
 
+            // Stesso tooltip per i punti di percorso marcati come POI.
+            if (!_poiSearchMode && !_isDraggingPoi && !_isDraggingRoutePoint)
+            {
+                var hoveredRoutePoint = FindAnyRoutePointAtPoint(pos, cw, ch);
+                if (!Equals(hoveredRoutePoint, _hoveredRoutePoint))
+                {
+                    _hoveredRoutePoint = hoveredRoutePoint;
+                    _mapCanvas?.InvalidateVisual();
+                }
+            }
+            else if (_hoveredRoutePoint != null)
+            {
+                _hoveredRoutePoint = null;
+            }
+
             if (_isDraggingRoutePoint && _draggingRoute != null)
             {
                 var (lon, lat) = GeoUtils.PixelToGeo(pos.X, pos.Y,
@@ -3488,6 +3532,29 @@ namespace StradarioApp.UI
                         _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
                     double dx = pt.X - x, dy = pt.Y - y;
                     if (dx * dx + dy * dy <= RoutePointHitRadiusPx * RoutePointHitRadiusPx)
+                        return (route, i);
+                }
+            }
+            return null;
+        }
+
+        // Come FindRoutePointAtPoint, ma per il tooltip al passaggio del
+        // mouse (non per il drag): include anche i percorsi bloccati, e
+        // considera solo i punti marcati IsPoi (gli altri non hanno etichetta/
+        // descrizione da mostrare, restano senza tooltip).
+        private (Percorso route, int index)? FindAnyRoutePointAtPoint(Point pt, float cw, float ch)
+        {
+            foreach (var route in _project.Percorsi)
+            {
+                if (_hiddenPercorsoIds.Contains(route.Id)) continue;
+                for (int i = 0; i < route.Points.Count; i++)
+                {
+                    var p = route.Points[i];
+                    if (!p.IsPoi) continue;
+                    var (x, y) = GeoUtils.GeoToPixel(p.Lon, p.Lat,
+                        _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
+                    double dx = pt.X - x, dy = pt.Y - y;
+                    if (dx * dx + dy * dy <= PoiHitRadiusPx * PoiHitRadiusPx)
                         return (route, i);
                 }
             }
@@ -6066,7 +6133,7 @@ namespace StradarioApp.UI
 
             if (routes.Count > 0)
             {
-                var routeDoc = _percorsoSvc.BuildKmlDocument(routes);
+                var routeDoc = _percorsoSvc.BuildKmlDocument(routes, embedIcons);
                 var routeDocEl = routeDoc.Root!.Element(kml + "Document")!;
                 RenameKmlStyleIds(routeDocEl, kml, "route_");
                 foreach (var child in routeDocEl.Elements())
@@ -6119,6 +6186,8 @@ namespace StradarioApp.UI
 
             if (poiGroups.Count > 0)
                 await _poiSvc.WriteIconEntriesAsync(zip, poiGroups);
+            if (routes.Count > 0)
+                await _percorsoSvc.WriteRoutePoiIconEntriesAsync(zip, routes);
         }
 
         private async Task ExportCombinedGpxAsync(string path, List<PoiGroup> poiGroups, List<Percorso> routes)

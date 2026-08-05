@@ -230,7 +230,9 @@ namespace StradarioApp.UI
                 Padding         = new Thickness(6, 3)
             };
 
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,*,Auto,Auto,Auto") };
+            var outer = new StackPanel { Spacing = 4 };
+
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,*,Auto,Auto,Auto,Auto") };
 
             row.Children.Add(new TextBlock
             {
@@ -250,13 +252,29 @@ namespace StradarioApp.UI
             row.Children.Add(tbLon);
             row.Children.Add(tbLat);
 
+            // Attiva/disattiva "questo punto è anche un POI": il colore
+            // dell'icona segue quello del percorso quando attivo, così si
+            // vede a colpo d'occhio senza bisogno di un riquadro colorato
+            // separato (coerente con MakeTreeIconButton, che colora solo il
+            // glifo, mai lo sfondo).
+            var poiBrush = p.IsPoi ? new SolidColorBrush(Color.Parse(_selectedColor)) : (IBrush)Brushes.Gray;
+            var btnPoi = DialogUi.MakeTreeIconButton(BootstrapIcons.Locate, Strings.Get("RouteEditWindow_TogglePoi"), poiBrush, () =>
+            {
+                p.IsPoi = !p.IsPoi;
+                if (p.IsPoi && string.IsNullOrWhiteSpace(p.PoiLabel))
+                    p.PoiLabel = $"POI{index + 1}";
+                RefreshPoints();
+            });
+            Grid.SetColumn(btnPoi, 3);
+            row.Children.Add(btnPoi);
+
             var btnUp = DialogUi.MakeTreeIconButton(BootstrapIcons.ChevronUp, Strings.Get("RouteEditWindow_SpostaSu"), Brushes.SteelBlue, () =>
             {
                 if (index == 0) return;
                 (_workingPoints[index - 1], _workingPoints[index]) = (_workingPoints[index], _workingPoints[index - 1]);
                 RefreshPoints();
             });
-            Grid.SetColumn(btnUp, 3);
+            Grid.SetColumn(btnUp, 4);
             row.Children.Add(btnUp);
 
             var btnDown = DialogUi.MakeTreeIconButton(BootstrapIcons.ChevronDown, Strings.Get("RouteEditWindow_SpostaGiu"), Brushes.SteelBlue, () =>
@@ -265,7 +283,7 @@ namespace StradarioApp.UI
                 (_workingPoints[index + 1], _workingPoints[index]) = (_workingPoints[index], _workingPoints[index + 1]);
                 RefreshPoints();
             });
-            Grid.SetColumn(btnDown, 4);
+            Grid.SetColumn(btnDown, 5);
             row.Children.Add(btnDown);
 
             var btnDel = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("RouteEditWindow_EliminaPunto"), Brushes.Crimson, () =>
@@ -273,11 +291,86 @@ namespace StradarioApp.UI
                 _workingPoints.RemoveAt(index);
                 RefreshPoints();
             });
-            Grid.SetColumn(btnDel, 5);
+            Grid.SetColumn(btnDel, 6);
             row.Children.Add(btnDel);
 
-            border.Child = row;
+            outer.Children.Add(row);
+
+            if (p.IsPoi)
+                outer.Children.Add(BuildPointPoiPanel(p));
+
+            border.Child = outer;
             return border;
+        }
+
+        // Pannello espanso mostrato quando un punto è marcato come POI:
+        // griglia icone (stesso pattern di PoiGroupEditWindow.BuildIconGrid,
+        // ma colorata col colore del PERCORSO, mai un colore proprio) più
+        // etichetta e descrizione. Modifiche applicate direttamente sul
+        // GeoPoint di lavoro, niente commit differito.
+        private Control BuildPointPoiPanel(GeoPoint p)
+        {
+            var panel = new StackPanel { Spacing = 4, Margin = new Thickness(20, 2, 2, 4) };
+
+            var iconScroll = new ScrollViewer { MaxHeight = 90 };
+            var iconPanel  = new WrapPanel { Orientation = Orientation.Horizontal };
+            iconScroll.Content = iconPanel;
+
+            var color = PoiIconRenderer.ParseColor(_selectedColor);
+            foreach (var entry in PoiIcons.All)
+            {
+                bool isSelected = entry.Type == p.PoiIcon;
+
+                using var bmp         = PoiIconRenderer.RenderToBitmap(entry.Type, color, 32);
+                var       avaloniaBmp = SkiaImageHelper.ToAvaloniaBitmap(bmp);
+
+                var tile = new Border
+                {
+                    Width           = 30,
+                    Height          = 30,
+                    Margin          = new Thickness(1),
+                    CornerRadius    = new CornerRadius(4),
+                    Background      = isSelected ? new SolidColorBrush(Color.Parse("#CCE8FF")) : Brushes.Transparent,
+                    BorderBrush     = isSelected ? Brushes.SteelBlue : Brushes.LightGray,
+                    BorderThickness = new Thickness(1),
+                    Cursor          = new Cursor(StandardCursorType.Hand),
+                    Child           = new Image { Source = avaloniaBmp, Width = 22, Height = 22, Stretch = Stretch.Uniform }
+                };
+                ToolTip.SetTip(tile, entry.Name);
+                tile.PointerPressed += (_, _) =>
+                {
+                    p.PoiIcon = entry.Type;
+                    RefreshPoints();
+                };
+                iconPanel.Children.Add(tile);
+            }
+            panel.Children.Add(iconScroll);
+
+            var labelRow = new Grid { ColumnDefinitions = new ColumnDefinitions("70,*") };
+            labelRow.Children.Add(new TextBlock { Text = Strings.Get("RouteEditWindow_PoiLabel"), VerticalAlignment = VerticalAlignment.Center, FontSize = 11 });
+            var tbPoiLabel = new TextBox { Text = p.PoiLabel, FontSize = 11 };
+            tbPoiLabel.LostFocus += (_, _) => p.PoiLabel = tbPoiLabel.Text ?? "";
+            Grid.SetColumn(tbPoiLabel, 1);
+            labelRow.Children.Add(tbPoiLabel);
+            panel.Children.Add(labelRow);
+
+            var descRow = new Grid { ColumnDefinitions = new ColumnDefinitions("70,*") };
+            descRow.Children.Add(new TextBlock { Text = Strings.Get("RouteEditWindow_PoiDescrizione"), VerticalAlignment = VerticalAlignment.Top, FontSize = 11 });
+            var tbPoiDesc = new TextBox
+            {
+                Text          = p.PoiDescription,
+                FontSize      = 11,
+                AcceptsReturn = true,
+                TextWrapping  = TextWrapping.Wrap,
+                MinHeight     = 40,
+                MaxHeight     = 60
+            };
+            tbPoiDesc.LostFocus += (_, _) => p.PoiDescription = tbPoiDesc.Text ?? "";
+            Grid.SetColumn(tbPoiDesc, 1);
+            descRow.Children.Add(tbPoiDesc);
+            panel.Children.Add(descRow);
+
+            return panel;
         }
 
         private void CommitPoint(int index, TextBox tbLon, TextBox tbLat)

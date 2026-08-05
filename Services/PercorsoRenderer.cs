@@ -97,8 +97,18 @@ namespace StradarioApp.Services
             {
                 using var vertexFill   = new SKPaint { Color = color,          IsAntialias = true };
                 using var vertexBorder = new SKPaint { Color = SKColors.White, IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 1.5f };
+                float poiSize = 22f * strokeWidthMultiplier;
                 for (int i = 0; i < pts.Count; i++)
                 {
+                    var gp = route.Points[i];
+                    if (gp.IsPoi)
+                    {
+                        // Un punto marcato come POI si disegna come un vero
+                        // marker (icona + etichetta), sempre col colore del
+                        // percorso — mai il semplice pallino di vertice.
+                        PoiIconRenderer.DrawWithLabel(canvas, gp.PoiIcon, color, gp.PoiLabel, (float)pts[i].x, (float)pts[i].y, poiSize);
+                        continue;
+                    }
                     float r = (i == 0 || i == pts.Count - 1) ? 5.5f : 3f;
                     canvas.DrawCircle((float)pts[i].x, (float)pts[i].y, r, vertexFill);
                     canvas.DrawCircle((float)pts[i].x, (float)pts[i].y, r, vertexBorder);
