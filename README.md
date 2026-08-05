@@ -11,10 +11,10 @@ grazie ad Avalonia UI.
 ## Funzionalità
 
 - **Mappa interattiva**: pan con drag, zoom con rotella centrato sul cursore, ricerca città
-- **Pagine**: click destro per aggiungere, drag per spostare, blocco manuale/automatico contro spostamenti accidentali, etichette automatiche (A1, B2…), riordino trascinabile nell'albero laterale, **orientamento e scala personalizzabili per singola pagina** (override rispetto alle impostazioni generali)
+- **Pagine**: click destro per aggiungere, drag per spostare, blocco manuale/automatico contro spostamenti accidentali, etichette automatiche (A1, B2…), **descrizione precompilata con le città più popolose dell'area** (database locale, GeoNames), riordino trascinabile nell'albero laterale, **orientamento e scala personalizzabili per singola pagina** (override rispetto alle impostazioni generali)
 - **Gruppi POI**: marker con icona/colore personalizzabili, aggiunta diretta sulla mappa o via ricerca — 43 categorie predefinite più quelle personalizzate, ricerca dal vivo (Overpass, con punteggio locale offline sempre calcolato in aggiunta al filtro AI/Groq opzionale) o offline (database locale scaricabile per continente), ricerca indirizzo e città; spostamento di un POI fra gruppi con un gesto taglia/incolla; riordino trascinabile dei POI dentro il proprio gruppo (incide sull'ordine nel PDF); un gruppo nascosto (occhio spento) è protetto da modifiche accidentali; il colore di un gruppo si sincronizza automaticamente con quello di un percorso coincidente
-- **Percorsi**: disegno punto-per-punto sulla mappa (Invio o shift+clic per confermare, senza aggiungere punti spuri se si pan durante il disegno), estendibili ed editabili in seguito, instradabili su strada reale via OSRM (auto/bici/piedi, fino a 10 punti, alternative multiple per tratta scelte da un pannello dedicato ridimensionabile); l'etichetta si sposta automaticamente se troppo vicina a un POI
-- **Import/export universale**: un solo comando importa KMZ/KML/GPX (POI e percorsi insieme, con colori distinti per i gruppi POI importati); esportazione separata, combinata o di un singolo gruppo/percorso; anche in **CSV** (due file tabellari, uno per POI e uno per percorsi, apribili in Excel/LibreOffice); nomi in script non latino ripuliti automaticamente (anche nel tooltip "Cosa c'è qui"); punti in Cina (possibile GCJ-02 anziché WGS84) gestiti con correzione automatica o manuale
+- **Percorsi**: disegno punto-per-punto sulla mappa (Invio o shift+clic per confermare, senza aggiungere punti spuri se si pan durante il disegno), estendibili ed editabili in seguito, instradabili su strada reale via OSRM (auto/bici/piedi, fino a 10 punti, alternative multiple per tratta scelte da un pannello dedicato ridimensionabile); l'etichetta si sposta automaticamente se troppo vicina a un POI; **qualunque punto del percorso può diventare un POI inline** (icona, etichetta, descrizione) direttamente dalla maschera di modifica, sempre col colore del percorso — l'icona viene anche suggerita automaticamente da parole chiave nel testo (italiano/inglese), senza dover creare un gruppo POI a parte
+- **Import/export universale**: un solo comando importa KMZ/KML/GPX (POI e percorsi insieme, con colori distinti per i gruppi POI importati); esportazione separata, combinata o di un singolo gruppo/percorso; anche in **CSV** (due file tabellari, uno per POI e uno per percorsi, apribili in Excel/LibreOffice); un POI che coincide con un vertice di uno o più percorsi (es. un itinerario di viaggio con una base ripetuta ogni giorno) viene riconciliato come POI inline su quel/quei punto/i invece di restare duplicato — un gruppo POI rimasto vuoto dopo la riconciliazione non è né importato né esportato; nomi in script non latino ripuliti automaticamente (anche nel tooltip "Cosa c'è qui"); punti in Cina (possibile GCJ-02 anziché WGS84) gestiti con correzione automatica o manuale
 - **Generazione PDF**: anteprima prima di salvare, **pagina di copertina con titolo**, indice, mappa riassuntiva, pagine con riferimenti alle adiacenti e scala grafica, descrizioni lunghe con word-wrap reale, gruppo POI mai separato dal proprio elenco da un'interruzione di pagina; 5 modalità di contrasto per la mappa stampata (nessuno, colore, bianco/nero, enfatizza strade, **adattivo/locale**), più **rinforzo contorni** e **retinatura per stampa B/N** (dithering) come opzioni indipendenti
 - **Salvataggio progetto**: file `.stradario` (JSON) leggibile e modificabile a mano; le chiavi API restano solo nelle preferenze locali, mai nel progetto
 - **Impostazioni**: tre tab — Generale (formato pagina, DPI, scala di stampa da 1:1.000 a 1:1.000.000, tile server, contrasto mappa nel PDF), Categorie POI (aggiunta di categorie personalizzate), Database POI offline (download facoltativo per continente)
@@ -23,7 +23,7 @@ grazie ad Avalonia UI.
 
 ## Gallery
 
-21 screenshot reali (dati di esempio, progetto "Firenze Demo" inventato),
+23 screenshot reali (dati di esempio, progetto "Firenze Demo" inventato),
 organizzati per area funzionale — dalla mappa interattiva all'output PDF
 finale, che è il vero prodotto dell'app.
 
@@ -78,6 +78,16 @@ finale, che è il vero prodotto dell'app.
 <td width="50%">
 <img src="docs/screenshots/07-percorso-osrm.png" width="100%" alt="OSRM routing" />
 <sub>Road-accurate routing via OSRM, with per-leg distance and duration.</sub>
+</td>
+</tr>
+<tr>
+<td width="50%">
+<img src="docs/screenshots/22-percorso-poi-inline-dialog.png" width="100%" alt="Inline route-point POI editor" />
+<sub>Any route point can be marked as a POI right from the route editor — icon, label and description inline, always the route's own color.</sub>
+</td>
+<td width="50%">
+<img src="docs/screenshots/23-percorso-poi-inline-mappa.png" width="100%" alt="Inline route-point POI on the map" />
+<sub>The marked point renders as a real marker on the map (and in the PDF), sharing the route's color — no separate POI group needed.</sub>
 </td>
 </tr>
 </table>
