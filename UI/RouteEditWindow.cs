@@ -58,9 +58,9 @@ namespace StradarioApp.UI
             }).ToList();
 
             Title  = route.Id == 0 ? Strings.Get("RouteEditWindow_TitoloNuovo") : string.Format(Strings.Get("RouteEditWindow_TitoloModifica"), route.Label);
-            Width  = 460;
+            Width  = 660;
             Height = 620;
-            MinWidth  = 400;
+            MinWidth  = 600;
             MinHeight = 440;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
@@ -267,6 +267,7 @@ namespace StradarioApp.UI
                 p.IsPoi = !p.IsPoi;
                 if (p.IsPoi && string.IsNullOrWhiteSpace(p.PoiLabel))
                     p.PoiLabel = $"POI{index + 1}";
+                if (p.IsPoi) ApplySuggestedIcon(p);
                 RefreshPoints();
             });
             Grid.SetColumn(btnPoi, 3);
@@ -316,9 +317,7 @@ namespace StradarioApp.UI
         {
             var panel = new StackPanel { Spacing = 4, Margin = new Thickness(20, 2, 2, 4) };
 
-            var iconScroll = new ScrollViewer { MaxHeight = 90 };
-            var iconPanel  = new WrapPanel { Orientation = Orientation.Horizontal };
-            iconScroll.Content = iconPanel;
+            var iconPanel = new WrapPanel { Orientation = Orientation.Horizontal };
 
             var color = PoiIconRenderer.ParseColor(_selectedColor);
             foreach (var entry in PoiIcons.All)
@@ -348,12 +347,16 @@ namespace StradarioApp.UI
                 };
                 iconPanel.Children.Add(tile);
             }
-            panel.Children.Add(iconScroll);
+            panel.Children.Add(iconPanel);
 
             var labelRow = new Grid { ColumnDefinitions = new ColumnDefinitions("70,*") };
             labelRow.Children.Add(new TextBlock { Text = Strings.Get("RouteEditWindow_PoiLabel"), VerticalAlignment = VerticalAlignment.Center, FontSize = 11 });
             var tbPoiLabel = new TextBox { Text = p.PoiLabel, FontSize = 11 };
-            tbPoiLabel.LostFocus += (_, _) => p.PoiLabel = tbPoiLabel.Text ?? "";
+            tbPoiLabel.LostFocus += (_, _) =>
+            {
+                p.PoiLabel = tbPoiLabel.Text ?? "";
+                if (ApplySuggestedIcon(p)) RefreshPoints();
+            };
             Grid.SetColumn(tbPoiLabel, 1);
             labelRow.Children.Add(tbPoiLabel);
             panel.Children.Add(labelRow);
@@ -369,12 +372,58 @@ namespace StradarioApp.UI
                 MinHeight     = 40,
                 MaxHeight     = 60
             };
-            tbPoiDesc.LostFocus += (_, _) => p.PoiDescription = tbPoiDesc.Text ?? "";
+            tbPoiDesc.LostFocus += (_, _) =>
+            {
+                p.PoiDescription = tbPoiDesc.Text ?? "";
+                if (ApplySuggestedIcon(p)) RefreshPoints();
+            };
             Grid.SetColumn(tbPoiDesc, 1);
             descRow.Children.Add(tbPoiDesc);
             panel.Children.Add(descRow);
 
             return panel;
+        }
+
+        // Parole chiave (italiano + inglese, minuscolo) associate a ciascuna
+        // icona POI: la prima che compare come sottostringa di etichetta+
+        // descrizione (in quest'ordine, dal più specifico al più generico)
+        // vince. Copre solo le 16 icone disponibili in PoiIcons.All — per
+        // concetti senza un'icona dedicata (es. moschea/tempio, museo/forte)
+        // si sceglie l'icona disponibile concettualmente più vicina
+        // (rispettivamente Church e Monument).
+        private static readonly (PoiIconType Icon, string[] Keywords)[] IconKeywords =
+        {
+            (PoiIconType.Hospital,   new[] { "ospedale", "clinica", "pronto soccorso", "farmacia", "hospital", "clinic", "emergency", "pharmacy" }),
+            (PoiIconType.Hotel,      new[] { "hotel", "albergo", "resort", "ostello", "lodge", "lodging", "hostel", "b&b", "bed and breakfast", "guesthouse" }),
+            (PoiIconType.Restaurant, new[] { "ristorante", "trattoria", "osteria", "pizzeria", "restaurant", "dining", "diner" }),
+            (PoiIconType.Cafe,       new[] { "caffè", "caffetteria", "bar", "cafe", "coffee", "bistro" }),
+            (PoiIconType.Church,     new[] { "chiesa", "cattedrale", "basilica", "duomo", "abbazia", "santuario", "moschea", "tempio", "church", "cathedral", "mosque", "temple", "shrine", "abbey" }),
+            (PoiIconType.Monument,   new[] { "monumento", "statua", "memoriale", "museo", "forte", "fortezza", "castello", "rovine", "monument", "museum", "memorial", "statue", "fort", "fortress", "castle", "ruins", "landmark" }),
+            (PoiIconType.Viewpoint,  new[] { "belvedere", "panorama", "punto panoramico", "corniche", "viewpoint", "lookout", "scenic" }),
+            (PoiIconType.Camping,    new[] { "campeggio", "camping", "campground" }),
+            (PoiIconType.Fountain,   new[] { "fontana", "fountain" }),
+            (PoiIconType.Parking,    new[] { "parcheggio", "garage", "parking" }),
+            (PoiIconType.Shop,       new[] { "negozio", "mercato", "mercatino", "souk", "bazar", "centro commerciale", "shop", "store", "market", "mall", "boutique" }),
+            (PoiIconType.Home,       new[] { "abitazione", "residenza", "casa", "villa", "home", "house", "residence" }),
+            (PoiIconType.Flag,       new[] { "bandiera", "confine", "frontiera", "flag", "border" }),
+            (PoiIconType.Info,       new[] { "informazioni", "ufficio turistico", "info point", "information", "tourist office" }),
+        };
+
+        // Ritorna true se l'icona è cambiata (serve al chiamante per decidere
+        // se ricostruire la UI). Non tocca l'icona se nessuna parola chiave
+        // combacia — un'icona scelta a mano manualmente in assenza di un
+        // match testuale successivo resta quella dell'utente.
+        private static bool ApplySuggestedIcon(GeoPoint p)
+        {
+            string haystack = $"{p.PoiLabel} {p.PoiDescription}".ToLowerInvariant();
+            foreach (var (icon, keywords) in IconKeywords)
+            {
+                if (!keywords.Any(k => haystack.Contains(k, StringComparison.Ordinal))) continue;
+                if (p.PoiIcon == icon) return false;
+                p.PoiIcon = icon;
+                return true;
+            }
+            return false;
         }
 
         private void CommitPoint(int index, TextBox tbLon, TextBox tbLat)
