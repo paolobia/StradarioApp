@@ -74,6 +74,12 @@ namespace StradarioApp.Services
 
             foreach (var g in groups)
             {
+                // Un gruppo senza POI (tipicamente: tutti i suoi punti erano
+                // coincidenti con vertici di un percorso e sono stati spostati
+                // come POI inline lì, v. MainWindow.ReconcileImportedPoiWithRoutes)
+                // non produce né Style né Folder — niente cartelle vuote nel KML.
+                if (g.Items.Count == 0) continue;
+
                 var iconStyle = embedIcons
                     ? new XElement(kml + "IconStyle",
                         new XElement(kml + "Icon", new XElement(kml + "href", $"files/icon_{g.Id}.png")))

@@ -1327,6 +1327,48 @@ namespace StradarioApp.UI
             }
         }
 
+        // Chiamato SOLO al momento dell'import (KMZ/KML/GPX): un file
+        // proveniente da un altro strumento (es. un itinerario esportato da
+        // Google My Maps/Earth) tipicamente duplica lo stesso punto sia come
+        // POI libero sia come vertice di uno o più percorsi (es. l'hotel base
+        // ripetuto a inizio/fine di ogni tappa giornaliera). Un punto così
+        // "coincidente" va caricato come POI inline sul/sui percorso/i
+        // stesso/i (GeoPoint.IsPoi, v. RouteEditWindow) invece di restare
+        // ANCHE un POI libero duplicato. Se coincide con più percorsi diversi
+        // (giorni con una base/tratta in comune) viene duplicato su OGNUNO —
+        // scelta esplicita dell'utente — ma rimosso dal gruppo POI libero una
+        // sola volta. Un gruppo che resta senza POI dopo la rimozione non
+        // viene aggiunto al progetto (v. anche PoiService.BuildKmlDocument,
+        // stessa regola in export: un gruppo vuoto non produce Folder).
+        private void ReconcileImportedPoiWithRoutes(List<PoiGroup> importedGroups, List<Percorso> importedRoutes)
+        {
+            if (importedRoutes.Count == 0) return;
+
+            for (int gi = importedGroups.Count - 1; gi >= 0; gi--)
+            {
+                var group = importedGroups[gi];
+                for (int ii = group.Items.Count - 1; ii >= 0; ii--)
+                {
+                    var item = group.Items[ii];
+                    bool matchedAny = false;
+                    foreach (var route in importedRoutes)
+                        foreach (var pt in route.Points)
+                        {
+                            if (GeoUtils.DistanceKm(item.Lon, item.Lat, pt.Lon, pt.Lat) >= PoiRouteCoincidenceKm) continue;
+                            matchedAny = true;
+                            pt.IsPoi          = true;
+                            pt.PoiLabel       = item.Label;
+                            pt.PoiDescription = item.Description;
+                            pt.PoiIcon        = group.Icon;
+                        }
+                    if (matchedAny)
+                        group.Items.RemoveAt(ii);
+                }
+                if (group.Items.Count == 0)
+                    importedGroups.RemoveAt(gi);
+            }
+        }
+
         // Costruisce l'albero di navigazione: ramo "Pagine" e ramo "Gruppi POI"
         // (con i singoli POI come foglie). Cliccando su una foglia (pagina o
         // POI) la mappa si centra sulle sue coordinate.
@@ -5866,6 +5908,8 @@ namespace StradarioApp.UI
                 {
                     GcjTransform.CorrectionEnabled = true;
                 }
+
+                ReconcileImportedPoiWithRoutes(importedGroups, importedRoutes);
 
                 if (importedGroups.Count == 0 && importedRoutes.Count == 0)
                 {
