@@ -1526,7 +1526,7 @@ namespace StradarioApp.UI
 
                 foreach (var group in visibleGroups)
                 {
-                    root.Children.Add(Indent(BuildPoiGroupNavHeader(group)));
+                    root.Children.Add(Indent(BuildPoiGroupNavHeader(group, filtering)));
 
                     bool groupNameMatches = filtering && Matches(group.Name);
                     // Un gruppo nascosto (occhio spento, per sé o globalmente)
@@ -1700,14 +1700,20 @@ namespace StradarioApp.UI
         // Intestazione di un gruppo POI (ramo interno, espandibile): icona/colore
         // del gruppo, conteggio, e icone di azione (mostra/nascondi, aggiungi POI,
         // modifica, elimina)
-        private Control BuildPoiGroupNavHeader(PoiGroup group)
+        private Control BuildPoiGroupNavHeader(PoiGroup group, bool filtering = false)
         {
             bool visible  = !_hiddenPoiGroupIds.Contains(group.Id);
             // Un gruppo nascosto è trattato come "intoccabile": sempre
             // collassato (non espandibile) e con ogni azione disabilitata a
             // parte l'occhio stesso per ririmostrarlo — richiesta esplicita
             // dell'utente ("se non lo vedi non lo puoi toccare").
-            bool expanded = visible && !_navCollapsedGroupIds.Contains(group.Id);
+            // "filtering" allineato alla stessa formula usata per decidere se
+            // mostrare i POI del gruppo (poco sotto, in BuildNavigationTree):
+            // se non fosse qui, mentre un filtro è attivo la freccia
+            // mostrerebbe ▸ (o il click sembrerebbe non avere effetto)
+            // anche se i POI restano comunque visibili sotto — un gruppo che
+            // sembra "aperto e non collassabile" durante una ricerca.
+            bool expanded = visible && (filtering || !_navCollapsedGroupIds.Contains(group.Id));
 
             var border = new Border
             {
@@ -4737,6 +4743,16 @@ namespace StradarioApp.UI
             _pageLastTouchUtc.Clear();
             _poiGroupLastTouchUtc.Clear();
             _percorsoLastTouchUtc.Clear();
+            // Stato UI dell'albero di navigazione (collassato/nascosto) è
+            // solo di sessione, mai persistito — ma le chiavi sono Id di
+            // gruppo/percorso, che un progetto NUOVO riassegna da 1: senza
+            // questo reset un gruppo del nuovo progetto può ereditare per
+            // puro caso lo stato (collassato/nascosto) di un gruppo con lo
+            // stesso Id nel progetto precedente, apparendo "già collassato"
+            // o, con il filtro di ricerca attivo, "aperto e non collassabile".
+            _navCollapsedGroupIds.Clear();
+            _hiddenPoiGroupIds.Clear();
+            _hiddenPercorsoIds.Clear();
             _multiSelectedPageIds.Clear();
             _multiSelectedPoiKeys.Clear();
             _undoStack.Clear();
@@ -4822,6 +4838,13 @@ namespace StradarioApp.UI
                 _pageLastTouchUtc.Clear();
                 _poiGroupLastTouchUtc.Clear();
                 _percorsoLastTouchUtc.Clear();
+                // Vedi commento analogo in OnNewProject: stato UI albero
+                // (collassato/nascosto) è per-sessione, chiavi Id riusate fra
+                // progetti diversi — reset per non ereditare stato di un
+                // gruppo/percorso col medesimo Id nel progetto precedente.
+                _navCollapsedGroupIds.Clear();
+                _hiddenPoiGroupIds.Clear();
+                _hiddenPercorsoIds.Clear();
 
                 ApplyGlobalPreferences();
                 _recentFilesSvc.Add(path);
