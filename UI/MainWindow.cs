@@ -4493,6 +4493,14 @@ namespace StradarioApp.UI
                 PageNumber = _project.Pages.Count + 2
             };
             page.Label = _projSvc.GenerateAutoLabel(_project, page);
+            // Descrizione precompilata con le città più popolose che cadono
+            // nell'area della pagina (CityDatabase.FindTopCities, stesso
+            // database locale usato dalla ricerca città) — una pagina appena
+            // creata ha sempre descrizione vuota, quindi nessun rischio di
+            // sovrascrivere testo scritto a mano.
+            var topCities = CityDatabase.FindTopCities(page.GeoBounds, 3);
+            if (topCities.Count > 0)
+                page.Description = string.Join(", ", topCities.Select(c => c.Name));
             _project.Pages.Add(page);
             _selectedPageId = page.Id;
             TouchPage(page.Id);
