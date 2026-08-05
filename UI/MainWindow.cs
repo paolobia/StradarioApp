@@ -96,6 +96,13 @@ namespace StradarioApp.UI
         private bool _navPoiExpanded      = true;
         private bool _navPercorsiExpanded = true;
         private readonly HashSet<int> _navCollapsedGroupIds = new();
+        // Come _navCollapsedGroupIds, ma per le righe "Punto N" (v.
+        // BuildRoutePointGcjLeaf) mostrate sotto un percorso i cui punti
+        // ricadono in Cina — a differenza dei gruppi POI, prima di questo
+        // non c'era alcun modo di nasconderle: restavano sempre visibili
+        // (segnalato dall'utente: un percorso con punti GCJ appariva
+        // "aperto e non collassabile").
+        private readonly HashSet<int> _navCollapsedPercorsoIds = new();
 
         // Visibilità sulla mappa (icona "occhio" nell'albero): non tocca il
         // progetto, è solo uno stato di visualizzazione della sessione corrente
@@ -1607,6 +1614,10 @@ namespace StradarioApp.UI
                     // toccare" applicato ai gruppi POI.
                     bool routeHiddenByEye = _hiddenPercorsoIds.Contains(route.Id);
                     if (routeHiddenByEye) continue;
+                    // Collassabili con la freccia di BuildPercorsoNavItem —
+                    // prima restavano sempre visibili, senza alcun modo di
+                    // nasconderle (segnalato dall'utente).
+                    if (_navCollapsedPercorsoIds.Contains(route.Id)) continue;
 
                     for (int i = 0; i < route.Points.Count; i++)
                     {
@@ -2076,6 +2087,13 @@ namespace StradarioApp.UI
             // trattamento dei gruppi POI in BuildPoiGroupNavHeader.
             bool visible = !_hiddenPercorsoIds.Contains(route.Id);
 
+            // La freccia di collasso ha senso mostrarla solo se il percorso
+            // ha davvero righe "Punto N" da nascondere (punti in Cina, v.
+            // BuildRoutePointGcjLeaf) — per tutti gli altri percorsi la voce
+            // resta piatta come sempre, senza un arrow inutile.
+            bool hasGcjLeaves = route.Points.Any(p => GcjTransform.IsInChina(p.Lat, p.Lon));
+            bool pointsExpanded = !_navCollapsedPercorsoIds.Contains(route.Id);
+
             var border = new Border
             {
                 Background      = Brushes.White,
@@ -2087,7 +2105,22 @@ namespace StradarioApp.UI
                 Cursor          = new Cursor(StandardCursorType.Hand)
             };
 
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto") };
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto") };
+
+            TextBlock? arrow = null;
+            if (hasGcjLeaves)
+            {
+                arrow = new TextBlock
+                {
+                    Text       = pointsExpanded ? "▾" : "▸",
+                    Width      = 14,
+                    FontWeight = FontWeight.Bold,
+                    Cursor     = new Cursor(StandardCursorType.Hand),
+                    VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+                };
+                Grid.SetColumn(arrow, 0);
+                row.Children.Add(arrow);
+            }
 
             var swatch = new Border
             {
@@ -2100,7 +2133,7 @@ namespace StradarioApp.UI
                 Margin       = new Thickness(0, 0, 8, 0),
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
             };
-            Grid.SetColumn(swatch, 0);
+            Grid.SetColumn(swatch, 1);
             row.Children.Add(swatch);
 
             var info = new StackPanel { Spacing = 1 };
@@ -2112,17 +2145,17 @@ namespace StradarioApp.UI
                 FontSize   = 10,
                 Foreground = Brushes.DimGray
             });
-            Grid.SetColumn(info, 1);
+            Grid.SetColumn(info, 2);
             row.Children.Add(info);
 
             var exportBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Export, Strings.Get("MainWindow_EsportaPercorsoTooltip"), Brushes.SteelBlue,
                 async () => await OnExportSinglePercorso(route), enabled: visible);
-            Grid.SetColumn(exportBtn, 2);
+            Grid.SetColumn(exportBtn, 3);
             row.Children.Add(exportBtn);
 
             var addPtsBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, Strings.Get("MainWindow_AggiungiPuntiPercorsoTooltip"), Brushes.SteelBlue,
                 () => StartAddRoutePointsMode(route), enabled: visible);
-            Grid.SetColumn(addPtsBtn, 3);
+            Grid.SetColumn(addPtsBtn, 4);
             row.Children.Add(addPtsBtn);
 
             bool instradaFailed = _instradaFailedRouteIds.Contains(route.Id);
@@ -2130,17 +2163,17 @@ namespace StradarioApp.UI
                 Strings.Get(instradaFailed ? "MainWindow_InstradaFallitoTooltip" : "MainWindow_InstradaTooltip"),
                 instradaFailed ? Brushes.Crimson : Brushes.SteelBlue,
                 () => StartInstradaMode(route), enabled: visible);
-            Grid.SetColumn(instradaBtn, 4);
+            Grid.SetColumn(instradaBtn, 5);
             row.Children.Add(instradaBtn);
 
             var editBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Pencil, Strings.Get("MainWindow_ModificaPercorsoTooltip"), Brushes.SteelBlue,
                 async () => await OnEditPercorso(route), enabled: visible);
-            Grid.SetColumn(editBtn, 5);
+            Grid.SetColumn(editBtn, 6);
             row.Children.Add(editBtn);
 
             var delBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("MainWindow_EliminaPercorsoTooltip"), Brushes.Crimson,
                 () => OnDeletePercorso(route), enabled: visible);
-            Grid.SetColumn(delBtn, 6);
+            Grid.SetColumn(delBtn, 7);
             row.Children.Add(delBtn);
 
             var eyeBtn = DialogUi.MakeTreeIconButton(visible ? BootstrapIcons.Eye : BootstrapIcons.EyeSlash,
@@ -2153,7 +2186,7 @@ namespace StradarioApp.UI
                 RefreshNavigationTree();
                 _mapCanvas?.InvalidateVisual();
             });
-            Grid.SetColumn(eyeBtn, 7);
+            Grid.SetColumn(eyeBtn, 8);
             row.Children.Add(eyeBtn);
 
             var lockBtn = DialogUi.MakeTreeIconButton(route.IsLocked ? BootstrapIcons.LockClosed : BootstrapIcons.LockOpen,
@@ -2165,7 +2198,7 @@ namespace StradarioApp.UI
                 _isDirty = true;
                 RefreshNavigationTree();
             }, enabled: visible);
-            Grid.SetColumn(lockBtn, 8);
+            Grid.SetColumn(lockBtn, 9);
             row.Children.Add(lockBtn);
 
             border.Child = row;
@@ -2173,6 +2206,15 @@ namespace StradarioApp.UI
             border.PointerPressed += (s, e) =>
             {
                 if (e.Source is Button || (e.Source is Control c && c.FindAncestorOfType<Button>() != null)) return;
+                // Click sulla freccia: alterna solo la visibilità delle righe
+                // "Punto N", non deve anche ricentrare la mappa.
+                if (arrow != null && (ReferenceEquals(e.Source, arrow) || (e.Source is Control ac && ac.FindAncestorOfType<TextBlock>() == arrow)))
+                {
+                    if (pointsExpanded) _navCollapsedPercorsoIds.Add(route.Id);
+                    else                _navCollapsedPercorsoIds.Remove(route.Id);
+                    RefreshNavigationTree();
+                    return;
+                }
                 if (route.Points.Count == 0) return;
                 (_viewCenterLon, _viewCenterLat) = ComputePolylineCentroid(route.Points);
                 HighlightRoute(route.Id);
@@ -2204,8 +2246,15 @@ namespace StradarioApp.UI
 
             var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
 
+            // Se il punto è marcato come POI inline (v. RouteEditWindow), usa
+            // la sua etichetta reale invece del generico "Punto N" — non è
+            // solo un vertice geometrico, è una tappa con un nome.
+            string leafLabel = p.IsPoi && !string.IsNullOrWhiteSpace(p.PoiLabel)
+                ? p.PoiLabel
+                : string.Format(Strings.Get("MainWindow_PuntoPercorsoNumero"), pointIndex + 1);
+
             var info = new StackPanel { Spacing = 1 };
-            info.Children.Add(new TextBlock { Text = string.Format(Strings.Get("MainWindow_PuntoPercorsoNumero"), pointIndex + 1), FontSize = 12 });
+            info.Children.Add(new TextBlock { Text = leafLabel, FontSize = 12 });
             info.Children.Add(new TextBlock
             {
                 Text       = $"{p.Lon:F4}°E, {p.Lat:F4}°N",
@@ -4751,6 +4800,7 @@ namespace StradarioApp.UI
             // stesso Id nel progetto precedente, apparendo "già collassato"
             // o, con il filtro di ricerca attivo, "aperto e non collassabile".
             _navCollapsedGroupIds.Clear();
+            _navCollapsedPercorsoIds.Clear();
             _hiddenPoiGroupIds.Clear();
             _hiddenPercorsoIds.Clear();
             _multiSelectedPageIds.Clear();
@@ -4843,6 +4893,7 @@ namespace StradarioApp.UI
                 // progetti diversi — reset per non ereditare stato di un
                 // gruppo/percorso col medesimo Id nel progetto precedente.
                 _navCollapsedGroupIds.Clear();
+                _navCollapsedPercorsoIds.Clear();
                 _hiddenPoiGroupIds.Clear();
                 _hiddenPercorsoIds.Clear();
 
