@@ -4725,6 +4725,25 @@ namespace StradarioApp.UI
             _mapCanvas?.InvalidateVisual();
         }
 
+        // Collassa tutto l'albero di navigazione (i due rami principali
+        // "Gruppi POI"/"Percorsi" più ogni singolo gruppo/percorso al loro
+        // interno) — chiamato dopo aver riaperto un progetto salvato o
+        // completato un import, su richiesta esplicita dell'utente: con un
+        // progetto/import corposo è più veloce partire tutto chiuso ed
+        // espandere solo quel che serve, invece di dover collassare a mano
+        // ogni singola voce. Non tocca _hiddenPoiGroupIds/_hiddenPercorsoIds
+        // (mostra/nascondi è un concetto diverso da espandi/collassa).
+        private void CollapseAllNavTree()
+        {
+            _navPagesExpanded    = false;
+            _navPoiExpanded      = false;
+            _navPercorsiExpanded = false;
+            _navCollapsedGroupIds.Clear();
+            foreach (var g in _project.PoiGroups) _navCollapsedGroupIds.Add(g.Id);
+            _navCollapsedPercorsoIds.Clear();
+            foreach (var r in _project.Percorsi) _navCollapsedPercorsoIds.Add(r.Id);
+        }
+
         // Aggiorna la lista pagine nel pannello sinistro
         private void RefreshNavigationTree()
         {
@@ -4888,14 +4907,13 @@ namespace StradarioApp.UI
                 _pageLastTouchUtc.Clear();
                 _poiGroupLastTouchUtc.Clear();
                 _percorsoLastTouchUtc.Clear();
-                // Vedi commento analogo in OnNewProject: stato UI albero
-                // (collassato/nascosto) è per-sessione, chiavi Id riusate fra
-                // progetti diversi — reset per non ereditare stato di un
-                // gruppo/percorso col medesimo Id nel progetto precedente.
-                _navCollapsedGroupIds.Clear();
-                _navCollapsedPercorsoIds.Clear();
                 _hiddenPoiGroupIds.Clear();
                 _hiddenPercorsoIds.Clear();
+                // Riaprire un progetto salvato parte con tutto l'albero
+                // collassato (richiesta esplicita dell'utente) — più veloce
+                // da scorrere su un progetto con molti gruppi/percorsi, si
+                // espande solo quello che serve consultare.
+                CollapseAllNavTree();
 
                 ApplyGlobalPreferences();
                 _recentFilesSvc.Add(path);
@@ -6015,6 +6033,10 @@ namespace StradarioApp.UI
 
                 if (importedGroups.Count > 0) _project.PoiGroups.AddRange(importedGroups);
                 if (importedRoutes.Count > 0) _project.Percorsi.AddRange(importedRoutes);
+                // Dopo un import, tutto l'albero parte collassato (stesso
+                // comportamento di riaprire un progetto salvato) — richiesta
+                // esplicita dell'utente.
+                CollapseAllNavTree();
                 _isDirty = true;
                 PushUndo(
                     undo: () =>
