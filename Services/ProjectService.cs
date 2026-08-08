@@ -42,7 +42,21 @@ namespace StradarioApp.Services
             if (project == null)
                 throw new InvalidDataException("File progetto non valido.");
 
+            MigrateGroupIconToItems(project);
+
             return project;
+        }
+
+        // Migrazione one-shot: nei progetti salvati prima che l'icona
+        // diventasse una proprietà del singolo PoiItem (era solo del
+        // PoiGroup), ogni PoiItem.Icon deserializza a null — qui eredita
+        // l'icona che aveva il suo gruppo, una volta per tutte. Idempotente:
+        // ??= non tocca un item già migrato/creato col nuovo formato.
+        private static void MigrateGroupIconToItems(StradarioProject project)
+        {
+            foreach (var group in project.PoiGroups)
+                foreach (var item in group.Items)
+                    item.Icon ??= group.Icon;
         }
 
         // Ritorna un nuovo ID univoco per una pagina (max esistente + 1)

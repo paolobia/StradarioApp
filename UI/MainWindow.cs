@@ -810,7 +810,7 @@ namespace StradarioApp.UI
             // ---- Contenuto principale: pannello sx + mappa ----
             var splitPanel = new Grid
             {
-                ColumnDefinitions = new ColumnDefinitions("280,4,*")
+                ColumnDefinitions = new ColumnDefinitions("340,4,*")
             };
 
             // Pannello sinistro
@@ -1389,6 +1389,16 @@ namespace StradarioApp.UI
         {
             SyncPoiGroupColorsWithRoutes();
 
+            // Ordina realmente le liste del progetto (non solo la vista ad
+            // albero) per data: i POI datati dentro ogni gruppo, poi i
+            // gruppi/percorsi tra loro per la loro data minima — chi non ha
+            // data va all'inizio ("passato remoto", v. ItineraryOrdering).
+            // Così l'ordine resta coerente anche in PdfGenerator/export, che
+            // leggono le stesse liste.
+            foreach (var g in _project.PoiGroups) ItineraryOrdering.SortItemsByDate(g.Items);
+            ItineraryOrdering.SortGroupsByMinDate(_project.PoiGroups);
+            ItineraryOrdering.SortPercorsiByMinDate(_project.Percorsi);
+
             var root = new StackPanel { Name = "NavTree", Spacing = 3, Margin = new Thickness(4) };
             _navTreeRootPanel  = root;
             _poiDragCandidate  = null;
@@ -1736,7 +1746,12 @@ namespace StradarioApp.UI
                 Margin          = new Thickness(0, 2)
             };
 
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto") };
+            // Ordine colonne: freccia, conteggio, swatch colore, nome, azioni
+            // — il conteggio dei figli va sempre PRIMA dell'icona/swatch
+            // (convenzione richiesta dall'utente). L'icona non è più una
+            // proprietà del gruppo (la sceglie il singolo POI): qui resta
+            // solo lo swatch del colore condiviso da tutti i suoi POI.
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,Auto,*,Auto") };
 
             row.Children.Add(new TextBlock
             {
@@ -1747,29 +1762,42 @@ namespace StradarioApp.UI
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
             });
 
-            var iconImg = new Image
+            var countText = new TextBlock
             {
-                Width   = 20,
-                Height  = 20,
-                Margin  = new Thickness(4, 0, 6, 0),
-                Stretch = Stretch.Uniform,
-                Cursor  = new Cursor(StandardCursorType.Hand)
+                Text       = group.Items.Count.ToString(),
+                FontSize   = 11,
+                Foreground = Brushes.DimGray,
+                Margin     = new Thickness(4, 0, 4, 0),
+                Cursor     = new Cursor(StandardCursorType.Hand),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
             };
-            using (var bmp = PoiIconRenderer.RenderToBitmap(group.Icon, PoiIconRenderer.ParseColor(group.ColorHex), 32))
-                iconImg.Source = SkiaImageHelper.ToAvaloniaBitmap(bmp);
-            Grid.SetColumn(iconImg, 1);
-            row.Children.Add(iconImg);
+            Grid.SetColumn(countText, 1);
+            row.Children.Add(countText);
+
+            var colorSwatch = new Border
+            {
+                Width           = 16,
+                Height          = 16,
+                Margin          = new Thickness(0, 0, 6, 0),
+                CornerRadius    = new CornerRadius(3),
+                Background      = new SolidColorBrush(Color.Parse(group.ColorHex)),
+                BorderBrush     = Brushes.DimGray,
+                BorderThickness = new Thickness(1),
+                Cursor          = new Cursor(StandardCursorType.Hand)
+            };
+            Grid.SetColumn(colorSwatch, 2);
+            row.Children.Add(colorSwatch);
 
             var label = new TextBlock
             {
-                Text         = $"{group.Items.Count}  {group.Name}",
+                Text         = group.Name,
                 FontSize     = 12,
                 FontWeight   = FontWeight.SemiBold,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 Cursor       = new Cursor(StandardCursorType.Hand),
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
             };
-            Grid.SetColumn(label, 2);
+            Grid.SetColumn(label, 3);
             row.Children.Add(label);
 
             var actions = new StackPanel
@@ -1828,7 +1856,7 @@ namespace StradarioApp.UI
                     RefreshNavigationTree();
                 }, enabled: visible));
             }
-            Grid.SetColumn(actions, 3);
+            Grid.SetColumn(actions, 4);
             row.Children.Add(actions);
 
             border.Child = row;
@@ -1848,6 +1876,17 @@ namespace StradarioApp.UI
 
         // Foglia di un POI: cliccando si centra la mappa sulle sue coordinate;
         // icone di modifica ed eliminazione
+        // Mostra solo la data se l'orario è mezzanotte esatta (nessun orario
+        // impostato dall'utente), altrimenti data+ora — usato per il
+        // prefisso data nelle righe POI/percorso dell'albero.
+        private static string FormatItineraryDate(DateTime? date)
+        {
+            if (!date.HasValue) return "";
+            return date.Value.TimeOfDay == TimeSpan.Zero
+                ? date.Value.ToString("dd/MM/yyyy")
+                : date.Value.ToString("dd/MM/yyyy HH:mm");
+        }
+
         private Control BuildPoiItemLeaf(PoiGroup group, PoiItem item)
         {
             bool isMultiSelected = _multiSelectedPoiKeys.Contains((group.Id, item.Id));
@@ -1866,7 +1905,24 @@ namespace StradarioApp.UI
             var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto,Auto") };
 
             var info = new StackPanel { Spacing = 1 };
-            info.Children.Add(new TextBlock { Text = item.Label, FontSize = 12 });
+            // La data (se impostata) va SEMPRE su una riga propria sopra
+            // l'etichetta, non concatenata sulla stessa riga: concatenarla
+            // (es. "10/08/2026 09:00  Giro Centro") produceva una stringa
+            // troppo lunga per la colonna "*" (già stretta per le 7 icone
+            // azione a destra) — anche con TextTrimming il risultato restava
+            // illeggibile (solo la data troncata, etichetta invisibile: bug
+            // reale trovato durante un test). Su riga propria la data non
+            // compete più in larghezza con l'etichetta.
+            if (item.DateStart.HasValue)
+                info.Children.Add(new TextBlock
+                {
+                    Text            = FormatItineraryDate(item.DateStart),
+                    FontSize        = 10,
+                    FontWeight      = FontWeight.Bold,
+                    Foreground      = Brushes.DarkSlateBlue,
+                    TextTrimming    = TextTrimming.CharacterEllipsis
+                });
+            info.Children.Add(new TextBlock { Text = item.Label, FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis });
             info.Children.Add(new TextBlock
             {
                 Text       = $"{item.Lon:F4}°E, {item.Lat:F4}°N",
@@ -2105,7 +2161,10 @@ namespace StradarioApp.UI
                 Cursor          = new Cursor(StandardCursorType.Hand)
             };
 
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto") };
+            // Ordine colonne: freccia, conteggio punti, swatch colore, nome,
+            // azioni — conteggio sempre PRIMA dello swatch, stessa
+            // convenzione di BuildPoiGroupNavHeader.
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto") };
 
             TextBlock? arrow = null;
             if (hasGcjLeaves)
@@ -2122,6 +2181,17 @@ namespace StradarioApp.UI
                 row.Children.Add(arrow);
             }
 
+            var countText = new TextBlock
+            {
+                Text       = route.Points.Count.ToString(),
+                FontSize   = 11,
+                Foreground = Brushes.DimGray,
+                Margin     = new Thickness(0, 0, 4, 0),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+            };
+            Grid.SetColumn(countText, 1);
+            row.Children.Add(countText);
+
             var swatch = new Border
             {
                 Width        = 14,
@@ -2133,11 +2203,28 @@ namespace StradarioApp.UI
                 Margin       = new Thickness(0, 0, 8, 0),
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
             };
-            Grid.SetColumn(swatch, 1);
+            Grid.SetColumn(swatch, 2);
             row.Children.Add(swatch);
 
             var info = new StackPanel { Spacing = 1 };
-            info.Children.Add(new TextBlock { Text = route.Label, FontSize = 12 });
+            // La data (se impostata su almeno uno degli estremi) va SEMPRE
+            // su una riga propria sopra il nome, non concatenata — v.
+            // commento gemello in BuildPoiItemLeaf: concatenata sulla stessa
+            // riga risultava troppo lunga per la colonna "*" (stretta per le
+            // 7 icone azione), etichetta illeggibile/invisibile anche con
+            // TextTrimming (bug reale trovato in un test: "Giro Centro"
+            // spariva del tutto, restava solo la data troncata).
+            DateTime? routeDate = route.StartDateTime ?? route.EndDateTime;
+            if (routeDate.HasValue)
+                info.Children.Add(new TextBlock
+                {
+                    Text         = FormatItineraryDate(routeDate),
+                    FontSize     = 10,
+                    FontWeight   = FontWeight.Bold,
+                    Foreground   = Brushes.DarkSlateBlue,
+                    TextTrimming = TextTrimming.CharacterEllipsis
+                });
+            info.Children.Add(new TextBlock { Text = route.Label, FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis });
             double lengthKm = PercorsoRenderer.LengthKm(route);
             info.Children.Add(new TextBlock
             {
@@ -2145,17 +2232,17 @@ namespace StradarioApp.UI
                 FontSize   = 10,
                 Foreground = Brushes.DimGray
             });
-            Grid.SetColumn(info, 2);
+            Grid.SetColumn(info, 3);
             row.Children.Add(info);
 
             var exportBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Export, Strings.Get("MainWindow_EsportaPercorsoTooltip"), Brushes.SteelBlue,
                 async () => await OnExportSinglePercorso(route), enabled: visible);
-            Grid.SetColumn(exportBtn, 3);
+            Grid.SetColumn(exportBtn, 4);
             row.Children.Add(exportBtn);
 
             var addPtsBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, Strings.Get("MainWindow_AggiungiPuntiPercorsoTooltip"), Brushes.SteelBlue,
                 () => StartAddRoutePointsMode(route), enabled: visible);
-            Grid.SetColumn(addPtsBtn, 4);
+            Grid.SetColumn(addPtsBtn, 5);
             row.Children.Add(addPtsBtn);
 
             bool instradaFailed = _instradaFailedRouteIds.Contains(route.Id);
@@ -2163,17 +2250,17 @@ namespace StradarioApp.UI
                 Strings.Get(instradaFailed ? "MainWindow_InstradaFallitoTooltip" : "MainWindow_InstradaTooltip"),
                 instradaFailed ? Brushes.Crimson : Brushes.SteelBlue,
                 () => StartInstradaMode(route), enabled: visible);
-            Grid.SetColumn(instradaBtn, 5);
+            Grid.SetColumn(instradaBtn, 6);
             row.Children.Add(instradaBtn);
 
             var editBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Pencil, Strings.Get("MainWindow_ModificaPercorsoTooltip"), Brushes.SteelBlue,
                 async () => await OnEditPercorso(route), enabled: visible);
-            Grid.SetColumn(editBtn, 6);
+            Grid.SetColumn(editBtn, 7);
             row.Children.Add(editBtn);
 
             var delBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("MainWindow_EliminaPercorsoTooltip"), Brushes.Crimson,
                 () => OnDeletePercorso(route), enabled: visible);
-            Grid.SetColumn(delBtn, 7);
+            Grid.SetColumn(delBtn, 8);
             row.Children.Add(delBtn);
 
             var eyeBtn = DialogUi.MakeTreeIconButton(visible ? BootstrapIcons.Eye : BootstrapIcons.EyeSlash,
@@ -2186,7 +2273,7 @@ namespace StradarioApp.UI
                 RefreshNavigationTree();
                 _mapCanvas?.InvalidateVisual();
             });
-            Grid.SetColumn(eyeBtn, 8);
+            Grid.SetColumn(eyeBtn, 9);
             row.Children.Add(eyeBtn);
 
             var lockBtn = DialogUi.MakeTreeIconButton(route.IsLocked ? BootstrapIcons.LockClosed : BootstrapIcons.LockOpen,
@@ -2198,7 +2285,7 @@ namespace StradarioApp.UI
                 _isDirty = true;
                 RefreshNavigationTree();
             }, enabled: visible);
-            Grid.SetColumn(lockBtn, 9);
+            Grid.SetColumn(lockBtn, 10);
             row.Children.Add(lockBtn);
 
             border.Child = row;
@@ -5017,8 +5104,15 @@ namespace StradarioApp.UI
             var dlg = new Window
             {
                 Title   = Strings.Get("MainWindow_ModificheNonSalvateTitolo"),
-                Width   = 420,
-                Height  = 170,
+                // SizeToContent invece di Width/Height fissi: con Width=420
+                // il terzo bottone ("Annulla", dopo i due con emoji "💾
+                // Salva"/"🗑 Scarta") risultava tagliato fuori dal bordo
+                // della finestra — segnalato dall'utente. Stesso principio
+                // già applicato altrove (v. UI/AboutWindow) per non dover
+                // ricalcolare a mano una larghezza fissa ogni volta che il
+                // testo dei bottoni cambia.
+                SizeToContent = SizeToContent.WidthAndHeight,
+                CanResize     = false,
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 Content = new StackPanel
                 {
@@ -5091,7 +5185,12 @@ namespace StradarioApp.UI
         // dove salvare, come in precedenza)
         private async void OnGeneratePdf(object? sender, RoutedEventArgs e)
         {
-            if (_project.Pages.Count == 0)
+            // Il PDF si genera anche senza pagine mappa (solo copertina +
+            // elenchi POI/percorsi + indice + mappa riassuntiva inquadrata
+            // sui soli POI/percorsi) — richiesta esplicita dell'utente.
+            // Blocca solo se non c'è proprio nulla da stampare.
+            bool hasAnyPoi = _project.PoiGroups.Any(g => g.Items.Count > 0);
+            if (_project.Pages.Count == 0 && !hasAnyPoi && _project.Percorsi.Count == 0)
             {
                 await ShowError(Strings.Get("MainWindow_NessunaPaginaDefinita"));
                 return;
@@ -5240,10 +5339,17 @@ namespace StradarioApp.UI
             await win.ShowDialog(this);
             if (!win.Confirmed) return;
 
-            int idx = _project.PoiGroups.FindIndex(g => g.Id == group.Id);
-            if (idx >= 0) _project.PoiGroups[idx] = win.ResultGroup;
+            // Per riferimento, non per Id — stesso bug/fix di OnEditPercorso
+            // (v. commento lì): due gruppi possono collidere sullo stesso Id
+            // dopo cancella→crea→annulla.
+            var newGroup = win.ResultGroup;
+            int idx = _project.PoiGroups.IndexOf(group);
+            if (idx >= 0) _project.PoiGroups[idx] = newGroup;
             TouchPoiGroup(group.Id);
             _isDirty = true;
+            PushUndo(
+                undo: () => { int i = _project.PoiGroups.IndexOf(newGroup); if (i >= 0) _project.PoiGroups[i] = group; },
+                redo: () => { int i = _project.PoiGroups.IndexOf(group); if (i >= 0) _project.PoiGroups[i] = newGroup; });
             RefreshNavigationTree();
             _mapCanvas?.InvalidateVisual();
         }
@@ -5661,14 +5767,21 @@ namespace StradarioApp.UI
 
         private async Task OnEditPoiItem(PoiGroup group, PoiItem item)
         {
-            var win = new PoiItemEditWindow(item, _viewCenterLon, _viewCenterLat);
+            var win = new PoiItemEditWindow(item, _viewCenterLon, _viewCenterLat, group.ColorHex);
             await win.ShowDialog(this);
             if (!win.Confirmed) return;
 
-            int idx = group.Items.FindIndex(it => it.Id == item.Id);
-            if (idx >= 0) group.Items[idx] = win.ResultItem;
+            // Per riferimento, non per Id — stesso bug/fix di OnEditPercorso
+            // (v. commento lì): due POI dello stesso gruppo possono
+            // collidere sullo stesso Id dopo cancella→crea→annulla.
+            var newItem = win.ResultItem;
+            int idx = group.Items.IndexOf(item);
+            if (idx >= 0) group.Items[idx] = newItem;
             TouchPoiGroup(group.Id);
             _isDirty = true;
+            PushUndo(
+                undo: () => { int i = group.Items.IndexOf(newItem); if (i >= 0) group.Items[i] = item; },
+                redo: () => { int i = group.Items.IndexOf(item); if (i >= 0) group.Items[i] = newItem; });
             RefreshNavigationTree();
             _mapCanvas?.InvalidateVisual();
         }
@@ -5786,10 +5899,28 @@ namespace StradarioApp.UI
             await win.ShowDialog(this);
             if (!win.Confirmed) return;
 
-            int idx = _project.Percorsi.FindIndex(r => r.Id == route.Id);
-            if (idx >= 0) _project.Percorsi[idx] = win.ResultRoute;
+            // Per RIFERIMENTO, non per Id: due percorsi possono finire con
+            // lo stesso Id dopo un ciclo cancella→crea→annulla (i nuovi Id
+            // si calcolano come "max Id attuale + 1" solo sulla lista
+            // corrente, che non sa di un Id "in sospeso" nello undo stack —
+            // v. PercorsoService.GetNextId). Con un confronto per Id in
+            // quel caso si sovrascriveva il percorso SBAGLIATO (bug reale:
+            // modificare un punto di un percorso corrompeva un altro
+            // percorso). L'oggetto `route` è comunque sempre il riferimento
+            // esatto passato dal chiamante (v. BuildPercorsoNavItem), quindi
+            // IndexOf è sempre corretto qui, a differenza di un Id.
+            var newRoute = win.ResultRoute;
+            int idx = _project.Percorsi.IndexOf(route);
+            if (idx >= 0) _project.Percorsi[idx] = newRoute;
             TouchPercorso(route.Id);
             _isDirty = true;
+            // Prima non c'era nessuna voce di undo per la modifica di un
+            // percorso: premere Annulla dopo aver modificato un percorso
+            // annullava silenziosamente l'azione precedente (non collegata),
+            // molto confuso — segnalato dall'utente insieme al bug sopra.
+            PushUndo(
+                undo: () => { int i = _project.Percorsi.IndexOf(newRoute); if (i >= 0) _project.Percorsi[i] = route; },
+                redo: () => { int i = _project.Percorsi.IndexOf(route); if (i >= 0) _project.Percorsi[i] = newRoute; });
             RefreshNavigationTree();
             _mapCanvas?.InvalidateVisual();
         }
@@ -5863,7 +5994,7 @@ namespace StradarioApp.UI
             var files = await StorageProvider.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions
             {
                 Title          = Strings.Get("MainWindow_ImportaPoiPercorsiTitolo"),
-                AllowMultiple  = false,
+                AllowMultiple  = true,
                 SuggestedStartLocation = await GetSuggestedStartFolderAsync(),
                 FileTypeFilter = new[]
                 {
@@ -5873,7 +6004,18 @@ namespace StradarioApp.UI
             });
             if (files.Count == 0) return;
             RememberLastUsedFolder(files[0].TryGetLocalPath());
-            await ImportFromFileAsync(files[0]);
+
+            // Più file selezionati insieme: ognuno passa dalla stessa
+            // ImportFromFileAsync usata per un singolo file (stesso
+            // undo/errore/messaggio per file, uno indipendente dall'altro —
+            // un file malformato non blocca gli altri). Con più di un file
+            // il messaggio di stato per-file viene sovrascritto da un
+            // riepilogo unico a fine importazione.
+            foreach (var file in files)
+                await ImportFromFileAsync(file);
+
+            if (files.Count > 1)
+                ShowStatusMessage(string.Format(Strings.Get("MainWindow_ImportatiPiuFile"), files.Count));
         }
 
         // Estensioni accettate per l'importazione, sia dal file picker (vedi
@@ -6088,12 +6230,19 @@ namespace StradarioApp.UI
             e.Handled = true;
             if (!IsImportableDrag(e)) return;
 
-            var file = e.Data.GetFiles()?
+            // Tutti i file importabili trascinati insieme, non solo il
+            // primo — stessa modalità multi-file di OnImportKmzUnified.
+            var files = e.Data.GetFiles()?
                 .OfType<Avalonia.Platform.Storage.IStorageFile>()
-                .FirstOrDefault(f => ImportableExtensions.Contains(Path.GetExtension(f.Name).ToLowerInvariant()));
-            if (file == null) return;
+                .Where(f => ImportableExtensions.Contains(Path.GetExtension(f.Name).ToLowerInvariant()))
+                .ToList();
+            if (files == null || files.Count == 0) return;
 
-            await ImportFromFileAsync(file);
+            foreach (var file in files)
+                await ImportFromFileAsync(file);
+
+            if (files.Count > 1)
+                ShowStatusMessage(string.Format(Strings.Get("MainWindow_ImportatiPiuFile"), files.Count));
         }
 
         private static bool IsImportableDrag(DragEventArgs e) =>

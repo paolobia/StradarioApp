@@ -341,7 +341,7 @@ namespace StradarioApp.UI
         private async Task AddPoiToGroup(PoiGroup group)
         {
             var newItem = new PoiItem { Id = 0 };
-            var win = new PoiItemEditWindow(newItem, _currentViewLon, _currentViewLat);
+            var win = new PoiItemEditWindow(newItem, _currentViewLon, _currentViewLat, group.ColorHex);
             await win.ShowDialog(this);
             if (!win.Confirmed) return;
 
@@ -353,7 +353,7 @@ namespace StradarioApp.UI
 
         private async Task EditPoi(PoiGroup group, PoiItem item)
         {
-            var win = new PoiItemEditWindow(item, _currentViewLon, _currentViewLat);
+            var win = new PoiItemEditWindow(item, _currentViewLon, _currentViewLat, group.ColorHex);
             await win.ShowDialog(this);
             if (!win.Confirmed) return;
 

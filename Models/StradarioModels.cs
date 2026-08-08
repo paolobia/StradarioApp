@@ -373,9 +373,28 @@ namespace StradarioApp.Models
 
         public double Lon { get; set; }
         public double Lat { get; set; }
+
+        // Data/ora opzionale (singola o intervallo DateStart..DateEnd) usata
+        // per ordinare POI/gruppi come un itinerario di viaggio. Nullable
+        // solo per poter distinguere "nessuna data" da "mezzanotte esatta"
+        // e per la migrazione di Icon (vedi sotto) — non un range separato
+        // dal concetto "senza data".
+        public DateTime? DateStart { get; set; }
+        public DateTime? DateEnd { get; set; }
+
+        // Icona di questo specifico POI. Nullable SOLO per permettere la
+        // migrazione automatica dei progetti salvati prima che l'icona
+        // diventasse una proprietà del singolo POI (invece che del gruppo,
+        // vedi PoiGroup.Icon) — a runtime, dopo il caricamento, è sempre
+        // valorizzata (ProjectService applica item.Icon ??= group.Icon una
+        // tantum). Non trattare `null` come "eredita dal gruppo": è solo un
+        // segnale transitorio di "non ancora migrato".
+        public PoiIconType? Icon { get; set; }
     }
 
-    // Gruppo di POI: etichetta, icona e colore comuni a tutti i suoi punti
+    // Gruppo di POI: etichetta e colore comuni a tutti i suoi punti.
+    // L'icona NON è più una proprietà del gruppo (vedi PoiItem.Icon) — ogni
+    // POI sceglie la propria icona individualmente.
     public class PoiGroup
     {
         public int Id { get; set; }
@@ -383,6 +402,10 @@ namespace StradarioApp.Models
         public string Name { get; set; } = "Nuovo gruppo";
         public string Description { get; set; } = "";
 
+        // Icona storica del gruppo: NON più editabile dall'utente, resta
+        // solo come sorgente per la migrazione one-shot verso PoiItem.Icon
+        // sui progetti salvati prima di questa modifica (vedi
+        // ProjectService). Non usarla per disegnare/esportare un POI.
         public PoiIconType Icon { get; set; } = PoiIconType.Pin;
 
         // Colore del gruppo in formato esadecimale "#RRGGBB"
@@ -429,6 +452,12 @@ namespace StradarioApp.Models
         // Se true, i punti del percorso non possono essere trascinati sulla
         // mappa (protezione da spostamenti accidentali)
         public bool IsLocked { get; set; } = false;
+
+        // Data/ora opzionale SOLO sugli estremi del percorso (partenza e
+        // arrivo, non sui singoli punti intermedi) — usata per ordinare il
+        // percorso nel "piano di viaggio" insieme ai POI datati.
+        public DateTime? StartDateTime { get; set; }
+        public DateTime? EndDateTime { get; set; }
 
         public List<GeoPoint> Points { get; set; } = new List<GeoPoint>();
     }

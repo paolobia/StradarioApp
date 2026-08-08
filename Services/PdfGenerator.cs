@@ -54,8 +54,13 @@ namespace StradarioApp.Services
             var settings = project.Settings;
             var pages    = project.Pages;
 
-            if (pages.Count == 0)
-                throw new InvalidOperationException("Nessuna pagina definita.");
+            // Nessun blocco su "0 pagine": un progetto può avere solo
+            // POI/percorsi senza ancora alcuna pagina mappa definita, e il
+            // PDF deve comunque generarsi (copertina, eventuali elenchi
+            // POI/percorsi, indice, mappa riassuntiva) — richiesta esplicita
+            // dell'utente. La mappa riassuntiva ricava comunque i suoi
+            // confini da POI/percorsi quando non ci sono pagine (v.
+            // CalcOverallBounds), quindi resta utile anche in quel caso.
 
             // Ordina le pagine da sinistra a destra, dall'alto al basso,
             // rispettando gli allineamenti orizzontali con tolleranza.
@@ -86,50 +91,77 @@ namespace StradarioApp.Services
             DrawCoverPage(coverPage, title, settings);
 
             // ---------------------------------------------------------------
-            // Pagine iniziali: elenco dei gruppi di POI (se presenti), prima
+            // Pagine iniziali: "Piano di viaggio" (se il progetto ha almeno
+            // una data impostata, su POI o estremi di percorso), poi l'elenco
+            // dei gruppi di POI e dei percorsi (se presenti), prima
             // dell'indice. Il numero di pagine è variabile (paginazione
             // automatica), perciò la numerazione delle pagine mappa successive
-            // dipende da quante pagine POI sono state generate.
+            // dipende da quante pagine sono state generate.
+            //
+            // POI e percorsi sono SEMPRE elencati per intero, non più filtrati
+            // per contenimento geografico nelle pagine mappa (prima un POI/
+            // percorso fuori da ogni pagina spariva dal gazetteer) — richiesta
+            // esplicita dell'utente, anche perché ora il PDF si genera pure
+            // senza alcuna pagina definita (v. sopra), nel qual caso il
+            // vecchio filtro avrebbe sempre svuotato tutto.
             // ---------------------------------------------------------------
-            var poiGroupsInPages = FilterPoiGroupsInsidePages(poiGroups, pages);
+            bool anyDateSet = poiGroups.Any(g => g.Items.Any(i => i.DateStart.HasValue)) ||
+                               percorsi.Any(r => r.StartDateTime.HasValue || r.EndDateTime.HasValue);
+
+            int itineraryPageCount = 0;
+            if (anyDateSet)
+            {
+                progress?.Invoke(0, sorted.Count + 2, "Generazione piano di viaggio...");
+                itineraryPageCount = DrawItineraryPages(pdfDoc, poiGroups, percorsi, pageWidthMm, pageHeightMm);
+            }
 
             int poiPageCount = 0;
-            if (poiGroupsInPages.Count > 0)
+            if (poiGroups.Count > 0)
             {
-                progress?.Invoke(0, sorted.Count + 2, "Generazione elenco punti di interesse...");
-                poiPageCount = DrawPoiListPages(pdfDoc, poiGroupsInPages, pageWidthMm, pageHeightMm);
+                progress?.Invoke(itineraryPageCount, sorted.Count + 2 + itineraryPageCount, "Generazione elenco punti di interesse...");
+                poiPageCount = DrawPoiListPages(pdfDoc, poiGroups, pageWidthMm, pageHeightMm);
             }
 
             int percorsiPageCount = 0;
             if (percorsi.Count > 0)
             {
-                progress?.Invoke(poiPageCount, sorted.Count + 2 + poiPageCount, "Generazione elenco percorsi...");
+                progress?.Invoke(itineraryPageCount + poiPageCount, sorted.Count + 2 + itineraryPageCount + poiPageCount, "Generazione elenco percorsi...");
                 percorsiPageCount = DrawPercorsiListPages(pdfDoc, percorsi, pageWidthMm, pageHeightMm);
             }
 
-            // Le pagine mappa partono dopo: copertina, pagine POI, pagine percorsi, poi indice, poi overview
-            int frontMatterPages = poiPageCount + percorsiPageCount + 3; // +3: copertina + indice + overview
+            // La pagina Indice elenca le pagine mappa: senza alcuna pagina
+            // sarebbe solo titolo+sottotitolo e una tabella vuota — inutile,
+            // richiesta esplicita dell'utente di saltarla in quel caso (il
+            // resto del front-matter, POI/percorsi/overview, resta invariato).
+            bool hasPages = sorted.Count > 0;
+            int  indexPageCount = hasPages ? 1 : 0;
+
+            // Le pagine mappa partono dopo: copertina, piano di viaggio, pagine POI, pagine percorsi, indice (se presente), overview
+            int frontMatterPages = itineraryPageCount + poiPageCount + percorsiPageCount + indexPageCount + 2; // +2: copertina + overview
             for (int i = 0; i < sorted.Count; i++)
                 sorted[i].PageNumber = i + 1 + frontMatterPages;
 
-            int totalSteps = sorted.Count + 2 + poiPageCount + percorsiPageCount;
+            int totalSteps = sorted.Count + 1 + indexPageCount + itineraryPageCount + poiPageCount + percorsiPageCount;
 
             // ---------------------------------------------------------------
-            // Pagina indice testuale
+            // Pagina indice testuale (solo se ci sono pagine mappa)
             // ---------------------------------------------------------------
-            progress?.Invoke(poiPageCount + percorsiPageCount, totalSteps, "Generazione indice...");
-            var indexPage = pdfDoc.AddPage();
-            SetPageSize(indexPage, pageWidthMm, pageHeightMm);
-            DrawIndexPage(indexPage, sorted, project.ProjectName, settings);
+            if (hasPages)
+            {
+                progress?.Invoke(itineraryPageCount + poiPageCount + percorsiPageCount, totalSteps, "Generazione indice...");
+                var indexPage = pdfDoc.AddPage();
+                SetPageSize(indexPage, pageWidthMm, pageHeightMm);
+                DrawIndexPage(indexPage, sorted, project.ProjectName, settings);
+            }
 
             // ---------------------------------------------------------------
             // Pagina mappa riassuntiva con tutti i rettangoli
             // ---------------------------------------------------------------
-            progress?.Invoke(poiPageCount + percorsiPageCount + 1, totalSteps, "Generazione mappa riassuntiva...");
+            progress?.Invoke(itineraryPageCount + poiPageCount + percorsiPageCount + indexPageCount, totalSteps, "Generazione mappa riassuntiva...");
             var overviewPage = pdfDoc.AddPage();
             SetPageSize(overviewPage, pageWidthMm, pageHeightMm);
-            var overviewBitmap = await RenderOverviewAsync(sorted, settings);
-            DrawOverviewPage(overviewPage, overviewBitmap, sorted, percorsi, project.ProjectName, settings);
+            var overviewBitmap = await RenderOverviewAsync(sorted, poiGroups, percorsi, settings);
+            DrawOverviewPage(overviewPage, overviewBitmap, sorted, poiGroups, percorsi, project.ProjectName, settings);
             overviewBitmap?.Dispose();
 
             // ---------------------------------------------------------------
@@ -138,7 +170,7 @@ namespace StradarioApp.Services
             for (int i = 0; i < sorted.Count; i++)
             {
                 var mapPage = sorted[i];
-                progress?.Invoke(poiPageCount + percorsiPageCount + 2 + i, totalSteps, $"Pagina {mapPage.PageNumber}: {mapPage.Label}...");
+                progress?.Invoke(itineraryPageCount + poiPageCount + percorsiPageCount + indexPageCount + 1 + i, totalSteps, $"Pagina {mapPage.PageNumber}: {mapPage.Label}...");
 
                 // Ogni pagina può avere un proprio orientamento/scala (override
                 // rispetto alle impostazioni globali) — vedi MapPage.GetEffectiveSettings.
@@ -369,6 +401,107 @@ namespace StradarioApp.Services
             return lines;
         }
 
+        // Disegna il "Piano di viaggio": la sequenza cronologica unificata di
+        // tutti i POI e gli estremi di percorso (partenza/arrivo) che hanno
+        // una data impostata, più — in coda, per esplicita scelta di design
+        // (a differenza dell'albero di navigazione, dove i non datati vanno
+        // in testa) — tutti gli elementi senza data. Chiamata solo se il
+        // progetto ha almeno una data impostata da qualche parte (v.
+        // GenerateAsync): un progetto senza date non genera questa sezione,
+        // zero impatto sul PDF prodotto prima di questa funzionalità.
+        private int DrawItineraryPages(PdfDocument pdfDoc, List<PoiGroup> poiGroups, List<Percorso> percorsi,
+            double pageWidthMm, double pageHeightMm)
+        {
+            const double margin      = 24;
+            const double rowH        = 18;
+            const double descRowH    = 10;
+            const double iconSize    = 14;
+
+            var titleFont  = new XFont("Arial", 16, XFontStyle.Bold);
+            var dateFont   = new XFont("Arial", 9, XFontStyle.Bold);
+            var labelFont  = new XFont("Arial", 9);
+            var subFont    = new XFont("Arial", 7.5, XFontStyle.Italic);
+            var descFont   = new XFont("Arial", 6.5);
+
+            var iconCache = new Dictionary<string, XImage>();
+            XImage GetIcon(PoiIconType icon, string colorHex)
+            {
+                string key = $"{icon}_{colorHex}";
+                if (iconCache.TryGetValue(key, out var cached)) return cached;
+                using var bmp = PoiIconRenderer.RenderToBitmap(icon, PoiIconRenderer.ParseColor(colorHex), 48);
+                using var ms  = new MemoryStream();
+                bmp.Encode(ms, SKEncodedImageFormat.Png, 100);
+                ms.Position = 0;
+                var xImg = XImage.FromStream(() => new MemoryStream(ms.ToArray()));
+                iconCache[key] = xImg;
+                return xImg;
+            }
+
+            var entries = ItineraryOrdering.BuildItineraryEntries(poiGroups, percorsi);
+            if (entries.Count == 0) return 0;
+
+            int pageCount = 0;
+            XGraphics? gfx = null;
+            double w = 0, h = 0, tableWidth = 0, y = 0;
+
+            void NewPage()
+            {
+                var page = pdfDoc.AddPage();
+                SetPageSize(page, pageWidthMm, pageHeightMm);
+                gfx = XGraphics.FromPdfPage(page);
+                w   = page.Width.Point;
+                h   = page.Height.Point;
+                gfx.DrawRectangle(XBrushes.White, 0, 0, w, h);
+                tableWidth = w - 2 * margin;
+                pageCount++;
+
+                string title = pageCount == 1 ? "Piano di viaggio" : "Piano di viaggio (segue)";
+                gfx.DrawString(title, titleFont, XBrushes.Black,
+                    new XRect(0, 18, w, 26), XStringFormats.TopCenter);
+
+                y = 18 + 40;
+            }
+
+            NewPage();
+
+            double dateColWidth = 110;
+            foreach (var entry in entries)
+            {
+                bool hasDesc = !string.IsNullOrWhiteSpace(entry.Description);
+                double descWidth = tableWidth - iconSize - dateColWidth - 18;
+                var descLines = hasDesc ? WrapText(gfx!, entry.Description!, descFont, descWidth) : new List<string>();
+                double neededH = rowH + descLines.Count * descRowH;
+                if (y + neededH > h - margin)
+                    NewPage();
+
+                string dateText = entry.Date.HasValue
+                    ? (entry.Date.Value.TimeOfDay == TimeSpan.Zero
+                        ? entry.Date.Value.ToString("dd/MM/yyyy")
+                        : entry.Date.Value.ToString("dd/MM/yyyy HH:mm"))
+                    : "—";
+                gfx!.DrawString(dateText, dateFont, XBrushes.Black,
+                    new XRect(margin, y, dateColWidth, rowH), XStringFormats.CenterLeft);
+
+                double iconX = margin + dateColWidth;
+                double iconY = y + (rowH - iconSize * 0.85) / 2.0;
+                gfx.DrawImage(GetIcon(entry.Icon, entry.ColorHex), iconX, iconY, iconSize * 0.85, iconSize * 0.85);
+
+                string labelText = string.IsNullOrEmpty(entry.SubLabel) ? entry.Label : $"{entry.Label} ({entry.SubLabel})";
+                gfx.DrawString(labelText, labelFont, XBrushes.Black,
+                    new XRect(iconX + iconSize + 4, y, tableWidth - dateColWidth - iconSize - 4, rowH), XStringFormats.CenterLeft);
+                y += rowH;
+
+                foreach (var line in descLines)
+                {
+                    gfx.DrawString(line, descFont, XBrushes.Black,
+                        new XRect(iconX + iconSize + 4, y, descWidth, descRowH), XStringFormats.TopLeft);
+                    y += descRowH;
+                }
+            }
+
+            return pageCount;
+        }
+
         // Disegna l'elenco dei gruppi di POI (icona + nome + descrizione, poi
         // una riga per ogni POI con icona, etichetta e coordinate), in testa
         // al documento prima dell'indice. Crea automaticamente tutte le
@@ -391,16 +524,21 @@ namespace StradarioApp.Services
             var itemDescFont = new XFont("Arial", 6.5);
             var coordFont    = new XFont("Arial", 8);
 
-            var iconCache = new Dictionary<int, XImage>();
-            XImage GetIcon(PoiGroup g)
+            // Cache keyed su (icona, colore) invece che sul gruppo: l'icona
+            // è ora una proprietà del singolo item, il colore resta del
+            // gruppo — più item/gruppi diversi possono condividere la
+            // stessa combinazione e riusare la stessa XImage.
+            var iconCache = new Dictionary<string, XImage>();
+            XImage GetIcon(PoiIconType icon, string colorHex)
             {
-                if (iconCache.TryGetValue(g.Id, out var cached)) return cached;
-                using var bmp = PoiIconRenderer.RenderToBitmap(g.Icon, PoiIconRenderer.ParseColor(g.ColorHex), 48);
+                string key = $"{icon}_{colorHex}";
+                if (iconCache.TryGetValue(key, out var cached)) return cached;
+                using var bmp = PoiIconRenderer.RenderToBitmap(icon, PoiIconRenderer.ParseColor(colorHex), 48);
                 using var ms  = new MemoryStream();
                 bmp.Encode(ms, SKEncodedImageFormat.Png, 100);
                 ms.Position = 0;
                 var xImg = XImage.FromStream(() => new MemoryStream(ms.ToArray()));
-                iconCache[g.Id] = xImg;
+                iconCache[key] = xImg;
                 return xImg;
             }
 
@@ -448,7 +586,15 @@ namespace StradarioApp.Services
                     NewPage();
 
                 gfx!.DrawRectangle(new XSolidBrush(XColor.FromArgb(230, 238, 250)), margin, y, tableWidth, groupRowH);
-                gfx.DrawImage(GetIcon(group), margin + 3, y + 2, iconSize, iconSize);
+                // Il gruppo non ha più un'icona propria (icona = proprietà
+                // del singolo POI): qui mostriamo solo lo swatch colore
+                // condiviso da tutti i suoi POI, stesso schema di
+                // DrawPercorsiListPages per i percorsi.
+                var groupColor = PoiIconRenderer.ParseColor(group.ColorHex);
+                var groupSwatchBrush = new XSolidBrush(XColor.FromArgb(groupColor.Alpha, groupColor.Red, groupColor.Green, groupColor.Blue));
+                double groupSwatchY = y + (groupRowH - iconSize) / 2.0;
+                gfx.DrawRectangle(groupSwatchBrush, margin + 3, groupSwatchY, iconSize, iconSize);
+                gfx.DrawRectangle(XPens.DimGray, margin + 3, groupSwatchY, iconSize, iconSize);
                 gfx.DrawString(group.Name, groupFont, XBrushes.Black,
                     new XRect(margin + iconSize + 8, y, tableWidth - iconSize - 16, groupRowH), XStringFormats.CenterLeft);
                 y += groupRowH;
@@ -470,7 +616,7 @@ namespace StradarioApp.Services
                         NewPage();
 
                     double iconY = y + (itemRowH - iconSize * 0.85) / 2.0;
-                    gfx!.DrawImage(GetIcon(group), margin + 10, iconY, iconSize * 0.85, iconSize * 0.85);
+                    gfx!.DrawImage(GetIcon(item.Icon ?? PoiIconType.Pin, group.ColorHex), margin + 10, iconY, iconSize * 0.85, iconSize * 0.85);
                     gfx.DrawString(item.Label, itemFont, XBrushes.Black,
                         new XRect(margin + iconSize + 14, y, tableWidth * 0.55, itemRowH), XStringFormats.CenterLeft);
                     string coords = $"{item.Lon:F4}°E  {item.Lat:F4}°N";
@@ -490,6 +636,23 @@ namespace StradarioApp.Services
             }
 
             return pageCount;
+        }
+
+        // Formatta una singola data: solo il giorno se l'orario è mezzanotte
+        // esatta ("nessun orario", stessa convenzione di
+        // MainWindow.FormatItineraryDate), altrimenti data+ora.
+        private static string FormatSingleDate(DateTime d) =>
+            d.TimeOfDay == TimeSpan.Zero ? d.ToString("dd/MM/yyyy") : d.ToString("dd/MM/yyyy HH:mm");
+
+        // Formatta l'intervallo Da/A di un percorso per il titolo nell'elenco
+        // percorsi: "" se nessuna data, la sola data Da se manca A, altrimenti
+        // "Da - A".
+        private static string FormatRouteDateRange(DateTime? start, DateTime? end)
+        {
+            if (!start.HasValue) return "";
+            return end.HasValue
+                ? $"{FormatSingleDate(start.Value)} - {FormatSingleDate(end.Value)}"
+                : FormatSingleDate(start.Value);
         }
 
         // Disegna l'elenco dei percorsi (swatch colore + nome + descrizione,
@@ -574,7 +737,12 @@ namespace StradarioApp.Services
                 gfx.DrawRectangle(swatchBrush, margin + 6, swatchY, swatchSz, swatchSz);
                 gfx.DrawRectangle(XPens.DimGray, margin + 6, swatchY, swatchSz, swatchSz);
 
-                gfx.DrawString(r.Label, nameFont, XBrushes.Black,
+                // Se il percorso ha una data (Da e/o A), va prima del nome —
+                // stessa convenzione già usata nell'albero di navigazione
+                // (MainWindow.FormatItineraryDate) per POI/percorsi datati.
+                string routeTitle = FormatRouteDateRange(r.StartDateTime, r.EndDateTime) is { Length: > 0 } dateRange
+                    ? $"{dateRange}  {r.Label}" : r.Label;
+                gfx.DrawString(routeTitle, nameFont, XBrushes.Black,
                     new XRect(margin + swatchSz + 14, y, tableWidth * 0.55 - swatchSz - 14, rowH), XStringFormats.CenterLeft);
 
                 double lengthKm = PercorsoRenderer.LengthKm(r);
@@ -676,48 +844,50 @@ namespace StradarioApp.Services
         // MAPPA RIASSUNTIVA
         // ---------------------------------------------------------------
 
-        // Un POI che non ricade dentro nessuna pagina non finisce sulla
-        // stampa (nessun quadrante lo mostra), quindi non ha senso elencarlo
-        // nel gazetteer: filtra i gruppi/POI per contenimento geografico
-        // nelle pagine del progetto prima di generare le pagine dell'elenco.
-        // Un gruppo che resta senza POI non compare affatto.
-        private static List<PoiGroup> FilterPoiGroupsInsidePages(List<PoiGroup> groups, List<MapPage> pages)
+        // Calcola il GeoRect che racchiude pagine, POI e percorsi (con un
+        // margine del 10%) — la mappa riassuntiva deve includere anche
+        // POI/percorsi nel suo inquadramento, non solo le pagine mappa,
+        // richiesta esplicita dell'utente: prima un POI/percorso fuori
+        // dall'area coperta dalle pagine restava fuori campo nella mappa
+        // riassuntiva anche se compariva nel gazetteer. Serve anche per il
+        // caso "0 pagine ma POI/percorsi presenti" (v. GenerateAsync): senza
+        // pagine, i confini derivano interamente da POI/percorsi. Ritorna
+        // null solo se non c'è proprio nulla da inquadrare (pagine, POI e
+        // percorsi tutti vuoti).
+        private static GeoRect? CalcOverallBounds(List<MapPage> pages, List<PoiGroup> poiGroups, List<Percorso> percorsi)
         {
-            bool IsInsideAnyPage(double lon, double lat) => pages.Any(p =>
-                lon >= p.GeoBounds.MinLon && lon <= p.GeoBounds.MaxLon &&
-                lat >= p.GeoBounds.MinLat && lat <= p.GeoBounds.MaxLat);
+            var lons = new List<double>();
+            var lats = new List<double>();
 
-            var result = new List<PoiGroup>();
-            foreach (var g in groups)
+            foreach (var p in pages)
             {
-                var itemsInside = g.Items.Where(i => IsInsideAnyPage(i.Lon, i.Lat)).ToList();
-                if (itemsInside.Count == 0) continue;
-
-                result.Add(new PoiGroup
-                {
-                    Id          = g.Id,
-                    Name        = g.Name,
-                    Description = g.Description,
-                    Icon        = g.Icon,
-                    ColorHex    = g.ColorHex,
-                    IsLocked    = g.IsLocked,
-                    Items       = itemsInside
-                });
+                lons.Add(p.GeoBounds.MinLon); lons.Add(p.GeoBounds.MaxLon);
+                lats.Add(p.GeoBounds.MinLat); lats.Add(p.GeoBounds.MaxLat);
             }
-            return result;
-        }
+            foreach (var g in poiGroups)
+                foreach (var item in g.Items)
+                {
+                    lons.Add(item.Lon);
+                    lats.Add(item.Lat);
+                }
+            foreach (var r in percorsi)
+                foreach (var pt in r.Points)
+                {
+                    lons.Add(pt.Lon);
+                    lats.Add(pt.Lat);
+                }
 
-        // Calcola il GeoRect che racchiude tutte le pagine con un margine del 10%
-        private static GeoRect CalcOverallBounds(List<MapPage> pages)
-        {
-            double minLon = pages.Min(p => p.GeoBounds.MinLon);
-            double maxLon = pages.Max(p => p.GeoBounds.MaxLon);
-            double minLat = pages.Min(p => p.GeoBounds.MinLat);
-            double maxLat = pages.Max(p => p.GeoBounds.MaxLat);
+            if (lons.Count == 0) return null;
 
-            // Padding 10% su ogni lato
-            double padLon = (maxLon - minLon) * 0.10;
-            double padLat = (maxLat - minLat) * 0.10;
+            double minLon = lons.Min(), maxLon = lons.Max();
+            double minLat = lats.Min(), maxLat = lats.Max();
+
+            // Padding 10% su ogni lato; con un solo punto (span zero, es. un
+            // singolo POI senza pagine/percorsi) un padding proporzionale
+            // resterebbe zero — margine minimo fisso (~1km) per evitare un
+            // rettangolo degenere che manderebbe in errore il calcolo dello zoom.
+            double padLon = Math.Max((maxLon - minLon) * 0.10, 0.01);
+            double padLat = Math.Max((maxLat - minLat) * 0.10, 0.01);
 
             return new GeoRect
             {
@@ -729,8 +899,8 @@ namespace StradarioApp.Services
         }
 
         // Scarica i tile per la mappa riassuntiva al livello di zoom corretto
-        // per far vedere l'intero insieme delle pagine in una sola immagine.
-        private async Task<SKBitmap?> RenderOverviewAsync(List<MapPage> pages, StradarioSettings settings)
+        // per far vedere l'intero insieme di pagine/POI/percorsi in una sola immagine.
+        private async Task<SKBitmap?> RenderOverviewAsync(List<MapPage> pages, List<PoiGroup> poiGroups, List<Percorso> percorsi, StradarioSettings settings)
         {
             var (pageWidthMm, pageHeightMm) = settings.GetPageDimensionsMm();
             double mapWidthMm  = pageWidthMm  - 2 * BorderMarginMm;
@@ -739,7 +909,11 @@ namespace StradarioApp.Services
             int pixW = (int)(mapWidthMm  / 25.4 * settings.Dpi);
             int pixH = (int)(mapHeightMm / 25.4 * settings.Dpi);
 
-            var    bounds    = CalcOverallBounds(pages);
+            // Nessun dato affatto (0 pagine, 0 POI, 0 percorsi): nessun
+            // inquadramento possibile, niente da scaricare.
+            if (CalcOverallBounds(pages, poiGroups, percorsi) is not { } bounds)
+                return null;
+
             double centerLon = bounds.CenterLon;
             double centerLat = bounds.CenterLat;
             double cosLat    = Math.Cos(centerLat * Math.PI / 180.0);
@@ -793,7 +967,7 @@ namespace StradarioApp.Services
         // La conversione geo→pixel PDF usa la stessa proiezione WebMercator
         // usata da RenderTilesAsync, così i rettangoli si sovrappongono correttamente.
         private void DrawOverviewPage(PdfPage pdfPage, SKBitmap? mapBitmap,
-            List<MapPage> pages, List<Percorso> percorsi, string projectName, StradarioSettings settings)
+            List<MapPage> pages, List<PoiGroup> poiGroups, List<Percorso> percorsi, string projectName, StradarioSettings settings)
         {
             using var gfx = XGraphics.FromPdfPage(pdfPage);
             double w = pdfPage.Width.Point;
@@ -833,7 +1007,11 @@ namespace StradarioApp.Services
             int pixW = (int)(mapWidthMm  / 25.4 * settings.Dpi);
             int pixH = (int)(mapHeightMm / 25.4 * settings.Dpi);
 
-            var    bounds    = CalcOverallBounds(pages);
+            // Nessun dato affatto: niente rettangoli/percorsi da disegnare
+            // sopra il placeholder grigio già tracciato sopra.
+            if (CalcOverallBounds(pages, poiGroups, percorsi) is not { } bounds)
+                return;
+
             double centerLon = bounds.CenterLon;
             double centerLat = bounds.CenterLat;
             double cosLat    = Math.Cos(centerLat * Math.PI / 180.0);
@@ -930,6 +1108,28 @@ namespace StradarioApp.Services
                     gfx.DrawEllipse(XPens.White, px - 2.2, py - 2.2, 4.4, 4.4);
                     if (!string.IsNullOrWhiteSpace(route.Points[i].PoiLabel))
                         gfx.DrawString(route.Points[i].PoiLabel, routeLabelFont, shadowBrush,
+                            new XRect(px + 3, py - 8, 80, 9), XStringFormats.TopLeft);
+                }
+            }
+
+            // POI "liberi" (gruppi standalone, non i punti-POI inline dei
+            // percorsi già disegnati sopra) — prima erano inclusi solo
+            // nell'inquadramento (v. CalcOverallBounds) ma non disegnati:
+            // richiesta esplicita dell'utente. Stesso stile minimale
+            // (cerchietto pieno + etichetta) essendo la riassuntiva
+            // puramente vettoriale, nessun PoiIconRenderer/bitmap qui.
+            foreach (var group in poiGroups)
+            {
+                var color = settings.PdfContrastMode == PdfContrastMode.BlackWhite
+                    ? SKColors.Black : PoiIconRenderer.ParseColor(group.ColorHex);
+                var poiBrush = new XSolidBrush(XColor.FromArgb(color.Alpha, color.Red, color.Green, color.Blue));
+                foreach (var item in group.Items)
+                {
+                    var (px, py) = GeoToPdf(item.Lon, item.Lat);
+                    gfx.DrawEllipse(poiBrush, px - 2.5, py - 2.5, 5, 5);
+                    gfx.DrawEllipse(XPens.White, px - 2.5, py - 2.5, 5, 5);
+                    if (!string.IsNullOrWhiteSpace(item.Label))
+                        gfx.DrawString(item.Label, routeLabelFont, shadowBrush,
                             new XRect(px + 3, py - 8, 80, 9), XStringFormats.TopLeft);
                 }
             }
@@ -1103,7 +1303,7 @@ namespace StradarioApp.Services
                         y < -markerSize || y > pixH + markerSize)
                         continue;
 
-                    PoiIconRenderer.DrawWithLabel(canvas, group.Icon, color, item.Label,
+                    PoiIconRenderer.DrawWithLabel(canvas, item.Icon ?? PoiIconType.Pin, color, item.Label,
                         (float)x, (float)y, markerSize);
                 }
             }

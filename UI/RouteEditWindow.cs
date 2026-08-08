@@ -43,6 +43,8 @@ namespace StradarioApp.UI
         private StackPanel? _pointsPanel;
         private TextBlock?  _statusText;
         private TextBlock?  _summaryText;
+        private DateTimeFieldPair? _daField;
+        private DateTimeFieldPair? _aField;
 
         public RouteEditWindow(Percorso route, double currentViewLon, double currentViewLat)
         {
@@ -58,9 +60,9 @@ namespace StradarioApp.UI
             }).ToList();
 
             Title  = route.Id == 0 ? Strings.Get("RouteEditWindow_TitoloNuovo") : string.Format(Strings.Get("RouteEditWindow_TitoloModifica"), route.Label);
-            Width  = 660;
+            Width  = 720;
             Height = 620;
-            MinWidth  = 600;
+            MinWidth  = 640;
             MinHeight = 440;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
@@ -74,7 +76,7 @@ namespace StradarioApp.UI
 
             var top = new Grid
             {
-                RowDefinitions    = new RowDefinitions("Auto,Auto,Auto,Auto"),
+                RowDefinitions    = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,Auto"),
                 ColumnDefinitions = new ColumnDefinitions("100,*")
             };
 
@@ -93,6 +95,17 @@ namespace StradarioApp.UI
                 MaxHeight     = 54
             };
             AddControl(top, _tbDescription, row++);
+
+            AddLabel(top, Strings.Get("RouteEditWindow_Da"), row);
+            _daField = DialogUi.MakeDateTimeFieldPair(r.StartDateTime);
+            AddControl(top, _daField.Panel, row++);
+
+            AddLabel(top, Strings.Get("RouteEditWindow_A"), row);
+            _aField = DialogUi.MakeDateTimeFieldPair(r.EndDateTime);
+            AddControl(top, _aField.Panel, row++);
+
+            // Finché "A" resta vuoto, segue quello che si scrive in "Da".
+            DialogUi.WireAutoFillSecondFromFirst(_daField, _aField);
 
             AddLabel(top, Strings.Get("RouteEditWindow_Colore"), row);
             _colorPanel = new WrapPanel { Orientation = Orientation.Horizontal };
@@ -446,16 +459,21 @@ namespace StradarioApp.UI
                 return;
             }
 
+            DateTime? startDateTime = DialogUi.CombineDateTimeFields(_daField!);
+            DateTime? endDateTime   = DialogUi.CombineDateTimeFields(_aField!);
+
             string label = _tbLabel?.Text?.Trim() ?? "";
             if (string.IsNullOrEmpty(label)) label = Strings.Get("RouteEditWindow_LabelDefault");
 
             ResultRoute = new Percorso
             {
-                Id          = _original.Id,
-                Label       = label,
-                Description = _tbDescription?.Text?.Trim() ?? "",
-                ColorHex    = _selectedColor,
-                Points      = _workingPoints
+                Id            = _original.Id,
+                Label         = label,
+                Description   = _tbDescription?.Text?.Trim() ?? "",
+                ColorHex      = _selectedColor,
+                StartDateTime = startDateTime,
+                EndDateTime   = endDateTime,
+                Points        = _workingPoints
             };
             Confirmed = true;
             Close();

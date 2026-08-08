@@ -272,7 +272,7 @@ namespace StradarioApp.Services
                     bool isHighlighted = highlightedPoi is { } h && h.GroupId == group.Id && h.ItemId == item.Id;
                     float size = isHighlighted ? markerSize * 2f : markerSize;
 
-                    PoiIconRenderer.DrawWithLabel(canvas, group.Icon, color, item.Label,
+                    PoiIconRenderer.DrawWithLabel(canvas, item.Icon ?? PoiIconType.Pin, color, item.Label,
                         (float)x, (float)y, size);
                 }
             }

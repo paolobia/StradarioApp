@@ -2,8 +2,9 @@
 // UI/PoiGroupEditWindow.cs
 //
 // SINOSSI: Dialog di creazione/modifica di un gruppo di POI.
-//   Campi: nome, descrizione, colore (palette di swatch) e icona (griglia
-//   di anteprime renderizzate con PoiIconRenderer nel colore selezionato).
+//   Campi: nome, descrizione, colore (palette di swatch). L'icona NON è più
+//   una proprietà del gruppo (la sceglie il singolo POI, v.
+//   PoiItemEditWindow) — questa finestra non la mostra più.
 // =============================================================================
 
 using System;
@@ -25,24 +26,21 @@ namespace StradarioApp.UI
         public PoiGroup ResultGroup { get; private set; }
 
         private readonly PoiGroup _original;
-        private PoiIconType _selectedIcon;
         private string      _selectedColor;
 
         private TextBox?   _tbName;
         private TextBox?   _tbDescription;
-        private WrapPanel? _iconPanel;
         private WrapPanel? _colorPanel;
 
         public PoiGroupEditWindow(PoiGroup group)
         {
             _original      = group;
             ResultGroup    = group;
-            _selectedIcon  = group.Icon;
             _selectedColor = group.ColorHex;
 
             Title  = group.Id == 0 ? Strings.Get("PoiGroupEditWindow_TitoloNuovo") : string.Format(Strings.Get("PoiGroupEditWindow_TitoloModifica"), group.Name);
             Width  = 430;
-            Height = 500;
+            Height = 320;
             CanResize = false;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
@@ -54,7 +52,7 @@ namespace StradarioApp.UI
             var grid = new Grid
             {
                 Margin            = new Thickness(16),
-                RowDefinitions    = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,*,Auto"),
+                RowDefinitions    = new RowDefinitions("Auto,Auto,Auto,*,Auto"),
                 ColumnDefinitions = new ColumnDefinitions("100,*")
             };
 
@@ -80,14 +78,7 @@ namespace StradarioApp.UI
             AddControl(grid, _colorPanel, row++);
             BuildColorSwatches();
 
-            AddLabel(grid, Strings.Get("PoiGroupEditWindow_Icona"), row);
-            var iconScroll = new ScrollViewer { MaxHeight = 190 };
-            _iconPanel = new WrapPanel { Orientation = Orientation.Horizontal };
-            iconScroll.Content = _iconPanel;
-            AddControl(grid, iconScroll, row++);
-            BuildIconGrid();
-
-            row = 6; // salta la riga elastica "*"
+            row = 4; // salta la riga elastica "*"
             var btnRow = new StackPanel
             {
                 Orientation         = Orientation.Horizontal,
@@ -132,45 +123,8 @@ namespace StradarioApp.UI
                 {
                     _selectedColor = hex;
                     BuildColorSwatches();
-                    BuildIconGrid();
                 };
                 _colorPanel.Children.Add(swatch);
-            }
-        }
-
-        private void BuildIconGrid()
-        {
-            if (_iconPanel == null) return;
-            _iconPanel.Children.Clear();
-
-            var color = PoiIconRenderer.ParseColor(_selectedColor);
-
-            foreach (var entry in PoiIcons.All)
-            {
-                bool isSelected = entry.Type == _selectedIcon;
-
-                using var bmp        = PoiIconRenderer.RenderToBitmap(entry.Type, color, 40);
-                var       avaloniaBmp = SkiaImageHelper.ToAvaloniaBitmap(bmp);
-
-                var tile = new Border
-                {
-                    Width           = 44,
-                    Height          = 44,
-                    Margin          = new Thickness(2),
-                    CornerRadius    = new CornerRadius(4),
-                    Background      = isSelected ? new SolidColorBrush(Color.Parse("#CCE8FF")) : Brushes.Transparent,
-                    BorderBrush     = isSelected ? Brushes.SteelBlue : Brushes.LightGray,
-                    BorderThickness = new Thickness(1),
-                    Cursor          = new Cursor(StandardCursorType.Hand),
-                    Child           = new Image { Source = avaloniaBmp, Width = 32, Height = 32, Stretch = Stretch.Uniform }
-                };
-                ToolTip.SetTip(tile, entry.Name);
-                tile.PointerPressed += (_, _) =>
-                {
-                    _selectedIcon = entry.Type;
-                    BuildIconGrid();
-                };
-                _iconPanel.Children.Add(tile);
             }
         }
 
@@ -205,7 +159,10 @@ namespace StradarioApp.UI
                 Id          = _original.Id,
                 Name        = name,
                 Description = _tbDescription?.Text?.Trim() ?? "",
-                Icon        = _selectedIcon,
+                // L'icona non è più editabile qui: preserva il valore
+                // originale (campo legacy, ormai usato solo per la
+                // migrazione one-shot in ProjectService).
+                Icon        = _original.Icon,
                 ColorHex    = _selectedColor,
                 Items       = _original.Items
             };

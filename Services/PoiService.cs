@@ -80,15 +80,29 @@ namespace StradarioApp.Services
                 // non produce né Style né Folder — niente cartelle vuote nel KML.
                 if (g.Items.Count == 0) continue;
 
-                var iconStyle = embedIcons
-                    ? new XElement(kml + "IconStyle",
-                        new XElement(kml + "Icon", new XElement(kml + "href", $"files/icon_{g.Id}.png")))
-                    : new XElement(kml + "IconStyle",
-                        new XElement(kml + "color", HexToKmlColor(g.ColorHex)));
-
-                document.Add(new XElement(kml + "Style",
-                    new XAttribute("id", $"style_{g.Id}"),
-                    iconStyle));
+                // L'icona è una proprietà del singolo POI, non più del
+                // gruppo: quando le icone sono incorporate (KMZ) serve uno
+                // <Style> per ogni combinazione (icona, colore-di-gruppo)
+                // effettivamente usata nel gruppo, referenziato dal singolo
+                // Placemark. Quando non sono incorporate (.kml grezzo)
+                // l'icona non è comunque renderizzabile senza href, quindi
+                // un solo stile per gruppo basato sul solo colore basta
+                // (come prima di questa modifica).
+                if (embedIcons)
+                {
+                    foreach (var icon in g.Items.Select(i => i.Icon ?? PoiIconType.Pin).Distinct())
+                        document.Add(new XElement(kml + "Style",
+                            new XAttribute("id", StyleId(g.Id, icon)),
+                            new XElement(kml + "IconStyle",
+                                new XElement(kml + "Icon", new XElement(kml + "href", $"files/{IconFileName(g.Id, icon)}")))));
+                }
+                else
+                {
+                    document.Add(new XElement(kml + "Style",
+                        new XAttribute("id", $"style_{g.Id}"),
+                        new XElement(kml + "IconStyle",
+                            new XElement(kml + "color", HexToKmlColor(g.ColorHex)))));
+                }
 
                 var folder = new XElement(kml + "Folder",
                     new XElement(kml + "name", g.Name));
@@ -101,7 +115,10 @@ namespace StradarioApp.Services
                         new XElement(kml + "name", item.Label));
                     if (!string.IsNullOrWhiteSpace(item.Description))
                         placemark.Add(new XElement(kml + "description", item.Description));
-                    placemark.Add(new XElement(kml + "styleUrl", $"#style_{g.Id}"));
+                    string styleUrl = embedIcons
+                        ? $"#{StyleId(g.Id, item.Icon ?? PoiIconType.Pin)}"
+                        : $"#style_{g.Id}";
+                    placemark.Add(new XElement(kml + "styleUrl", styleUrl));
                     // Simmetrico all'import (GcjTransform.Gcj02ToWgs84): un
                     // punto che cade in Cina viene qui ri-corretto da WGS84
                     // (usato internamente) a GCJ-02, così riaperto in un'app
@@ -111,6 +128,8 @@ namespace StradarioApp.Services
                     placemark.Add(new XElement(kml + "Point",
                         new XElement(kml + "coordinates",
                             $"{expLon.ToString(CultureInfo.InvariantCulture)},{expLat.ToString(CultureInfo.InvariantCulture)},0")));
+                    var itemExtData = KmlIo.BuildDateExtendedData(kml, item.DateStart, item.DateEnd);
+                    if (itemExtData != null) placemark.Add(itemExtData);
                     folder.Add(placemark);
                 }
 
@@ -121,6 +140,9 @@ namespace StradarioApp.Services
                 new XDeclaration("1.0", "UTF-8", null),
                 new XElement(kml + "kml", new XAttribute("xmlns", KmlNamespace), document));
         }
+
+        private static string StyleId(int groupId, PoiIconType icon) => $"style_{groupId}_{icon}";
+        private static string IconFileName(int groupId, PoiIconType icon) => $"icon_{groupId}_{icon}.png";
 
         // KML usa il formato colore "aabbggrr" (alpha, poi BGR invertito)
         private static string HexToKmlColor(string hex)
@@ -146,18 +168,23 @@ namespace StradarioApp.Services
             await WriteIconEntriesAsync(zip, groups);
         }
 
-        // Scrive le icone PNG dei gruppi ("files/icon_{id}.png") in uno zip
-        // già aperto: estratto da ExportKmzAsync per essere riusato anche
+        // Scrive le icone PNG effettivamente usate dai POI di ogni gruppo
+        // ("files/icon_{groupId}_{icona}.png", una per ogni combinazione
+        // (icona, colore-di-gruppo) distinta presente) in uno zip già
+        // aperto: estratto da ExportKmzAsync per essere riusato anche
         // dall'export combinato POI+percorsi in un unico KMZ (v. MainWindow.OnExportAll).
         internal async Task WriteIconEntriesAsync(ZipArchive zip, List<PoiGroup> groups)
         {
             foreach (var g in groups)
             {
-                using var bmp   = PoiIconRenderer.RenderToBitmap(g.Icon, PoiIconRenderer.ParseColor(g.ColorHex), IconPixelSize);
-                using var data  = bmp.Encode(SKEncodedImageFormat.Png, 100);
-                var entry = zip.CreateEntry($"files/icon_{g.Id}.png");
-                await using var entryStream = entry.Open();
-                data.SaveTo(entryStream);
+                foreach (var icon in g.Items.Select(i => i.Icon ?? PoiIconType.Pin).Distinct())
+                {
+                    using var bmp   = PoiIconRenderer.RenderToBitmap(icon, PoiIconRenderer.ParseColor(g.ColorHex), IconPixelSize);
+                    using var data  = bmp.Encode(SKEncodedImageFormat.Png, 100);
+                    var entry = zip.CreateEntry($"files/{IconFileName(g.Id, icon)}");
+                    await using var entryStream = entry.Open();
+                    data.SaveTo(entryStream);
+                }
             }
         }
 
@@ -218,11 +245,13 @@ namespace StradarioApp.Services
             return result;
         }
 
-        // Export come .csv: una riga per POI, gruppo/icona/colore ripetuti su
-        // ogni riga dei suoi POI (formato piatto tabellare, non annidato come
-        // KML — pensato per aprire/modificare in Excel/LibreOffice). Sempre
-        // WGS84: a differenza di GPX, il CSV è un formato nativo dell'app,
-        // non tipicamente prodotto da mappe cinesi, quindi nessuna
+        // Export come .csv: una riga per POI (formato piatto tabellare, non
+        // annidato come KML — pensato per aprire/modificare in Excel/
+        // LibreOffice). "Icona" è la propria icona del POI (può differire
+        // riga per riga anche dentro lo stesso gruppo); "Colore" è invece
+        // sempre quello del gruppo, ripetuto identico su ogni sua riga.
+        // Sempre WGS84: a differenza di GPX, il CSV è un formato nativo
+        // dell'app, non tipicamente prodotto da mappe cinesi, quindi nessuna
         // correzione/domanda GCJ-02 in export o import.
         public async Task ExportCsvAsync(List<PoiGroup> groups, string path)
         {
@@ -232,7 +261,7 @@ namespace StradarioApp.Services
                 foreach (var item in g.Items)
                     sb.AppendLine(CsvIo.BuildLine(new[]
                     {
-                        g.Name, g.Icon.ToString(), g.ColorHex, item.Label,
+                        g.Name, (item.Icon ?? PoiIconType.Pin).ToString(), g.ColorHex, item.Label,
                         item.Lat.ToString(CultureInfo.InvariantCulture),
                         item.Lon.ToString(CultureInfo.InvariantCulture),
                         item.Description
@@ -244,8 +273,10 @@ namespace StradarioApp.Services
 
         // Import da .csv (stesso formato di ExportCsvAsync): le righe con lo
         // stesso nome gruppo vengono raggruppate, nell'ordine di prima
-        // comparsa; icona/colore del gruppo sono presi dalla sua prima riga.
-        // Righe con Nome/Lat/Lon mancanti o non numerici vengono saltate.
+        // comparsa; il colore del gruppo è preso dalla sua prima riga,
+        // l'icona invece è letta per ogni singola riga/POI (può differire
+        // da un POI all'altro nello stesso gruppo). Righe con
+        // Nome/Lat/Lon mancanti o non numerici vengono saltate.
         public List<PoiGroup> ImportCsv(byte[] raw, StradarioProject project, string? fileNameHint = null)
         {
             if (raw.Length == 0)
@@ -292,12 +323,16 @@ namespace StradarioApp.Services
                     orderedGroups.Add(group);
                 }
 
+                var itemIcon = idxIcona >= 0 && Enum.TryParse<PoiIconType>(Get(idxIcona), ignoreCase: true, out var parsedItemIcon)
+                    ? parsedItemIcon : PoiIconType.Pin;
+
                 group.Items.Add(new PoiItem
                 {
                     Label       = name,
                     Description = Get(idxDesc),
                     Lat         = lat,
-                    Lon         = lon
+                    Lon         = lon,
+                    Icon        = itemIcon
                 });
             }
 
@@ -442,12 +477,21 @@ namespace StradarioApp.Services
                 string rawLabel = KmlIo.SanitizeName(pm.Element(ns + "name")?.Value ?? "");
                 string rawDesc  = pm.Element(ns + "description")?.Value?.Trim() ?? "";
 
+                var (dateStart, dateEnd) = KmlIo.ParseDateExtendedData(pm, ns);
+
                 group.Items.Add(new PoiItem
                 {
                     Label       = AsciiText.PickAsciiLabel(rawLabel, rawDesc, ""),
                     Description = AsciiText.SanitizeMultilineAscii(rawDesc),
                     Lon         = lon,
-                    Lat         = lat
+                    Lat         = lat,
+                    // Mai fidata dallo stile KML esterno (icona non
+                    // garantita disegnata con la nostra libreria icone):
+                    // ogni POI importato parte sempre da Pin, per-item
+                    // (l'icona non è più una proprietà del gruppo).
+                    Icon        = PoiIconType.Pin,
+                    DateStart   = dateStart,
+                    DateEnd     = dateEnd
                 });
             }
         }
@@ -484,7 +528,8 @@ namespace StradarioApp.Services
                     Label       = AsciiText.PickAsciiLabel(rawLabel, rawDesc, ""),
                     Description = AsciiText.SanitizeMultilineAscii(rawDesc),
                     Lon         = lon,
-                    Lat         = lat
+                    Lat         = lat,
+                    Icon        = PoiIconType.Pin
                 });
             }
 

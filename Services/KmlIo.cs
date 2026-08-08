@@ -16,6 +16,7 @@
 // =============================================================================
 
 using System;
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -106,6 +107,44 @@ namespace StradarioApp.Services
 
             var segments = trimmed.Split(new[] { '/', '\\' }, StringSplitOptions.RemoveEmptyEntries);
             return segments.Length > 0 ? segments[^1] : trimmed;
+        }
+
+        // Data/ora opzionale (Da/A) di un PoiItem o degli estremi di un
+        // Percorso: non ha un campo standard in KML, quindi viaggia come
+        // <ExtendedData> sul Placemark — condiviso da PoiService e
+        // PercorsoService (stesso nome di tag "stradarioDate*" prefissato
+        // per non collidere con eventuale ExtendedData già presente in un
+        // KML esterno). Formato round-trip ("o", ISO 8601 con offset) così
+        // che DateTime.TryParse lo rilegga esattamente.
+        public static XElement? BuildDateExtendedData(XNamespace kml, DateTime? start, DateTime? end)
+        {
+            if (!start.HasValue) return null;
+
+            var ext = new XElement(kml + "ExtendedData",
+                new XElement(kml + "Data", new XAttribute("name", "stradarioDateStart"),
+                    new XElement(kml + "value", start.Value.ToString("o", CultureInfo.InvariantCulture))));
+            if (end.HasValue)
+                ext.Add(new XElement(kml + "Data", new XAttribute("name", "stradarioDateEnd"),
+                    new XElement(kml + "value", end.Value.ToString("o", CultureInfo.InvariantCulture))));
+            return ext;
+        }
+
+        public static (DateTime? Start, DateTime? End) ParseDateExtendedData(XElement placemark, XNamespace ns)
+        {
+            var ext = placemark.Element(ns + "ExtendedData");
+            if (ext == null) return (null, null);
+
+            DateTime? Get(string name)
+            {
+                string? val = ext.Elements(ns + "Data")
+                    .FirstOrDefault(d => string.Equals(d.Attribute("name")?.Value, name, StringComparison.Ordinal))
+                    ?.Element(ns + "value")?.Value;
+                return !string.IsNullOrWhiteSpace(val) &&
+                       DateTime.TryParse(val, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var dt)
+                    ? dt : (DateTime?)null;
+            }
+
+            return (Get("stradarioDateStart"), Get("stradarioDateEnd"));
         }
     }
 }

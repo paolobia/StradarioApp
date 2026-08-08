@@ -95,6 +95,9 @@ namespace StradarioApp.Services
                     new XElement(kml + "tessellate", 1),
                     new XElement(kml + "coordinates", coords)));
 
+                var routeExtData = KmlIo.BuildDateExtendedData(kml, r.StartDateTime, r.EndDateTime);
+                if (routeExtData != null) placemark.Add(routeExtData);
+
                 folder.Add(placemark);
 
                 // Punti marcati come POI (GeoPoint.IsPoi): un Placemark<Point>
@@ -470,14 +473,17 @@ namespace StradarioApp.Services
                 string colorHex = (styleUrl != null && styleColors.TryGetValue(styleUrl, out var c))
                     ? c : PercorsoRenderer.DefaultColorHex;
                 string rawDesc = pm.Element(ns + "description")?.Value?.Trim() ?? "";
+                var (routeDateStart, routeDateEnd) = KmlIo.ParseDateExtendedData(pm, ns);
 
                 var route = new Percorso
                 {
-                    Id          = cursor,
-                    Label       = ResolveLabel(pm.Element(ns + "name")?.Value, rawDesc, $"Percorso {cursor}"),
-                    Description = AsciiText.SanitizeMultilineAscii(rawDesc),
-                    ColorHex    = colorHex,
-                    Points      = points
+                    Id            = cursor,
+                    Label         = ResolveLabel(pm.Element(ns + "name")?.Value, rawDesc, $"Percorso {cursor}"),
+                    Description   = AsciiText.SanitizeMultilineAscii(rawDesc),
+                    ColorHex      = colorHex,
+                    StartDateTime = routeDateStart,
+                    EndDateTime   = routeDateEnd,
+                    Points        = points
                 };
                 imported.Add(route);
 
