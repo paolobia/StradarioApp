@@ -17,7 +17,7 @@
          l'ultimo tag delle GitHub Release da Services/UpdateChecker per
          segnalare aggiornamenti disponibili. Va allineata manualmente al tag
          creato per ogni release (vedi CLAUDE.md). -->
-    <Version>1.2.0</Version>
+    <Version>1.3.0</Version>
     <!-- osm/ è un progetto .NET separato (OsmExtractor, vedi osm/CLAUDE.md):
          senza questa esclusione il glob di default dell'SDK inglobava anche
          i suoi .cs (compreso il GlobalUsings.g.cs generato nel suo obj/,
