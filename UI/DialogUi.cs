@@ -217,6 +217,51 @@ namespace StradarioApp.UI
             };
         }
 
+        // Dialog di conferma Sì/No generico, riusabile da qualunque finestra
+        // (prima era una copia privata in MainWindow, usata per le richieste
+        // GCJ-02/eliminazione pagine — spostato qui per poterlo chiamare
+        // anche da un dialog figlio come RouteEditWindow, che non ha
+        // accesso ai metodi privati di MainWindow).
+        public static async System.Threading.Tasks.Task<bool> AskYesNo(Window owner, string title, string message, string yesLabel, string noLabel)
+        {
+            bool confirmed = false;
+            var dlg = new Window
+            {
+                Title  = title,
+                Width  = 420,
+                Height = 170,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                CanResize = false,
+                Content = new StackPanel
+                {
+                    Margin  = new Thickness(18),
+                    Spacing = 16,
+                    Children =
+                    {
+                        new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
+                        new StackPanel
+                        {
+                            Orientation = Orientation.Horizontal,
+                            HorizontalAlignment = HorizontalAlignment.Right,
+                            Spacing = 10,
+                            Children =
+                            {
+                                MakeDialogButton(yesLabel, primary: true),
+                                MakeDialogButton(noLabel)
+                            }
+                        }
+                    }
+                }
+            };
+
+            var btns = ((StackPanel)((StackPanel)dlg.Content!).Children[1]);
+            ((Button)btns.Children[0]).Click += (_, _) => { confirmed = true;  dlg.Close(); };
+            ((Button)btns.Children[1]).Click += (_, _) => { confirmed = false; dlg.Close(); };
+
+            await dlg.ShowDialog(owner);
+            return confirmed;
+        }
+
         private static string FormatDateOrWatermark(DateTime? d) =>
             d.HasValue ? d.Value.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture) : "gg/mm/aaaa";
 

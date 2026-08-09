@@ -87,6 +87,18 @@ namespace StradarioApp.UI
         private const double PoiHitRadiusPx        = 14.0;
         private const double RoutePointHitRadiusPx = 10.0;
 
+        // Click su una LINEA di percorso (non su un vertice): inserisce un
+        // nuovo punto in quella posizione della sequenza, senza alterare
+        // l'ordine degli altri punti. Come per _addRouteMode/_addRoutePointsMode,
+        // il click è deferito al rilascio (vedi OnMapPointerPressed/Released)
+        // per non inserire un punto quando si stava solo panning la mappa —
+        // il candidato viene azzerato a inizio di ogni pressione (vedi
+        // OnMapPointerPressed) e valorizzato solo dal ramo che rileva un hit
+        // sul segmento, così un pan qualunque non lo lascia mai "sporco".
+        private const double SegmentHitRadiusPx = 8.0;
+        private Percorso? _segmentInsertCandidateRoute;
+        private int        _segmentInsertCandidateIndex = -1;
+
         // Pagina selezionata nella lista
         private int? _selectedPageId = null;
 
@@ -451,7 +463,13 @@ namespace StradarioApp.UI
         // attualmente in corso, per poter costruire l'azione di undo al rilascio
         private GeoRect? _pageDragOrigBounds;
         private double   _poiDragOrigLon, _poiDragOrigLat;
-        private double   _routePointDragOrigLon, _routePointDragOrigLat;
+
+        // Snapshot completo (non solo lon/lat) del punto all'inizio del drag:
+        // se il rilascio cade su un POI esistente, il punto viene incorporato
+        // a quel POI (v. OnMapPointerReleased) — cambiano anche IsPoi/
+        // PoiLabel/PoiDescription/PoiIcon, non solo la posizione, quindi
+        // l'undo deve poter ripristinare l'intero punto, non solo lon/lat.
+        private GeoPoint? _routePointDragOrigSnapshot;
 
         // Selezione multipla di pagine (Ctrl+clic nell'albero), per eliminazione in blocco
         private readonly HashSet<int> _multiSelectedPageIds = new();
@@ -461,6 +479,15 @@ namespace StradarioApp.UI
         // sono assegnati per gruppo (PoiService.GetNextItemId), quindi da soli
         // non sono univoci nel progetto
         private readonly HashSet<(int GroupId, int ItemId)> _multiSelectedPoiKeys = new();
+
+        // Taglia/incolla di punti-percorso tra percorsi diversi (icona ✂ in
+        // BuildRoutePointLeaf, 📋 in BuildPercorsoNavItem) — stesso schema di
+        // _multiSelectedPoiKeys sopra. Un punto-percorso (GeoPoint) non ha un
+        // Id proprio (a differenza di PoiItem), quindi la chiave usa il
+        // riferimento diretto all'oggetto invece di un indice: un indice
+        // diventerebbe stale non appena si rimuove/riordina un altro punto
+        // dello stesso percorso prima del paste.
+        private readonly HashSet<(int RouteId, GeoPoint Point)> _multiSelectedRoutePointKeys = new();
 
         // Riordino di un POI all'interno del suo gruppo trascinandolo con il
         // mouse nell'albero di navigazione (vedi BuildPoiItemLeaf). Il riordino
@@ -631,6 +658,15 @@ namespace StradarioApp.UI
             if (e.Key == Avalonia.Input.Key.Escape && _multiSelectedPoiKeys.Count > 0)
             {
                 _multiSelectedPoiKeys.Clear();
+                RefreshNavigationTree();
+            }
+
+            // ESC annulla anche un taglio di punti-percorso in corso (icona
+            // ✂, vedi BuildRoutePointLeaf/BuildPercorsoNavItem) — stesso
+            // schema del taglio POI sopra.
+            if (e.Key == Avalonia.Input.Key.Escape && _multiSelectedRoutePointKeys.Count > 0)
+            {
+                _multiSelectedRoutePointKeys.Clear();
                 RefreshNavigationTree();
             }
 
@@ -1630,10 +1666,7 @@ namespace StradarioApp.UI
                     if (_navCollapsedPercorsoIds.Contains(route.Id)) continue;
 
                     for (int i = 0; i < route.Points.Count; i++)
-                    {
-                        if (GcjTransform.IsInChina(route.Points[i].Lat, route.Points[i].Lon))
-                            root.Children.Add(Indent(BuildRoutePointGcjLeaf(route, i), 28));
-                    }
+                        root.Children.Add(Indent(BuildRoutePointLeaf(route, i), 28));
                 }
             }
 
@@ -2143,11 +2176,12 @@ namespace StradarioApp.UI
             // trattamento dei gruppi POI in BuildPoiGroupNavHeader.
             bool visible = !_hiddenPercorsoIds.Contains(route.Id);
 
-            // La freccia di collasso ha senso mostrarla solo se il percorso
-            // ha davvero righe "Punto N" da nascondere (punti in Cina, v.
-            // BuildRoutePointGcjLeaf) — per tutti gli altri percorsi la voce
-            // resta piatta come sempre, senza un arrow inutile.
-            bool hasGcjLeaves = route.Points.Any(p => GcjTransform.IsInChina(p.Lat, p.Lon));
+            // La freccia di collasso è mostrata se il percorso ha punti da
+            // elencare come righe "Punto N" (v. BuildRoutePointLeaf) — ogni
+            // punto, non solo quelli in Cina, così i punti si possono
+            // tagliare/incollare in un altro percorso (v. commento su
+            // _multiSelectedRoutePointKeys).
+            bool hasLeaves = route.Points.Count > 0;
             bool pointsExpanded = !_navCollapsedPercorsoIds.Contains(route.Id);
 
             var border = new Border
@@ -2167,7 +2201,7 @@ namespace StradarioApp.UI
             var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto") };
 
             TextBlock? arrow = null;
-            if (hasGcjLeaves)
+            if (hasLeaves)
             {
                 arrow = new TextBlock
                 {
@@ -2235,58 +2269,78 @@ namespace StradarioApp.UI
             Grid.SetColumn(info, 3);
             row.Children.Add(info);
 
-            var exportBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Export, Strings.Get("MainWindow_EsportaPercorsoTooltip"), Brushes.SteelBlue,
-                async () => await OnExportSinglePercorso(route), enabled: visible);
-            Grid.SetColumn(exportBtn, 4);
-            row.Children.Add(exportBtn);
-
-            var addPtsBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, Strings.Get("MainWindow_AggiungiPuntiPercorsoTooltip"), Brushes.SteelBlue,
-                () => StartAddRoutePointsMode(route), enabled: visible);
-            Grid.SetColumn(addPtsBtn, 5);
-            row.Children.Add(addPtsBtn);
-
-            bool instradaFailed = _instradaFailedRouteIds.Contains(route.Id);
-            var instradaBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.CarFront,
-                Strings.Get(instradaFailed ? "MainWindow_InstradaFallitoTooltip" : "MainWindow_InstradaTooltip"),
-                instradaFailed ? Brushes.Crimson : Brushes.SteelBlue,
-                () => StartInstradaMode(route), enabled: visible);
-            Grid.SetColumn(instradaBtn, 6);
-            row.Children.Add(instradaBtn);
-
-            var editBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Pencil, Strings.Get("MainWindow_ModificaPercorsoTooltip"), Brushes.SteelBlue,
-                async () => await OnEditPercorso(route), enabled: visible);
-            Grid.SetColumn(editBtn, 7);
-            row.Children.Add(editBtn);
-
-            var delBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("MainWindow_EliminaPercorsoTooltip"), Brushes.Crimson,
-                () => OnDeletePercorso(route), enabled: visible);
-            Grid.SetColumn(delBtn, 8);
-            row.Children.Add(delBtn);
-
-            var eyeBtn = DialogUi.MakeTreeIconButton(visible ? BootstrapIcons.Eye : BootstrapIcons.EyeSlash,
-                visible ? Strings.Get("MainWindow_NascondiPercorsoTooltip") : Strings.Get("MainWindow_MostraPercorsoTooltip"),
-                visible ? Brushes.SteelBlue : Brushes.Gray, () =>
+            // Mentre c'è un taglio di punti-percorso in corso (icona ✂ su un
+            // punto, v. BuildRoutePointLeaf), ogni ALTRO percorso (non quello
+            // di provenienza dei punti tagliati) mostra SOLO l'icona
+            // "incolla" al posto delle icone normali — stesso schema di
+            // BuildPoiGroupNavHeader per lo spostamento POI tra gruppi.
+            bool cutPointsModeActive = _multiSelectedRoutePointKeys.Count > 0;
+            bool isCutSourceRoute = _multiSelectedRoutePointKeys.Any(k => k.RouteId == route.Id);
+            if (visible && cutPointsModeActive && !isCutSourceRoute)
             {
-                bool currentlyHidden = _hiddenPercorsoIds.Contains(route.Id);
-                if (currentlyHidden) _hiddenPercorsoIds.Remove(route.Id);
-                else                 _hiddenPercorsoIds.Add(route.Id);
-                RefreshNavigationTree();
-                _mapCanvas?.InvalidateVisual();
-            });
-            Grid.SetColumn(eyeBtn, 9);
-            row.Children.Add(eyeBtn);
-
-            var lockBtn = DialogUi.MakeTreeIconButton(route.IsLocked ? BootstrapIcons.LockClosed : BootstrapIcons.LockOpen,
-                route.IsLocked ? Strings.Get("MainWindow_SbloccaPercorsoTooltip") : Strings.Get("MainWindow_BloccaPercorsoTooltip"),
-                route.IsLocked ? Brushes.Crimson : Brushes.SteelBlue, () =>
+                var pasteBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Paste,
+                    string.Format(Strings.Get("MainWindow_IncollaPuntiPercorsoTooltip"), _multiSelectedRoutePointKeys.Count),
+                    Brushes.SeaGreen, () => PasteSelectedRoutePointsIntoRoute(route));
+                Grid.SetColumn(pasteBtn, 4);
+                Grid.SetColumnSpan(pasteBtn, 7);
+                row.Children.Add(pasteBtn);
+                border.Background = new SolidColorBrush(Color.Parse("#E3F6E8"));
+            }
+            else
             {
-                route.IsLocked = !route.IsLocked;
-                if (!route.IsLocked) TouchPercorso(route.Id);
-                _isDirty = true;
-                RefreshNavigationTree();
-            }, enabled: visible);
-            Grid.SetColumn(lockBtn, 10);
-            row.Children.Add(lockBtn);
+                var exportBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Export, Strings.Get("MainWindow_EsportaPercorsoTooltip"), Brushes.SteelBlue,
+                    async () => await OnExportSinglePercorso(route), enabled: visible);
+                Grid.SetColumn(exportBtn, 4);
+                row.Children.Add(exportBtn);
+
+                var addPtsBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Plus, Strings.Get("MainWindow_AggiungiPuntiPercorsoTooltip"), Brushes.SteelBlue,
+                    () => StartAddRoutePointsMode(route), enabled: visible);
+                Grid.SetColumn(addPtsBtn, 5);
+                row.Children.Add(addPtsBtn);
+
+                bool instradaFailed = _instradaFailedRouteIds.Contains(route.Id);
+                var instradaBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.CarFront,
+                    Strings.Get(instradaFailed ? "MainWindow_InstradaFallitoTooltip" : "MainWindow_InstradaTooltip"),
+                    instradaFailed ? Brushes.Crimson : Brushes.SteelBlue,
+                    () => StartInstradaMode(route), enabled: visible);
+                Grid.SetColumn(instradaBtn, 6);
+                row.Children.Add(instradaBtn);
+
+                var editBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Pencil, Strings.Get("MainWindow_ModificaPercorsoTooltip"), Brushes.SteelBlue,
+                    async () => await OnEditPercorso(route), enabled: visible);
+                Grid.SetColumn(editBtn, 7);
+                row.Children.Add(editBtn);
+
+                var delBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("MainWindow_EliminaPercorsoTooltip"), Brushes.Crimson,
+                    () => OnDeletePercorso(route), enabled: visible);
+                Grid.SetColumn(delBtn, 8);
+                row.Children.Add(delBtn);
+
+                var eyeBtn = DialogUi.MakeTreeIconButton(visible ? BootstrapIcons.Eye : BootstrapIcons.EyeSlash,
+                    visible ? Strings.Get("MainWindow_NascondiPercorsoTooltip") : Strings.Get("MainWindow_MostraPercorsoTooltip"),
+                    visible ? Brushes.SteelBlue : Brushes.Gray, () =>
+                {
+                    bool currentlyHidden = _hiddenPercorsoIds.Contains(route.Id);
+                    if (currentlyHidden) _hiddenPercorsoIds.Remove(route.Id);
+                    else                 _hiddenPercorsoIds.Add(route.Id);
+                    RefreshNavigationTree();
+                    _mapCanvas?.InvalidateVisual();
+                });
+                Grid.SetColumn(eyeBtn, 9);
+                row.Children.Add(eyeBtn);
+
+                var lockBtn = DialogUi.MakeTreeIconButton(route.IsLocked ? BootstrapIcons.LockClosed : BootstrapIcons.LockOpen,
+                    route.IsLocked ? Strings.Get("MainWindow_SbloccaPercorsoTooltip") : Strings.Get("MainWindow_BloccaPercorsoTooltip"),
+                    route.IsLocked ? Brushes.Crimson : Brushes.SteelBlue, () =>
+                {
+                    route.IsLocked = !route.IsLocked;
+                    if (!route.IsLocked) TouchPercorso(route.Id);
+                    _isDirty = true;
+                    RefreshNavigationTree();
+                }, enabled: visible);
+                Grid.SetColumn(lockBtn, 10);
+                row.Children.Add(lockBtn);
+            }
 
             border.Child = row;
 
@@ -2311,27 +2365,29 @@ namespace StradarioApp.UI
             return border;
         }
 
-        // Foglia mostrata sotto un percorso solo per i suoi punti che
-        // ricadono nel bounding box della Cina (v. Services/GcjTransform):
-        // gli altri punti del tracciato non compaiono qui, si modificano
-        // come sempre da RouteEditWindow. Cliccando (fuori dai badge) si
-        // centra la mappa su quel punto.
-        private Control BuildRoutePointGcjLeaf(Percorso route, int pointIndex)
+        // Foglia mostrata sotto un percorso per OGNI suo punto (prima solo
+        // per quelli in Cina, v. Services/GcjTransform — ora generalizzata
+        // per poter tagliare/incollare un punto in un altro percorso, v.
+        // _multiSelectedRoutePointKeys). I badge C→W/W→C restano mostrati
+        // solo se il punto ricade nel bounding box della Cina. Cliccando
+        // (fuori da icone/badge) si centra la mappa su quel punto.
+        private Control BuildRoutePointLeaf(Percorso route, int pointIndex)
         {
             var p = route.Points[pointIndex];
+            bool isMultiSelected = _multiSelectedRoutePointKeys.Contains((route.Id, p));
 
             var border = new Border
             {
-                Background      = Brushes.White,
-                BorderBrush     = Brushes.Gainsboro,
-                BorderThickness = new Thickness(1),
+                Background      = isMultiSelected ? new SolidColorBrush(Color.Parse("#FFE0B2")) : Brushes.White,
+                BorderBrush     = isMultiSelected ? Brushes.DarkOrange : Brushes.Gainsboro,
+                BorderThickness = new Thickness(isMultiSelected ? 2 : 1),
                 CornerRadius    = new CornerRadius(3),
                 Padding         = new Thickness(6, 4),
                 Margin          = new Thickness(0, 1),
                 Cursor          = new Cursor(StandardCursorType.Hand)
             };
 
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto") };
 
             // Se il punto è marcato come POI inline (v. RouteEditWindow), usa
             // la sua etichetta reale invece del generico "Punto N" — non è
@@ -2351,13 +2407,33 @@ namespace StradarioApp.UI
             Grid.SetColumn(info, 0);
             row.Children.Add(info);
 
-            var gcjPanel = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 0, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
-            gcjPanel.Children.Add(DialogUi.MakeGcjBadgeButton(
-                Strings.Get("Gcj_BadgeGcjToWgs"), Strings.Get("Gcj_TooltipGcjToWgs"), Brushes.SeaGreen, () => ApplyGcjToRoutePoint(route, pointIndex, toWgs84: true)));
-            gcjPanel.Children.Add(DialogUi.MakeGcjBadgeButton(
-                Strings.Get("Gcj_BadgeWgsToGcj"), Strings.Get("Gcj_TooltipWgsToGcj"), Brushes.DarkOrange, () => ApplyGcjToRoutePoint(route, pointIndex, toWgs84: false)));
-            Grid.SetColumn(gcjPanel, 1);
-            row.Children.Add(gcjPanel);
+            if (GcjTransform.IsInChina(p.Lat, p.Lon))
+            {
+                var gcjPanel = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 0, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
+                gcjPanel.Children.Add(DialogUi.MakeGcjBadgeButton(
+                    Strings.Get("Gcj_BadgeGcjToWgs"), Strings.Get("Gcj_TooltipGcjToWgs"), Brushes.SeaGreen, () => ApplyGcjToRoutePoint(route, pointIndex, toWgs84: true)));
+                gcjPanel.Children.Add(DialogUi.MakeGcjBadgeButton(
+                    Strings.Get("Gcj_BadgeWgsToGcj"), Strings.Get("Gcj_TooltipWgsToGcj"), Brushes.DarkOrange, () => ApplyGcjToRoutePoint(route, pointIndex, toWgs84: false)));
+                Grid.SetColumn(gcjPanel, 1);
+                row.Children.Add(gcjPanel);
+            }
+
+            // Icona "taglia", stesso schema di BuildPoiItemLeaf per i POI:
+            // omessa se non c'è nessun altro percorso in cui incollare.
+            if (_project.Percorsi.Count > 1)
+            {
+                var cutBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Cut,
+                    isMultiSelected ? Strings.Get("MainWindow_AnnullaTaglioPuntoPercorsoTooltip") : Strings.Get("MainWindow_TagliaPuntoPercorsoTooltip"),
+                    isMultiSelected ? Brushes.DarkOrange : Brushes.SteelBlue, () =>
+                {
+                    var key = (route.Id, p);
+                    if (!_multiSelectedRoutePointKeys.Remove(key))
+                        _multiSelectedRoutePointKeys.Add(key);
+                    RefreshNavigationTree();
+                });
+                Grid.SetColumn(cutBtn, 2);
+                row.Children.Add(cutBtn);
+            }
 
             border.Child = row;
 
@@ -3033,6 +3109,12 @@ namespace StradarioApp.UI
             float cw  = (float)(_mapCanvas?.Bounds.Width  ?? 800);
             float ch  = (float)(_mapCanvas?.Bounds.Height ?? 600);
 
+            // Azzerato ad ogni pressione: valorizzato solo dal ramo di hit-test
+            // sul segmento più sotto, così un pan qualunque (o qualunque altro
+            // esito di questa pressione) non lo lascia mai "sporco" da un
+            // gesto precedente — v. commento sul campo.
+            _segmentInsertCandidateRoute = null;
+
             if (props.IsLeftButtonPressed)
             {
                 if (_identifyMode)
@@ -3128,8 +3210,7 @@ namespace StradarioApp.UI
                     _isDraggingRoutePoint = true;
                     _draggingRoute        = hitRoutePoint.Value.route;
                     _draggingPointIndex   = hitRoutePoint.Value.index;
-                    _routePointDragOrigLon = hitRoutePoint.Value.route.Points[hitRoutePoint.Value.index].Lon;
-                    _routePointDragOrigLat = hitRoutePoint.Value.route.Points[hitRoutePoint.Value.index].Lat;
+                    _routePointDragOrigSnapshot = RouteEditWindow.ClonePoint(hitRoutePoint.Value.route.Points[hitRoutePoint.Value.index]);
                     e.Pointer.Capture(_mapCanvas);
                     return;
                 }
@@ -3143,6 +3224,25 @@ namespace StradarioApp.UI
                     _draggingPoiGroupId = hitPoi.Value.group.Id;
                     _poiDragOrigLon     = hitPoi.Value.item.Lon;
                     _poiDragOrigLat     = hitPoi.Value.item.Lat;
+                    e.Pointer.Capture(_mapCanvas);
+                    return;
+                }
+
+                // Click su una LINEA di percorso (non su un vertice): come
+                // per _addRouteMode/_addRoutePointsMode, l'inserimento del
+                // punto è deferito al rilascio (v. OnMapPointerReleased) —
+                // qui si avvia solo il consueto "pan differito", il
+                // candidato memorizzato serve al rilascio per decidere se
+                // era un click (inserisce) o un pan (non inserisce nulla).
+                var hitSegment = FindRouteSegmentAtPoint(pos, cw, ch);
+                if (hitSegment != null)
+                {
+                    _segmentInsertCandidateRoute = hitSegment.Value.route;
+                    _segmentInsertCandidateIndex = hitSegment.Value.insertIndex;
+                    _isDragging    = true;
+                    _dragStart     = pos;
+                    _dragCenterLon = _viewCenterLon;
+                    _dragCenterLat = _viewCenterLat;
                     e.Pointer.Capture(_mapCanvas);
                     return;
                 }
@@ -3270,12 +3370,42 @@ namespace StradarioApp.UI
             }
         }
 
+        // Se il click che ha aggiunto il punto cadeva su un POI esistente
+        // (v. OnMapPointerReleased), marca il nuovo GeoPoint come "questo
+        // punto è quel POI" — stesso meccanismo IsPoi già usato per creare
+        // tappe da RouteEditWindow, qui applicato automaticamente invece che
+        // a mano.
+        private static void ApplyPoiIncorporation(GeoPoint point, PoiItem? poi)
+        {
+            if (poi == null) return;
+            point.IsPoi          = true;
+            point.PoiLabel       = poi.Label;
+            point.PoiDescription = poi.Description;
+            point.PoiIcon        = poi.Icon ?? PoiIconType.Pin;
+        }
+
+        // Applica in-place un intero snapshot di GeoPoint su un punto reale
+        // già in un percorso — usato dall'undo/redo del drag di un vertice
+        // esistente, dove il rilascio su un POI può cambiare più che solo
+        // lon/lat (v. OnMapPointerReleased/_isDraggingRoutePoint).
+        private static void ApplyPointSnapshot(GeoPoint target, GeoPoint snapshot)
+        {
+            target.Lon            = snapshot.Lon;
+            target.Lat            = snapshot.Lat;
+            target.IsPoi          = snapshot.IsPoi;
+            target.PoiLabel       = snapshot.PoiLabel;
+            target.PoiDescription = snapshot.PoiDescription;
+            target.PoiIcon        = snapshot.PoiIcon;
+        }
+
         // Aggiunge un punto al percorso in disegno da zero (chiamato da
         // OnMapPointerReleased solo se il gesto era un click, non un pan)
-        private void AddPointToDrawingRoute(double lon, double lat, bool finish)
+        private void AddPointToDrawingRoute(double lon, double lat, bool finish, PoiItem? incorporatePoi = null)
         {
             if (_drawingRoute == null) return;
-            _drawingRoute.Points.Add(new GeoPoint { Lon = lon, Lat = lat });
+            var point = new GeoPoint { Lon = lon, Lat = lat };
+            ApplyPoiIncorporation(point, incorporatePoi);
+            _drawingRoute.Points.Add(point);
             if (finish) FinishRouteDrawing();
             else _mapCanvas?.InvalidateVisual();
         }
@@ -3283,10 +3413,11 @@ namespace StradarioApp.UI
         // Aggiunge un punto all'estremità di un percorso esistente in
         // estensione (chiamato da OnMapPointerReleased solo se il gesto era
         // un click, non un pan)
-        private void AddPointToExtendedRoute(double lon, double lat, bool finish)
+        private void AddPointToExtendedRoute(double lon, double lat, bool finish, PoiItem? incorporatePoi = null)
         {
             if (_addRoutePointsTarget == null) return;
             var newPoint = new GeoPoint { Lon = lon, Lat = lat };
+            ApplyPoiIncorporation(newPoint, incorporatePoi);
 
             // Al primo punto della sessione, decide una volta sola quale
             // estremità estendere in base a quella più vicina
@@ -3523,22 +3654,54 @@ namespace StradarioApp.UI
                 int idx   = _draggingPointIndex;
                 if (route != null)
                 {
+                    // Se il rilascio cade su un POI esistente, il punto viene
+                    // "incorporato" a quel POI (stesse coordinate esatte +
+                    // etichetta/descrizione/icona) — stesso meccanismo già
+                    // usato in _addRouteMode/_addRoutePointsMode (v.
+                    // ApplyPoiIncorporation), qui applicato anche quando si
+                    // sposta un vertice GIÀ esistente sopra un marker POI,
+                    // non solo quando se ne aggiunge uno nuovo.
+                    var releasePos = e.GetPosition(_mapCanvas);
+                    float cw = (float)(_mapCanvas?.Bounds.Width  ?? 800);
+                    float ch = (float)(_mapCanvas?.Bounds.Height ?? 600);
+                    // Riferimento diretto all'oggetto GeoPoint, non l'indice:
+                    // un indice catturato ora potrebbe non puntare più allo
+                    // stesso punto al momento dell'undo/redo se nel frattempo
+                    // altri punti dello stesso percorso vengono inseriti/
+                    // rimossi (stesso principio già applicato altrove nel
+                    // codice per Percorso/PoiGroup — mai un indice/Id in una
+                    // closure di undo, sempre il riferimento).
+                    var point = route.Points[idx];
+                    var hitPoi = FindPoiAtPoint(releasePos, cw, ch);
+                    if (hitPoi != null)
+                    {
+                        point.Lon = hitPoi.Value.item.Lon;
+                        point.Lat = hitPoi.Value.item.Lat;
+                        ApplyPoiIncorporation(point, hitPoi.Value.item);
+                    }
+
                     TouchPercorso(route.Id);
-                    double newLon = route.Points[idx].Lon, newLat = route.Points[idx].Lat;
-                    double oldLon = _routePointDragOrigLon, oldLat = _routePointDragOrigLat;
-                    if (Math.Abs(newLon - oldLon) > 1e-12 || Math.Abs(newLat - oldLat) > 1e-12)
+                    var orig = _routePointDragOrigSnapshot;
+                    var final = RouteEditWindow.ClonePoint(point);
+                    bool changed = orig == null
+                        || Math.Abs(final.Lon - orig.Lon) > 1e-12 || Math.Abs(final.Lat - orig.Lat) > 1e-12
+                        || final.IsPoi != orig.IsPoi || final.PoiLabel != orig.PoiLabel
+                        || final.PoiDescription != orig.PoiDescription || final.PoiIcon != orig.PoiIcon;
+                    if (changed && orig != null)
                     {
                         PushUndo(
-                            undo: () => { route.Points[idx].Lon = oldLon; route.Points[idx].Lat = oldLat; },
-                            redo: () => { route.Points[idx].Lon = newLon; route.Points[idx].Lat = newLat; });
+                            undo: () => ApplyPointSnapshot(point, orig),
+                            redo: () => ApplyPointSnapshot(point, final));
                     }
                 }
                 _isDraggingRoutePoint = false;
                 _draggingRoute        = null;
                 _draggingPointIndex   = -1;
+                _routePointDragOrigSnapshot = null;
                 e.Pointer.Capture(null);
                 _isDirty = true;
                 RefreshNavigationTree();
+                _mapCanvas?.InvalidateVisual();
                 return;
             }
             if (_isDraggingPoi)
@@ -3550,11 +3713,54 @@ namespace StradarioApp.UI
                     TouchPoiGroup(groupId);
                     double newLon = item.Lon, newLat = item.Lat;
                     double oldLon = _poiDragOrigLon, oldLat = _poiDragOrigLat;
-                    if (Math.Abs(newLon - oldLon) > 1e-12 || Math.Abs(newLat - oldLat) > 1e-12)
+
+                    // Reciproco del drag di un vertice di percorso su un POI
+                    // (v. _isDraggingRoutePoint sopra): se il rilascio di un
+                    // POI libero cade su un punto di percorso esistente,
+                    // quel punto viene incorporato al POI (stesse coordinate
+                    // + etichetta/descrizione/icona) — il POI libero NON
+                    // viene mai cancellato, resta nel suo gruppo com'era;
+                    // se l'utente lo vuole rimuovere lo fa a mano.
+                    var releasePos = e.GetPosition(_mapCanvas);
+                    float cw = (float)(_mapCanvas?.Bounds.Width  ?? 800);
+                    float ch = (float)(_mapCanvas?.Bounds.Height ?? 600);
+                    var hitRoutePoint = FindRoutePointAtPoint(releasePos, cw, ch);
+
+                    // Riferimento diretto al GeoPoint incorporato, non
+                    // (percorso, indice) — stesso motivo del blocco gemello
+                    // sopra in _isDraggingRoutePoint: un indice catturato ora
+                    // potrebbe non essere più valido al momento dell'undo.
+                    GeoPoint? incorpPoint     = null;
+                    GeoPoint? routePointBefore = null;
+                    GeoPoint? routePointAfter  = null;
+                    if (hitRoutePoint != null)
                     {
+                        var incorpRoute = hitRoutePoint.Value.route;
+                        incorpPoint = incorpRoute.Points[hitRoutePoint.Value.index];
+                        routePointBefore = RouteEditWindow.ClonePoint(incorpPoint);
+                        incorpPoint.Lon = newLon;
+                        incorpPoint.Lat = newLat;
+                        ApplyPoiIncorporation(incorpPoint, item);
+                        routePointAfter = RouteEditWindow.ClonePoint(incorpPoint);
+                        TouchPercorso(incorpRoute.Id);
+                    }
+
+                    if (Math.Abs(newLon - oldLon) > 1e-12 || Math.Abs(newLat - oldLat) > 1e-12 || routePointBefore != null)
+                    {
+                        var point  = incorpPoint;
+                        var before = routePointBefore;
+                        var after  = routePointAfter;
                         PushUndo(
-                            undo: () => { item.Lon = oldLon; item.Lat = oldLat; },
-                            redo: () => { item.Lon = newLon; item.Lat = newLat; });
+                            undo: () =>
+                            {
+                                item.Lon = oldLon; item.Lat = oldLat;
+                                if (point != null && before != null) ApplyPointSnapshot(point, before);
+                            },
+                            redo: () =>
+                            {
+                                item.Lon = newLon; item.Lat = newLat;
+                                if (point != null && after != null) ApplyPointSnapshot(point, after);
+                            });
                     }
                 }
                 _isDraggingPoi      = false;
@@ -3563,6 +3769,7 @@ namespace StradarioApp.UI
                 e.Pointer.Capture(null);
                 _isDirty = true;
                 RefreshNavigationTree();
+                _mapCanvas?.InvalidateVisual();
                 return;
             }
             if (_isDraggingPage)
@@ -3604,16 +3811,66 @@ namespace StradarioApp.UI
                 {
                     float cw = (float)(_mapCanvas?.Bounds.Width  ?? 800);
                     float ch = (float)(_mapCanvas?.Bounds.Height ?? 600);
-                    var (lon, lat) = GeoUtils.PixelToGeo(pos.X, pos.Y,
-                        _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
                     bool finish = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
 
+                    // Se il click cade su un POI esistente, il punto del
+                    // percorso viene "incorporato" a quel POI (stesse
+                    // coordinate esatte + etichetta/descrizione/icona) invece
+                    // di limitarsi a copiarne la posizione — riusa il
+                    // meccanismo già esistente di punto-percorso marcato
+                    // IsPoi (v. RouteEditWindow), così la tappa resta
+                    // riconoscibile col nome del POI invece del generico
+                    // "Punto N".
+                    var hitPoi = FindPoiAtPoint(pos, cw, ch);
+                    double lon, lat;
+                    if (hitPoi != null)
+                    {
+                        lon = hitPoi.Value.item.Lon;
+                        lat = hitPoi.Value.item.Lat;
+                    }
+                    else
+                    {
+                        (lon, lat) = GeoUtils.PixelToGeo(pos.X, pos.Y,
+                            _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
+                    }
+
                     if (_addRouteMode && _drawingRoute != null)
-                        AddPointToDrawingRoute(lon, lat, finish);
+                        AddPointToDrawingRoute(lon, lat, finish, hitPoi?.item);
                     else if (_addRoutePointsMode && _addRoutePointsTarget != null)
-                        AddPointToExtendedRoute(lon, lat, finish);
+                        AddPointToExtendedRoute(lon, lat, finish, hitPoi?.item);
                 }
+                else if (movedPx < ClickVsPanThresholdPx && _segmentInsertCandidateRoute != null)
+                {
+                    InsertPointOnRouteSegment(_segmentInsertCandidateRoute, _segmentInsertCandidateIndex, pos);
+                }
+                _segmentInsertCandidateRoute = null;
             }
+        }
+
+        // Inserisce un nuovo punto a metà sequenza di un percorso, nella
+        // posizione del segmento colpito da un click sulla LINEA (non su un
+        // vertice) — v. FindRouteSegmentAtPoint/OnMapPointerPressed. Non
+        // altera l'ordine degli altri punti: va esattamente fra i due
+        // estremi del segmento cliccato.
+        private void InsertPointOnRouteSegment(Percorso route, int insertIndex, Point pixelPos)
+        {
+            float cw = (float)(_mapCanvas?.Bounds.Width  ?? 800);
+            float ch = (float)(_mapCanvas?.Bounds.Height ?? 600);
+            var (lon, lat) = GeoUtils.PixelToGeo(pixelPos.X, pixelPos.Y,
+                _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
+
+            var newPoint = new GeoPoint { Lon = lon, Lat = lat };
+            int idx = Math.Clamp(insertIndex, 0, route.Points.Count);
+            route.Points.Insert(idx, newPoint);
+
+            TouchPercorso(route.Id);
+            _isDirty = true;
+            PushUndo(
+                undo: () => route.Points.Remove(newPoint),
+                redo: () => { if (!route.Points.Contains(newPoint)) route.Points.Insert(Math.Min(idx, route.Points.Count), newPoint); });
+
+            RefreshNavigationTree();
+            _mapCanvas?.InvalidateVisual();
         }
 
         // Lo zoom con la rotellina mantiene fermo sotto il cursore il punto
@@ -3726,6 +3983,47 @@ namespace StradarioApp.UI
                 }
             }
             return null;
+        }
+
+        // Trova il segmento (fra due punti CONSECUTIVI) di un percorso più
+        // vicino al punto pixel (entro SegmentHitRadiusPx), fra i percorsi
+        // sbloccati/visibili — usato per inserire un nuovo punto a metà
+        // sequenza cliccando sulla linea invece che su un vertice esistente.
+        // insertIndex è la posizione in route.Points dove va inserito il
+        // nuovo punto (subito dopo il primo estremo del segmento colpito).
+        private (Percorso route, int insertIndex)? FindRouteSegmentAtPoint(Point pt, float cw, float ch)
+        {
+            Percorso? bestRoute = null;
+            int    bestIndex = -1;
+            double bestDist2 = SegmentHitRadiusPx * SegmentHitRadiusPx;
+
+            foreach (var route in _project.Percorsi)
+            {
+                if (_hiddenPercorsoIds.Contains(route.Id)) continue;
+                if (route.IsLocked) continue;
+                for (int i = 0; i < route.Points.Count - 1; i++)
+                {
+                    var a = route.Points[i];
+                    var b = route.Points[i + 1];
+                    var (ax, ay) = GeoUtils.GeoToPixel(a.Lon, a.Lat, _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
+                    var (bx, by) = GeoUtils.GeoToPixel(b.Lon, b.Lat, _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
+                    double dx = bx - ax, dy = by - ay;
+                    double len2 = dx * dx + dy * dy;
+                    double t = len2 <= 1e-9 ? 0 : ((pt.X - ax) * dx + (pt.Y - ay) * dy) / len2;
+                    t = Math.Clamp(t, 0, 1);
+                    double px = ax + t * dx, py = ay + t * dy;
+                    double ddx = pt.X - px, ddy = pt.Y - py;
+                    double dist2 = ddx * ddx + ddy * ddy;
+                    if (dist2 < bestDist2)
+                    {
+                        bestDist2 = dist2;
+                        bestRoute = route;
+                        bestIndex = i + 1;
+                    }
+                }
+            }
+
+            return bestRoute != null ? (bestRoute, bestIndex) : null;
         }
 
         // Come FindRoutePointAtPoint, ma per il tooltip al passaggio del
@@ -4716,45 +5014,8 @@ namespace StradarioApp.UI
         // Variante con etichette dei bottoni personalizzate (es. la scelta
         // GCJ-02 sì/no in import/export, dove "Sì"/"Annulla" generici
         // sarebbero ambigui)
-        private async Task<bool> AskYesNo(string title, string message, string yesLabel, string noLabel)
-        {
-            bool confirmed = false;
-            var dlg = new Window
-            {
-                Title  = title,
-                Width  = 420,
-                Height = 170,
-                WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                CanResize = false,
-                Content = new StackPanel
-                {
-                    Margin  = new Thickness(18),
-                    Spacing = 16,
-                    Children =
-                    {
-                        new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
-                        new StackPanel
-                        {
-                            Orientation = Avalonia.Layout.Orientation.Horizontal,
-                            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
-                            Spacing = 10,
-                            Children =
-                            {
-                                DialogUi.MakeDialogButton(yesLabel, primary: true),
-                                DialogUi.MakeDialogButton(noLabel)
-                            }
-                        }
-                    }
-                }
-            };
-
-            var btns = ((StackPanel)((StackPanel)dlg.Content!).Children[1]);
-            ((Button)btns.Children[0]).Click += (_, _) => { confirmed = true;  dlg.Close(); };
-            ((Button)btns.Children[1]).Click += (_, _) => { confirmed = false; dlg.Close(); };
-
-            await dlg.ShowDialog(this);
-            return confirmed;
-        }
+        private Task<bool> AskYesNo(string title, string message, string yesLabel, string noLabel) =>
+            DialogUi.AskYesNo(this, title, message, yesLabel, noLabel);
 
         // Completa uno spostamento POI "taglia e incolla" (vedi icona ✂ in
         // BuildPoiItemLeaf e icona 📋 in BuildPoiGroupNavHeader): tutti i POI
@@ -4767,6 +5028,7 @@ namespace StradarioApp.UI
             if (_multiSelectedPoiKeys.Count == 0) return;
 
             int moved = 0;
+            var moves = new List<(PoiGroup Src, PoiItem Item, int OrigIndex, int OrigId)>();
             foreach (var (groupId, itemId) in _multiSelectedPoiKeys.ToList())
             {
                 if (groupId == target.Id) continue;
@@ -4774,9 +5036,12 @@ namespace StradarioApp.UI
                 var item     = srcGroup?.Items.FirstOrDefault(it => it.Id == itemId);
                 if (srcGroup == null || item == null) continue;
 
+                int origIndex = srcGroup.Items.IndexOf(item);
+                int origId    = item.Id;
                 srcGroup.Items.Remove(item);
                 item.Id = _poiSvc.GetNextItemId(target);
                 target.Items.Add(item);
+                moves.Add((srcGroup, item, origIndex, origId));
                 TouchPoiGroup(srcGroup.Id);
                 moved++;
             }
@@ -4785,9 +5050,119 @@ namespace StradarioApp.UI
             _navCollapsedGroupIds.Remove(target.Id);
             _multiSelectedPoiKeys.Clear();
             _isDirty = true;
+
+            // Nessun undo prima: premere Annulla dopo un taglia/incolla POI
+            // annullava silenziosamente l'azione precedente non collegata —
+            // stesso bug già corretto per l'edit di un percorso (v.
+            // OnEditPercorso). Un solo Undo riporta indietro TUTTI i POI
+            // spostati in questa singola operazione di incolla.
+            if (moves.Count > 0)
+            {
+                PushUndo(
+                    undo: () =>
+                    {
+                        foreach (var (src, item, origIndex, origId) in moves)
+                        {
+                            target.Items.Remove(item);
+                            item.Id = origId;
+                            src.Items.Insert(Math.Min(origIndex, src.Items.Count), item);
+                        }
+                    },
+                    redo: () =>
+                    {
+                        foreach (var (src, item, _, _) in moves)
+                        {
+                            src.Items.Remove(item);
+                            item.Id = _poiSvc.GetNextItemId(target);
+                            target.Items.Add(item);
+                        }
+                    });
+            }
+
             RefreshNavigationTree();
             _mapCanvas?.InvalidateVisual();
             ShowStatusMessage(string.Format(Strings.Get("MainWindow_SpostatiPoiNelGruppo"), moved, target.Name));
+        }
+
+        // Completa uno spostamento di punti-percorso "taglia e incolla" (vedi
+        // icona ✂ in BuildRoutePointLeaf e icona 📋 in BuildPercorsoNavItem):
+        // stesso schema di PasteSelectedPoiIntoGroup, ma niente riassegnazione
+        // Id (GeoPoint non ne ha uno). Un percorso sorgente non può scendere
+        // sotto i 2 punti (minimo richiesto anche da RouteEditWindow per
+        // salvare, un percorso con meno punti non è disegnabile): gli ultimi
+        // tagli in eccesso da uno stesso percorso vengono ignorati piuttosto
+        // che lasciarlo con 0-1 punti.
+        private void PasteSelectedRoutePointsIntoRoute(Percorso target)
+        {
+            if (_multiSelectedRoutePointKeys.Count == 0) return;
+
+            int moved = 0;
+            int skipped = 0;
+            var moves = new List<(Percorso Src, GeoPoint Point, int OrigIndex)>();
+            var bySource = _multiSelectedRoutePointKeys
+                .Where(k => k.RouteId != target.Id)
+                .GroupBy(k => k.RouteId)
+                .ToList();
+
+            foreach (var group in bySource)
+            {
+                var src = _project.Percorsi.FirstOrDefault(r => r.Id == group.Key);
+                if (src == null) continue;
+
+                var toMove = group.Select(k => k.Point).Where(p => src.Points.Contains(p)).ToList();
+                int allowed = Math.Max(0, src.Points.Count - 2);
+                if (toMove.Count > allowed)
+                {
+                    skipped += toMove.Count - allowed;
+                    toMove = toMove.Take(allowed).ToList();
+                }
+
+                foreach (var p in toMove)
+                {
+                    int origIndex = src.Points.IndexOf(p);
+                    src.Points.Remove(p);
+                    target.Points.Add(p);
+                    moves.Add((src, p, origIndex));
+                    moved++;
+                }
+                if (toMove.Count > 0) TouchPercorso(src.Id);
+            }
+
+            TouchPercorso(target.Id);
+            _navCollapsedPercorsoIds.Remove(target.Id);
+            _multiSelectedRoutePointKeys.Clear();
+            _isDirty = true;
+
+            // Stesso motivo di PasteSelectedPoiIntoGroup: un solo Undo
+            // riporta indietro tutti i punti spostati in questo incolla,
+            // ciascuno nella posizione esatta (non in coda) del suo
+            // percorso di provenienza.
+            if (moves.Count > 0)
+            {
+                PushUndo(
+                    undo: () =>
+                    {
+                        foreach (var (src, p, origIndex) in moves)
+                        {
+                            target.Points.Remove(p);
+                            src.Points.Insert(Math.Min(origIndex, src.Points.Count), p);
+                        }
+                    },
+                    redo: () =>
+                    {
+                        foreach (var (src, p, _) in moves)
+                        {
+                            src.Points.Remove(p);
+                            target.Points.Add(p);
+                        }
+                    });
+            }
+
+            RefreshNavigationTree();
+            _mapCanvas?.InvalidateVisual();
+            ShowStatusMessage(skipped == 0
+                ? string.Format(Strings.Get("MainWindow_SpostatiPuntiNelPercorso"), moved, target.Label)
+                : string.Format(Strings.Get("MainWindow_SpostatiPuntiNelPercorsoConScarti"), moved, target.Label, skipped));
         }
 
         // Apre EditPageWindow per modificare etichetta, descrizione e coordinate
@@ -4860,12 +5235,22 @@ namespace StradarioApp.UI
                 var leftBorder = split.Children.OfType<Border>().FirstOrDefault();
                 if (leftBorder?.Child is DockPanel dock)
                 {
-                    // Rimuovi il vecchio ScrollViewer e ricrea
+                    // Rimuovi il vecchio ScrollViewer e ricrea, preservando
+                    // l'offset di scroll — altrimenti ogni interazione (che
+                    // passa quasi sempre da qui) faceva ripartire un nuovo
+                    // ScrollViewer da Offset (0,0), dando l'impressione che
+                    // l'elemento toccato "saltasse" in cima alla lista.
                     var oldScroll = dock.Children.OfType<ScrollViewer>().FirstOrDefault();
+                    var preservedOffset = oldScroll?.Offset ?? default;
                     if (oldScroll != null) dock.Children.Remove(oldScroll);
 
                     var newScroll = new ScrollViewer { Content = BuildNavigationTree() };
                     dock.Children.Add(newScroll);
+                    // Impostare Offset subito verrebbe clampato a (0,0): lo
+                    // ScrollViewer non ha ancora misurato Extent/Viewport
+                    // finché non passa un ciclo di layout dopo l'attach.
+                    Dispatcher.UIThread.Post(() => newScroll.Offset = preservedOffset,
+                        DispatcherPriority.Loaded);
 
                     // Aggiorna anche il blocco info impostazioni
                     var settingsPanel = dock.Children.OfType<StackPanel>().FirstOrDefault();
@@ -4911,6 +5296,7 @@ namespace StradarioApp.UI
             _hiddenPercorsoIds.Clear();
             _multiSelectedPageIds.Clear();
             _multiSelectedPoiKeys.Clear();
+            _multiSelectedRoutePointKeys.Clear();
             _undoStack.Clear();
             _redoStack.Clear();
             _renderer.ClearCache();
@@ -5895,23 +6281,41 @@ namespace StradarioApp.UI
 
         private async Task OnEditPercorso(Percorso route)
         {
-            var win = new RouteEditWindow(route, _viewCenterLon, _viewCenterLat);
-            await win.ShowDialog(this);
-            if (!win.Confirmed) return;
+            // Se una modalità aggiungi-punti/disegna-percorso era rimasta
+            // attiva (es. avviata su questo o un altro percorso e mai
+            // conclusa), _addRoutePointsTarget punterebbe ancora al vecchio
+            // oggetto Percorso dopo la sostituzione più sotto, e OGNI click
+            // successivo sulla mappa verrebbe consumato da quella modalità
+            // invece che dal drag dei punti — bug reale: il drag sembrava
+            // "morto" anche su percorsi sbloccati dopo una modifica.
+            CancelAllAddModes();
 
-            // Per RIFERIMENTO, non per Id: due percorsi possono finire con
-            // lo stesso Id dopo un ciclo cancella→crea→annulla (i nuovi Id
-            // si calcolano come "max Id attuale + 1" solo sulla lista
-            // corrente, che non sa di un Id "in sospeso" nello undo stack —
-            // v. PercorsoService.GetNextId). Con un confronto per Id in
-            // quel caso si sovrascriveva il percorso SBAGLIATO (bug reale:
-            // modificare un punto di un percorso corrompeva un altro
-            // percorso). L'oggetto `route` è comunque sempre il riferimento
-            // esatto passato dal chiamante (v. BuildPercorsoNavItem), quindi
-            // IndexOf è sempre corretto qui, a differenza di un Id.
-            var newRoute = win.ResultRoute;
-            int idx = _project.Percorsi.IndexOf(route);
-            if (idx >= 0) _project.Percorsi[idx] = newRoute;
+            // RouteEditWindow ora lavora DIRETTAMENTE su `route` (anteprima
+            // live: ogni modifica nel dialog è già visibile su mappa/albero
+            // tramite onLiveChange) invece di produrre una copia sostituita
+            // solo a "OK" — lo snapshot "before" serve solo per costruire
+            // l'azione di undo (il dialog stesso, se Annulla/X, ripristina
+            // già `route` da solo, v. RouteEditWindow.RestoreBackup).
+            var before = RouteEditWindow.ClonePercorso(route);
+            var win = new RouteEditWindow(route, _viewCenterLon, _viewCenterLat,
+                onLiveChange: () =>
+                {
+                    TouchPercorso(route.Id);
+                    _isDirty = true;
+                    RefreshNavigationTree();
+                    _mapCanvas?.InvalidateVisual();
+                },
+                onKeepDeletedPoiAsStandalone: CreateStandalonePoiFromRoutePoint);
+            await win.ShowDialog(this);
+
+            if (!win.Confirmed)
+            {
+                RefreshNavigationTree();
+                _mapCanvas?.InvalidateVisual();
+                return;
+            }
+
+            var after = RouteEditWindow.ClonePercorso(route);
             TouchPercorso(route.Id);
             _isDirty = true;
             // Prima non c'era nessuna voce di undo per la modifica di un
@@ -5919,10 +6323,62 @@ namespace StradarioApp.UI
             // annullava silenziosamente l'azione precedente (non collegata),
             // molto confuso — segnalato dall'utente insieme al bug sopra.
             PushUndo(
-                undo: () => { int i = _project.Percorsi.IndexOf(newRoute); if (i >= 0) _project.Percorsi[i] = route; },
-                redo: () => { int i = _project.Percorsi.IndexOf(route); if (i >= 0) _project.Percorsi[i] = newRoute; });
+                undo: () => { ApplyPercorsoSnapshot(route, before); RefreshNavigationTree(); _mapCanvas?.InvalidateVisual(); },
+                redo: () => { ApplyPercorsoSnapshot(route, after);  RefreshNavigationTree(); _mapCanvas?.InvalidateVisual(); });
             RefreshNavigationTree();
             _mapCanvas?.InvalidateVisual();
+        }
+
+        // Applica in-place uno snapshot (v. RouteEditWindow.ClonePercorso)
+        // su un Percorso reale già in _project.Percorsi — usato da undo/redo
+        // dopo un'edit con anteprima live, dove l'oggetto non viene mai
+        // sostituito nella lista (a differenza del vecchio schema con
+        // ResultRoute), solo mutato.
+        private static void ApplyPercorsoSnapshot(Percorso target, Percorso snapshot)
+        {
+            target.Label         = snapshot.Label;
+            target.Description   = snapshot.Description;
+            target.ColorHex      = snapshot.ColorHex;
+            target.StartDateTime = snapshot.StartDateTime;
+            target.EndDateTime   = snapshot.EndDateTime;
+            target.IsLocked      = snapshot.IsLocked;
+            target.Points.Clear();
+            target.Points.AddRange(snapshot.Points.Select(RouteEditWindow.ClonePoint));
+        }
+
+        // Un punto di percorso marcato IsPoi porta etichetta/descrizione/
+        // icona proprie: se l'utente sceglie di "conservarlo" mentre lo
+        // elimina dalla sequenza (v. RouteEditWindow, conferma prima
+        // della cancellazione), diventa un PoiItem indipendente in un
+        // nuovo PoiGroup — invece di sparire silenziosamente col punto.
+        private void CreateStandalonePoiFromRoutePoint(GeoPoint point, Percorso route)
+        {
+            string label = string.IsNullOrWhiteSpace(point.PoiLabel) ? route.Label : point.PoiLabel;
+            var group = new PoiGroup
+            {
+                Id       = _poiSvc.GetNextGroupId(_project.PoiGroups),
+                Name     = label,
+                ColorHex = string.IsNullOrWhiteSpace(route.ColorHex) ? PercorsoRenderer.DefaultColorHex : route.ColorHex
+            };
+            var item = new PoiItem
+            {
+                Label       = point.PoiLabel,
+                Description = point.PoiDescription,
+                Icon        = point.PoiIcon,
+                Lon         = point.Lon,
+                Lat         = point.Lat
+            };
+            item.Id = _poiSvc.GetNextItemId(group);
+            group.Items.Add(item);
+
+            _project.PoiGroups.Add(group);
+            TouchPoiGroup(group.Id);
+            _isDirty = true;
+            PushUndo(
+                undo: () => _project.PoiGroups.Remove(group),
+                redo: () => { if (!_project.PoiGroups.Contains(group)) _project.PoiGroups.Add(group); });
+            RefreshNavigationTree();
+            ShowStatusMessage(string.Format(Strings.Get("MainWindow_PoiPercorsoConservato"), label, group.Name));
         }
 
         private void OnDeletePercorso(Percorso route)

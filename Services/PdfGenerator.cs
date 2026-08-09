@@ -334,9 +334,12 @@ namespace StradarioApp.Services
                     gfx.DrawRectangle(new XSolidBrush(XColor.FromArgb(248, 248, 252)),
                         margin, y, tableWidth, rh);
 
-                // Etichetta (centrata verticalmente)
-                gfx.DrawString(p.Label, cellFont, XBrushes.Black,
-                    new XRect(xLabel + 2, y + 2, colLabel - 4, rh - 4), XStringFormats.TopLeft);
+                // Etichetta: fino a 2 righe (colLabel è stretta, 10% della
+                // tabella — a riga singola fissa un'etichetta anche solo
+                // moderatamente lunga usciva dalla colonna senza alcun
+                // adattamento). Stesso schema "wrap reale su 2 righe + ellissi"
+                // già usato sotto per la descrizione.
+                DrawWrappedTwoLines(gfx, p.Label, cellFont, xLabel + 2, y + 1, colLabel - 4);
 
                 // Centro: lon/lat su due righe corte
                 gfx.DrawString($"{p.GeoBounds.CenterLon:F3}°", cellFont, XBrushes.Black,
@@ -344,19 +347,13 @@ namespace StradarioApp.Services
                 gfx.DrawString($"{p.GeoBounds.CenterLat:F3}°", cellFont, XBrushes.Black,
                     new XRect(xCenter + 2, y + 1 + 11, colCenter - 4, 10), XStringFormats.TopLeft);
 
-                // Descrizione: fino a 2 righe
+                // Descrizione: fino a 2 righe, con wrap reale (basato sulla
+                // larghezza effettiva della colonna, non un taglio a
+                // conteggio di caratteri fisso come prima — che poteva
+                // tagliare a metà parola o, con un font/colonna più larghi
+                // del previsto, sprecare spazio senza motivo).
                 if (hasDesc)
-                {
-                    // Riga 1: primi ~60 caratteri
-                    string desc  = p.Description;
-                    string line1 = desc.Length <= 60 ? desc : desc[..60];
-                    string line2 = desc.Length > 60  ? desc[60..Math.Min(desc.Length, 120)] : "";
-                    gfx.DrawString(line1, cellFont, XBrushes.Black,
-                        new XRect(xDesc + 2, y + 1,      colDesc - 4, 10), XStringFormats.TopLeft);
-                    if (line2.Length > 0)
-                        gfx.DrawString(line2, cellFont, XBrushes.Black,
-                            new XRect(xDesc + 2, y + 1 + 11, colDesc - 4, 10), XStringFormats.TopLeft);
-                }
+                    DrawWrappedTwoLines(gfx, p.Description, cellFont, xDesc + 2, y + 1, colDesc - 4);
 
                 // Separatore riga
                 gfx.DrawLine(new XPen(XColor.FromArgb(220, 220, 220)),
@@ -381,6 +378,12 @@ namespace StradarioApp.Services
         // tagliata a bordo pagina invece di andare a capo.
         private static List<string> WrapText(XGraphics gfx, string text, XFont font, double maxWidth)
         {
+            // I newline letterali (es. tag OSM multipli uniti con "\n" in
+            // BuildOsmTagsString) non sono interpretati da XGraphics.DrawString
+            // come "a capo": il carattere finiva disegnato come glifo (un
+            // quadratino "tofu", Arial non lo mappa) in mezzo al testo. Li
+            // normalizziamo a "; " prima dello split-by-space che segue.
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"\r\n|\r|\n", "; ");
             var lines = new List<string>();
             var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             var current = "";
@@ -401,6 +404,72 @@ namespace StradarioApp.Services
             return lines;
         }
 
+        // Disegna un testo su un massimo di 2 righe (wrap reale via WrapText,
+        // non un taglio a conteggio di caratteri fisso) dentro una cella di
+        // altezza fissa a due righe da 11pt — usata nella tabella indice
+        // pagine per etichetta e descrizione. Se il testo eccede le 2 righe,
+        // la seconda viene troncata con "…" invece di sparire silenziosamente.
+        private static void DrawWrappedTwoLines(XGraphics gfx, string text, XFont font, double x, double y, double maxWidth)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return;
+            var lines = WrapText(gfx, text, font, maxWidth);
+            for (int i = 0; i < Math.Min(2, lines.Count); i++)
+            {
+                string line = lines[i];
+                if (i == 1 && lines.Count > 2)
+                    line = TruncateToWidth(gfx, line + "…", font, maxWidth);
+                gfx.DrawString(line, font, XBrushes.Black,
+                    new XRect(x, y + i * 11, maxWidth, 10), XStringFormats.TopLeft);
+            }
+        }
+
+        // Accorcia un testo su UNA riga per farlo entrare in maxWidth,
+        // troncando carattere per carattere e aggiungendo "…" — usata dove
+        // il layout richiede una riga singola (non c'è spazio per andare a
+        // capo, es. celle strette o etichette su mappa) invece del wrap
+        // multi-riga di WrapText sopra.
+        private static string TruncateToWidth(XGraphics gfx, string text, XFont font, double maxWidth)
+        {
+            if (string.IsNullOrEmpty(text) || gfx.MeasureString(text, font).Width <= maxWidth)
+                return text;
+            const string ellipsis = "…";
+            string result = text;
+            while (result.Length > 0 && gfx.MeasureString(result + ellipsis, font).Width > maxWidth)
+                result = result[..^1];
+            return result.Length > 0 ? result + ellipsis : ellipsis;
+        }
+
+        // Riduce la dimensione di un font (fino a minSize) finché `text` entra
+        // su una riga in maxWidth — usata per etichette a riga singola in aree
+        // strette (bordi pagina, mappa riassuntiva) dove prima un font fisso
+        // poteva uscire dai bordi senza alcun adattamento. Se anche a minSize
+        // il testo non entra, il chiamante deve troncare col risultato (v.
+        // FitTextSingleLine sotto, che combina le due cose).
+        private static XFont ShrinkFontToFit(XGraphics gfx, string text, XFont font, double maxWidth, double minSize)
+        {
+            double size = font.Size;
+            var fitted = font;
+            while (size > minSize && gfx.MeasureString(text, fitted).Width > maxWidth)
+            {
+                size = Math.Max(minSize, size - 0.5);
+                fitted = new XFont(font.Name, size, font.Style);
+            }
+            return fitted;
+        }
+
+        // Combina ShrinkFontToFit + TruncateToWidth: prima prova a rimpicciolire
+        // il font fino a minSize, poi — se il testo ancora non entra — lo
+        // tronca con l'ellissi alla dimensione minima raggiunta. Garantisce
+        // che il testo restituito entri sempre in maxWidth su una riga.
+        private static (XFont Font, string Text) FitTextSingleLine(XGraphics gfx, string text, XFont font, double maxWidth, double minSize)
+        {
+            var fitted = ShrinkFontToFit(gfx, text, font, maxWidth, minSize);
+            string fittedText = gfx.MeasureString(text, fitted).Width > maxWidth
+                ? TruncateToWidth(gfx, text, fitted, maxWidth)
+                : text;
+            return (fitted, fittedText);
+        }
+
         // Disegna il "Piano di viaggio": la sequenza cronologica unificata di
         // tutti i POI e gli estremi di percorso (partenza/arrivo) che hanno
         // una data impostata, più — in coda, per esplicita scelta di design
@@ -418,10 +487,10 @@ namespace StradarioApp.Services
             const double iconSize    = 14;
 
             var titleFont  = new XFont("Arial", 16, XFontStyle.Bold);
-            var dateFont   = new XFont("Arial", 9, XFontStyle.Bold);
-            var labelFont  = new XFont("Arial", 9);
+            var descFont   = new XFont("Arial", 6.5, XFontStyle.Regular);
+            var dateFont   = descFont;
+            var labelFont  = descFont;
             var subFont    = new XFont("Arial", 7.5, XFontStyle.Italic);
-            var descFont   = new XFont("Arial", 6.5);
 
             var iconCache = new Dictionary<string, XImage>();
             XImage GetIcon(PoiIconType icon, string colorHex)
@@ -487,8 +556,10 @@ namespace StradarioApp.Services
                 gfx.DrawImage(GetIcon(entry.Icon, entry.ColorHex), iconX, iconY, iconSize * 0.85, iconSize * 0.85);
 
                 string labelText = string.IsNullOrEmpty(entry.SubLabel) ? entry.Label : $"{entry.Label} ({entry.SubLabel})";
-                gfx.DrawString(labelText, labelFont, XBrushes.Black,
-                    new XRect(iconX + iconSize + 4, y, tableWidth - dateColWidth - iconSize - 4, rowH), XStringFormats.CenterLeft);
+                double labelWidth = tableWidth - dateColWidth - iconSize - 4;
+                var (labelFitFont, labelFitText) = FitTextSingleLine(gfx, labelText, labelFont, labelWidth - 2, 6.5);
+                gfx.DrawString(labelFitText, labelFitFont, XBrushes.Black,
+                    new XRect(iconX + iconSize + 4, y, labelWidth, rowH), XStringFormats.CenterLeft);
                 y += rowH;
 
                 foreach (var line in descLines)
@@ -595,8 +666,10 @@ namespace StradarioApp.Services
                 double groupSwatchY = y + (groupRowH - iconSize) / 2.0;
                 gfx.DrawRectangle(groupSwatchBrush, margin + 3, groupSwatchY, iconSize, iconSize);
                 gfx.DrawRectangle(XPens.DimGray, margin + 3, groupSwatchY, iconSize, iconSize);
-                gfx.DrawString(group.Name, groupFont, XBrushes.Black,
-                    new XRect(margin + iconSize + 8, y, tableWidth - iconSize - 16, groupRowH), XStringFormats.CenterLeft);
+                double groupNameWidth = tableWidth - iconSize - 16;
+                var (groupNameFont, groupNameText) = FitTextSingleLine(gfx, group.Name, groupFont, groupNameWidth - 2, 7);
+                gfx.DrawString(groupNameText, groupNameFont, XBrushes.Black,
+                    new XRect(margin + iconSize + 8, y, groupNameWidth, groupRowH), XStringFormats.CenterLeft);
                 y += groupRowH;
 
                 foreach (var line in groupDescLines)
@@ -617,8 +690,10 @@ namespace StradarioApp.Services
 
                     double iconY = y + (itemRowH - iconSize * 0.85) / 2.0;
                     gfx!.DrawImage(GetIcon(item.Icon ?? PoiIconType.Pin, group.ColorHex), margin + 10, iconY, iconSize * 0.85, iconSize * 0.85);
-                    gfx.DrawString(item.Label, itemFont, XBrushes.Black,
-                        new XRect(margin + iconSize + 14, y, tableWidth * 0.55, itemRowH), XStringFormats.CenterLeft);
+                    double itemLabelWidth = tableWidth * 0.55;
+                    var (itemLabelFont, itemLabelText) = FitTextSingleLine(gfx, item.Label, itemFont, itemLabelWidth - 2, 6.5);
+                    gfx.DrawString(itemLabelText, itemLabelFont, XBrushes.Black,
+                        new XRect(margin + iconSize + 14, y, itemLabelWidth, itemRowH), XStringFormats.CenterLeft);
                     string coords = $"{item.Lon:F4}°E  {item.Lat:F4}°N";
                     gfx.DrawString(coords, coordFont, XBrushes.Black,
                         new XRect(margin + tableWidth * 0.62, y, tableWidth * 0.38 - 4, itemRowH), XStringFormats.CenterLeft);
@@ -742,8 +817,10 @@ namespace StradarioApp.Services
                 // (MainWindow.FormatItineraryDate) per POI/percorsi datati.
                 string routeTitle = FormatRouteDateRange(r.StartDateTime, r.EndDateTime) is { Length: > 0 } dateRange
                     ? $"{dateRange}  {r.Label}" : r.Label;
-                gfx.DrawString(routeTitle, nameFont, XBrushes.Black,
-                    new XRect(margin + swatchSz + 14, y, tableWidth * 0.55 - swatchSz - 14, rowH), XStringFormats.CenterLeft);
+                double routeTitleWidth = tableWidth * 0.55 - swatchSz - 14;
+                var (routeTitleFont, routeTitleText) = FitTextSingleLine(gfx, routeTitle, nameFont, routeTitleWidth - 2, 7);
+                gfx.DrawString(routeTitleText, routeTitleFont, XBrushes.Black,
+                    new XRect(margin + swatchSz + 14, y, routeTitleWidth, rowH), XStringFormats.CenterLeft);
 
                 double lengthKm = PercorsoRenderer.LengthKm(r);
                 string meta = $"{lengthKm:0.##} km  ·  {r.Points.Count} punti";
@@ -776,8 +853,10 @@ namespace StradarioApp.Services
 
                     double iconY = y + (poiItemRowH - poiIconSize * 0.85) / 2.0;
                     gfx!.DrawImage(GetRoutePoiIcon(r, point), margin + swatchSz + 16, iconY, poiIconSize * 0.85, poiIconSize * 0.85);
-                    gfx.DrawString(point.PoiLabel, poiItemFont, XBrushes.Black,
-                        new XRect(margin + swatchSz + poiIconSize + 20, y, tableWidth * 0.55, poiItemRowH), XStringFormats.CenterLeft);
+                    double pointLabelWidth = tableWidth * 0.55;
+                    var (pointLabelFont, pointLabelText) = FitTextSingleLine(gfx, point.PoiLabel, poiItemFont, pointLabelWidth - 2, 6.5);
+                    gfx.DrawString(pointLabelText, pointLabelFont, XBrushes.Black,
+                        new XRect(margin + swatchSz + poiIconSize + 20, y, pointLabelWidth, poiItemRowH), XStringFormats.CenterLeft);
                     string pointCoords = $"{point.Lon:F4}°E  {point.Lat:F4}°N";
                     gfx.DrawString(pointCoords, poiCoordFont, XBrushes.Black,
                         new XRect(margin + tableWidth * 0.62, y, tableWidth * 0.38 - 4, poiItemRowH), XStringFormats.CenterLeft);
@@ -1060,10 +1139,17 @@ namespace StradarioApp.Services
                 gfx.DrawRectangle(fillBrush, x1, y1, rw, rh);
                 gfx.DrawRectangle(rectPen,   x1, y1, rw, rh);
 
-                // Label centrata con ombra
-                var labelRect = new XRect(x1 + 1, y1 + 1, rw - 2, rh - 2);
-                gfx.DrawString(page.Label, labelFont, shadowBrush, labelRect, XStringFormats.Center);
-                gfx.DrawString(page.Label, labelFont, XBrushes.Black, labelRect, XStringFormats.Center);
+                // Label centrata con ombra — rimpicciolita/troncata per
+                // entrare nel rettangolo pagina (spesso piccolo sulla mappa
+                // riassuntiva): a font fisso un'etichetta lunga usciva dal
+                // rettangolo senza alcun adattamento.
+                if (rw > 10 && rh > 8)
+                {
+                    var labelRect = new XRect(x1 + 1, y1 + 1, rw - 2, rh - 2);
+                    var (pageLabelFont, pageLabelText) = FitTextSingleLine(gfx, page.Label, labelFont, rw - 2, 4.5);
+                    gfx.DrawString(pageLabelText, pageLabelFont, shadowBrush, labelRect, XStringFormats.Center);
+                    gfx.DrawString(pageLabelText, pageLabelFont, XBrushes.Black, labelRect, XStringFormats.Center);
+                }
 
                 // Numero di pagina in basso a destra (se il rettangolo è abbastanza grande)
                 if (rw > 22 && rh > 14)
@@ -1092,8 +1178,11 @@ namespace StradarioApp.Services
                 }
 
                 if (!string.IsNullOrWhiteSpace(route.Label))
-                    gfx.DrawString(route.Label, routeLabelFont, shadowBrush,
+                {
+                    var (rlFont, rlText) = FitTextSingleLine(gfx, route.Label, routeLabelFont, 78, 5.5);
+                    gfx.DrawString(rlText, rlFont, shadowBrush,
                         new XRect(ptsPdf[0].px + 2, ptsPdf[0].py - 8, 80, 9), XStringFormats.TopLeft);
+                }
 
                 // Punti marcati come POI: la pagina riassuntiva è puramente
                 // vettoriale (nessun PoiIconRenderer/bitmap qui), quindi un
@@ -1107,8 +1196,11 @@ namespace StradarioApp.Services
                     gfx.DrawEllipse(poiBrush, px - 2.2, py - 2.2, 4.4, 4.4);
                     gfx.DrawEllipse(XPens.White, px - 2.2, py - 2.2, 4.4, 4.4);
                     if (!string.IsNullOrWhiteSpace(route.Points[i].PoiLabel))
-                        gfx.DrawString(route.Points[i].PoiLabel, routeLabelFont, shadowBrush,
+                    {
+                        var (plFont, plText) = FitTextSingleLine(gfx, route.Points[i].PoiLabel, routeLabelFont, 78, 5.5);
+                        gfx.DrawString(plText, plFont, shadowBrush,
                             new XRect(px + 3, py - 8, 80, 9), XStringFormats.TopLeft);
+                    }
                 }
             }
 
@@ -1129,8 +1221,11 @@ namespace StradarioApp.Services
                     gfx.DrawEllipse(poiBrush, px - 2.5, py - 2.5, 5, 5);
                     gfx.DrawEllipse(XPens.White, px - 2.5, py - 2.5, 5, 5);
                     if (!string.IsNullOrWhiteSpace(item.Label))
-                        gfx.DrawString(item.Label, routeLabelFont, shadowBrush,
+                    {
+                        var (ilFont, ilText) = FitTextSingleLine(gfx, item.Label, routeLabelFont, 78, 5.5);
+                        gfx.DrawString(ilText, ilFont, shadowBrush,
                             new XRect(px + 3, py - 8, 80, 9), XStringFormats.TopLeft);
+                    }
                 }
             }
         }
@@ -1348,7 +1443,7 @@ namespace StradarioApp.Services
             gfx.DrawRectangle(XPens.Black, mapX, mapY, mapW, mapH);
 
             // Font per i bordi
-            var borderFont = new XFont("Arial", 8, XFontStyle.Bold);
+            var borderFont = new XFont("Arial", 7, XFontStyle.Bold);
             var numFont    = new XFont("Arial", 11, XFontStyle.Bold);
 
             // ---- Bordo NORD ----
@@ -1452,12 +1547,26 @@ namespace StradarioApp.Services
                 new XRect(x0, y0 + barH + 1, barLenPt + 70, captionRowH), XStringFormats.TopLeft);
         }
 
-        // Disegna una striscia di bordo con sfondo grigio chiaro e testo centrato
+        // Disegna una striscia di bordo con sfondo grigio chiaro e testo centrato.
+        // Il riferimento pagina adiacente ("▲ pag. N  Etichetta") è testo
+        // arbitrario dell'utente: a font fisso poteva uscire dai bordi della
+        // striscia con etichette lunghe (nessun controllo prima) — ora il
+        // font si rimpicciolisce (fino a MinBorderFontSize) per entrare su
+        // una riga, e se anche così non basta viene troncato con "…".
+        private const double MinBorderFontSize = 5.5;
+
         private void DrawBorderStrip(XGraphics gfx, double x, double y, double w, double h,
             string text, XFont font, bool isVertical)
         {
             gfx.DrawRectangle(new XSolidBrush(XColor.FromArgb(230, 230, 230)), x, y, w, h);
             gfx.DrawRectangle(XPens.Gray, x, y, w, h);
+
+            // Dopo la rotazione di 90° per i bordi laterali, il testo scorre
+            // lungo `h` (l'altezza della pagina, ampia) — la larghezza
+            // disponibile per il fit è quindi h per i bordi verticali, w per
+            // quelli orizzontali (dove il testo non ruota).
+            double availableWidth = (isVertical ? h : w) - 12;
+            var (fitFont, fitText) = FitTextSingleLine(gfx, text, font, availableWidth, MinBorderFontSize);
 
             if (isVertical)
             {
@@ -1465,13 +1574,13 @@ namespace StradarioApp.Services
                 gfx.Save();
                 gfx.TranslateTransform(x + w / 2, y + h / 2);
                 gfx.RotateTransform(-90);
-                gfx.DrawString(text, font, XBrushes.Black,
+                gfx.DrawString(fitText, fitFont, XBrushes.Black,
                     new XRect(-h / 2, -w / 2, h, w), XStringFormats.Center);
                 gfx.Restore();
             }
             else
             {
-                gfx.DrawString(text, font, XBrushes.Black,
+                gfx.DrawString(fitText, fitFont, XBrushes.Black,
                     new XRect(x, y, w, h), XStringFormats.Center);
             }
         }
