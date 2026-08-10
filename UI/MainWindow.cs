@@ -5602,13 +5602,17 @@ namespace StradarioApp.UI
             }
             catch { /* nessun visualizzatore PDF disponibile: l'anteprima resta comunque salvabile */ }
 
-            await ShowPdfPreviewDialog(tempPath);
+            await ShowPdfPreviewDialog(tempPath, coverTitle);
         }
 
         // Dialog di anteprima mostrato dopo la generazione: il PDF è già
         // aperto nel visualizzatore di sistema; l'utente sceglie se salvarlo
-        // in una posizione definitiva o chiudere (scartando il file temporaneo)
-        private async Task ShowPdfPreviewDialog(string tempPath)
+        // in una posizione definitiva o chiudere (scartando il file temporaneo).
+        // suggestedFileName: lo stesso titolo mostrato sulla copertina del PDF
+        // (coverTitle in OnGeneratePdf) — non necessariamente uguale a
+        // _project.ProjectName, che è solo il nome interno del progetto e può
+        // differire dal nome del file .stradario/dal titolo di copertina.
+        private async Task ShowPdfPreviewDialog(string tempPath, string suggestedFileName)
         {
             bool save = false;
 
@@ -5657,7 +5661,7 @@ namespace StradarioApp.UI
                 {
                     Title             = Strings.Get("MainWindow_SalvaPdfTitolo"),
                     DefaultExtension  = "pdf",
-                    SuggestedFileName = _project.ProjectName,
+                    SuggestedFileName = suggestedFileName,
                     SuggestedStartLocation = await GetSuggestedStartFolderAsync(),
                     FileTypeChoices   = new[]
                     {

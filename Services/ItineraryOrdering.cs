@@ -77,12 +77,25 @@ namespace StradarioApp.Services
             items.AddRange(sorted);
         }
 
+        // Data minima di un singolo POI: il minore tra DateStart e DateEnd
+        // (ignorando quello non impostato), o DateTime.MaxValue se nessuno
+        // dei due lo è — così un POI con solo DateEnd impostato (senza
+        // DateStart) conta comunque la sua data reale invece di finire tra
+        // i "senza data".
+        private static DateTime GetItemMinDate(PoiItem item)
+        {
+            DateTime? min = null;
+            if (item.DateStart.HasValue) min = item.DateStart.Value;
+            if (item.DateEnd.HasValue && (!min.HasValue || item.DateEnd.Value < min.Value)) min = item.DateEnd.Value;
+            return min ?? DateTime.MaxValue;
+        }
+
         // Data minima tra i POI del gruppo, o DateTime.MaxValue se nessuno
         // ha una data (coerente col sentinel usato per l'ordinamento: i
         // gruppi senza alcuna data vanno in coda).
         public static DateTime GetGroupMinDate(PoiGroup group)
         {
-            var dated = group.Items.Where(i => i.DateStart.HasValue).Select(i => i.DateStart!.Value);
+            var dated = group.Items.Select(GetItemMinDate).Where(d => d != DateTime.MaxValue);
             return dated.Any() ? dated.Min() : DateTime.MaxValue;
         }
 
