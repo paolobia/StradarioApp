@@ -493,7 +493,6 @@ namespace StradarioApp.Services
             const double rowH        = 18;
             const double descRowH    = 10;
             const double iconSize    = 14;
-            const double markerSize  = 10;
             const double nestedIconSize = 12;
             const double nestedRowH     = 14;
             const double nestedDescRowH = 9;
@@ -504,11 +503,6 @@ namespace StradarioApp.Services
             var labelFont     = descFont;
             var nestedFont    = new XFont("Arial", 6.5, XFontStyle.Regular);
             var nestedDescFont = new XFont("Arial", 6, XFontStyle.Italic);
-
-            // Colori fissi (indipendenti dal colore del gruppo/percorso) per
-            // le due frecce Inizio/Fine, così restano riconoscibili ovunque.
-            var startColor = XColor.FromArgb(46, 125, 50);
-            var endColor   = XColor.FromArgb(198, 40, 40);
 
             var iconCache = new Dictionary<string, XImage>();
             XImage GetIcon(PoiIconType icon, string colorHex)
@@ -549,46 +543,13 @@ namespace StradarioApp.Services
                 y = 18 + 40;
             }
 
-            // Disegna l'icona "Inizio" (freccia verso il basso, come un pin
-            // che atterra sul punto) o "Fine" (stessa freccia, più corta, che
-            // tocca una linea di base — il punto in cui il viaggio si ferma).
-            void DrawStartEndMarker(double x, double y0, double size, bool isStart)
-            {
-                var color = isStart ? startColor : endColor;
-                var brush = new XSolidBrush(color);
-                double stemW = size * 0.22;
-                double headW = size * 0.75;
-                double headH = size * 0.55;
-                double cx    = x + size / 2.0;
-                double arrowH = isStart ? size : size * 0.8;
-                double shaftH = arrowH - headH;
-
-                gfx!.DrawRectangle(brush, cx - stemW / 2, y0, stemW, shaftH);
-                var head = new[]
-                {
-                    new XPoint(cx - headW / 2, y0 + shaftH),
-                    new XPoint(cx + headW / 2, y0 + shaftH),
-                    new XPoint(cx, y0 + arrowH)
-                };
-                gfx.DrawPolygon(brush, head, XFillMode.Winding);
-
-                if (!isStart)
-                {
-                    var groundPen = new XPen(color, size * 0.12);
-                    gfx.DrawLine(groundPen, x, y0 + size, x + size, y0 + size);
-                }
-            }
-
             NewPage();
 
             double dateColWidth = 110;
             foreach (var entry in entries)
             {
-                bool hasMarker = entry.IsStart.HasValue;
-                double markerExtra = hasMarker ? markerSize + 4 : 0;
-
                 bool hasDesc = !string.IsNullOrWhiteSpace(entry.Description);
-                double descWidth = tableWidth - iconSize - dateColWidth - 18 - markerExtra;
+                double descWidth = tableWidth - iconSize - dateColWidth - 18;
                 var descLines = hasDesc ? WrapText(gfx!, entry.Description!, descFont, descWidth) : new List<string>();
                 double neededH = rowH + descLines.Count * descRowH;
                 if (y + neededH > h - margin)
@@ -603,15 +564,14 @@ namespace StradarioApp.Services
                 gfx.DrawImage(GetIcon(entry.Icon, entry.ColorHex), iconX, iconY, iconSize * 0.85, iconSize * 0.85);
 
                 double contentX = iconX + iconSize + 4;
-                if (hasMarker)
+                string labelText = entry.IsStart switch
                 {
-                    double markerY = y + (rowH - markerSize) / 2.0;
-                    DrawStartEndMarker(contentX, markerY, markerSize, entry.IsStart!.Value);
-                    contentX += markerSize + 4;
-                }
-
+                    true  => $"(Inizio) {entry.Label}",
+                    false => $"(Fine) {entry.Label}",
+                    null  => entry.Label
+                };
                 double labelWidth = margin + tableWidth - contentX - 2;
-                var (labelFitFont, labelFitText) = FitTextSingleLine(gfx, entry.Label, labelFont, labelWidth - 2, 6.5);
+                var (labelFitFont, labelFitText) = FitTextSingleLine(gfx, labelText, labelFont, labelWidth - 2, 6.5);
                 gfx.DrawString(labelFitText, labelFitFont, XBrushes.Black,
                     new XRect(contentX, y, labelWidth, rowH), XStringFormats.CenterLeft);
                 y += rowH;
