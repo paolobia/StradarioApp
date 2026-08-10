@@ -20,20 +20,53 @@ using StradarioApp.Models;
 
 namespace StradarioApp.Services
 {
-    // Una riga del "piano di viaggio" unificato stampato in PDF: un POI o
-    // un estremo (partenza/arrivo) di un percorso.
+    // Un punto annidato mostrato sotto una entry di percorso nel piano di
+    // viaggio (i punti del percorso marcati IsPoi) — non ha una propria
+    // data (solo il percorso nel suo complesso ha inizio/fine).
+    public record ItineraryNestedPoint(
+        string    Label,
+        double    Lon,
+        double    Lat,
+        PoiIconType Icon,
+        string?   Description);
+
+    // Una riga del "piano di viaggio" unificato stampato in PDF: un POI (o
+    // un suo estremo inizio/fine, se ha date diverse) oppure un estremo
+    // (inizio/fine) di un percorso. IsStart è null per un punto "semplice"
+    // senza distinzione inizio/fine (data unica, o nessuna data), true per
+    // l'estremo di inizio, false per l'estremo di fine.
     public record ItineraryEntry(
         DateTime? Date,
         string    Label,
-        string?   SubLabel,
+        bool?     IsStart,
         double    Lon,
         double    Lat,
         string    ColorHex,
         PoiIconType Icon,
-        string?   Description);
+        string?   Description,
+        List<ItineraryNestedPoint>? NestedPoints = null);
 
     public static class ItineraryOrdering
     {
+        // Formatta una singola data: solo il giorno se l'orario è mezzanotte
+        // esatta ("nessun orario impostato"), altrimenti data+ora — usata
+        // sia dall'albero (MainWindow) sia dal PDF (PdfGenerator).
+        public static string FormatSingleDate(DateTime d) =>
+            d.TimeOfDay == TimeSpan.Zero ? d.ToString("dd/MM/yyyy") : d.ToString("dd/MM/yyyy HH:mm");
+
+        // Formatta un intervallo inizio/fine (POI: DateStart/DateEnd, percorso:
+        // StartDateTime/EndDateTime): "" se nessuno dei due è impostato, la sola
+        // data se solo uno dei due lo è o se sono uguali (non ripetere due volte
+        // la stessa data), altrimenti "inizio - fine". Condivisa da albero e PDF
+        // così le due viste restano sempre coerenti.
+        public static string FormatDateRange(DateTime? start, DateTime? end)
+        {
+            if (!start.HasValue && !end.HasValue) return "";
+            if (start.HasValue && end.HasValue && start.Value != end.Value)
+                return $"{FormatSingleDate(start.Value)} - {FormatSingleDate(end.Value)}";
+            return FormatSingleDate((start ?? end)!.Value);
+        }
+
         // Ordina in place gli item di un gruppo per DateStart crescente;
         // i non datati (null) vanno in coda — stabile: a parità di chiave
         // mantiene l'ordine relativo originale.
@@ -82,9 +115,13 @@ namespace StradarioApp.Services
         }
 
         // Costruisce la sequenza unificata "piano di viaggio" per la stampa:
-        // un entry per ogni PoiItem (icona/colore del proprio gruppo) più,
-        // per ogni percorso con almeno un estremo datato, fino a due entry
-        // ("Partenza"/"Arrivo") sul primo/ultimo punto del percorso. Stessa
+        // un entry per ogni PoiItem (icona/colore del proprio gruppo) — due
+        // entry (Inizio/Fine) se DateStart e DateEnd sono entrambi impostati
+        // e diversi, una sola altrimenti — più, per ogni percorso con almeno
+        // un estremo datato, fino a due entry (Inizio/Fine) sul primo/ultimo
+        // punto del percorso, con i suoi punti marcati IsPoi annidati sotto
+        // l'entry di Inizio (o di Fine, se manca l'Inizio). La descrizione va
+        // su una sola delle due entry quando sono due, mai ripetuta. Stessa
         // regola dell'albero: i non datati vanno in coda (DateTime.MaxValue).
         public static List<ItineraryEntry> BuildItineraryEntries(List<PoiGroup> poiGroups, List<Percorso> percorsi)
         {
@@ -92,27 +129,54 @@ namespace StradarioApp.Services
 
             foreach (var group in poiGroups)
                 foreach (var item in group.Items)
-                    entries.Add(new ItineraryEntry(
-                        item.DateStart, item.Label, null, item.Lon, item.Lat,
-                        group.ColorHex, item.Icon ?? PoiIconType.Pin, item.Description));
+                {
+                    var icon = item.Icon ?? PoiIconType.Pin;
+                    bool distinctBoth = item.DateStart.HasValue && item.DateEnd.HasValue
+                        && item.DateStart.Value != item.DateEnd.Value;
+
+                    if (distinctBoth)
+                    {
+                        entries.Add(new ItineraryEntry(
+                            item.DateStart, item.Label, true, item.Lon, item.Lat,
+                            group.ColorHex, icon, item.Description));
+                        entries.Add(new ItineraryEntry(
+                            item.DateEnd, item.Label, false, item.Lon, item.Lat,
+                            group.ColorHex, icon, null));
+                    }
+                    else
+                    {
+                        entries.Add(new ItineraryEntry(
+                            item.DateStart ?? item.DateEnd, item.Label, null, item.Lon, item.Lat,
+                            group.ColorHex, icon, item.Description));
+                    }
+                }
 
             foreach (var route in percorsi)
             {
                 if (route.Points.Count == 0) continue;
+                bool hasStart = route.StartDateTime.HasValue;
+                bool hasEnd   = route.EndDateTime.HasValue;
+                if (!hasStart && !hasEnd) continue;
 
-                if (route.StartDateTime.HasValue)
+                var nestedPoints = route.Points.Where(p => p.IsPoi)
+                    .Select(p => new ItineraryNestedPoint(p.PoiLabel, p.Lon, p.Lat, p.PoiIcon, p.PoiDescription))
+                    .ToList();
+                if (nestedPoints.Count == 0) nestedPoints = null!;
+
+                if (hasStart)
                 {
                     var p = route.Points[0];
                     entries.Add(new ItineraryEntry(
-                        route.StartDateTime, route.Label, "Partenza", p.Lon, p.Lat,
-                        route.ColorHex, PoiIconType.Pin, route.Description));
+                        route.StartDateTime, route.Label, true, p.Lon, p.Lat,
+                        route.ColorHex, PoiIconType.Pin, route.Description, nestedPoints));
                 }
-                if (route.EndDateTime.HasValue)
+                if (hasEnd)
                 {
                     var p = route.Points[^1];
                     entries.Add(new ItineraryEntry(
-                        route.EndDateTime, route.Label, "Arrivo", p.Lon, p.Lat,
-                        route.ColorHex, PoiIconType.Pin, route.Description));
+                        route.EndDateTime, route.Label, false, p.Lon, p.Lat,
+                        route.ColorHex, PoiIconType.Pin, hasStart ? null : route.Description,
+                        hasStart ? null : nestedPoints));
                 }
             }
 

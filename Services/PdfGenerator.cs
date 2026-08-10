@@ -98,14 +98,17 @@ namespace StradarioApp.Services
             // automatica), perciò la numerazione delle pagine mappa successive
             // dipende da quante pagine sono state generate.
             //
-            // POI e percorsi sono SEMPRE elencati per intero, non più filtrati
-            // per contenimento geografico nelle pagine mappa (prima un POI/
-            // percorso fuori da ogni pagina spariva dal gazetteer) — richiesta
-            // esplicita dell'utente, anche perché ora il PDF si genera pure
-            // senza alcuna pagina definita (v. sopra), nel qual caso il
-            // vecchio filtro avrebbe sempre svuotato tutto.
+            // POI e percorsi SENZA data sono sempre elencati per intero, non
+            // più filtrati per contenimento geografico nelle pagine mappa
+            // (prima un POI/percorso fuori da ogni pagina spariva dal
+            // gazetteer) — richiesta esplicita dell'utente, anche perché ora
+            // il PDF si genera pure senza alcuna pagina definita (v. sopra),
+            // nel qual caso il vecchio filtro avrebbe sempre svuotato tutto.
+            // Un POI/percorso CON data è invece già per intero nel "Piano di
+            // viaggio" sopra: va escluso da questi elenchi "normali", altrimenti
+            // comparirebbe due volte nel PDF.
             // ---------------------------------------------------------------
-            bool anyDateSet = poiGroups.Any(g => g.Items.Any(i => i.DateStart.HasValue)) ||
+            bool anyDateSet = poiGroups.Any(g => g.Items.Any(i => i.DateStart.HasValue || i.DateEnd.HasValue)) ||
                                percorsi.Any(r => r.StartDateTime.HasValue || r.EndDateTime.HasValue);
 
             int itineraryPageCount = 0;
@@ -115,18 +118,23 @@ namespace StradarioApp.Services
                 itineraryPageCount = DrawItineraryPages(pdfDoc, poiGroups, percorsi, pageWidthMm, pageHeightMm);
             }
 
+            static bool PoiIsUndated(PoiItem i) => !i.DateStart.HasValue && !i.DateEnd.HasValue;
+            static bool PercorsoIsUndated(Percorso r) => !r.StartDateTime.HasValue && !r.EndDateTime.HasValue;
+
+            bool anyUndatedPoi = poiGroups.Any(g => g.Items.Any(PoiIsUndated));
             int poiPageCount = 0;
-            if (poiGroups.Count > 0)
+            if (anyUndatedPoi)
             {
                 progress?.Invoke(itineraryPageCount, sorted.Count + 2 + itineraryPageCount, "Generazione elenco punti di interesse...");
-                poiPageCount = DrawPoiListPages(pdfDoc, poiGroups, pageWidthMm, pageHeightMm);
+                poiPageCount = DrawPoiListPages(pdfDoc, poiGroups, pageWidthMm, pageHeightMm, PoiIsUndated);
             }
 
+            bool anyUndatedPercorso = percorsi.Any(PercorsoIsUndated);
             int percorsiPageCount = 0;
-            if (percorsi.Count > 0)
+            if (anyUndatedPercorso)
             {
                 progress?.Invoke(itineraryPageCount + poiPageCount, sorted.Count + 2 + itineraryPageCount + poiPageCount, "Generazione elenco percorsi...");
-                percorsiPageCount = DrawPercorsiListPages(pdfDoc, percorsi, pageWidthMm, pageHeightMm);
+                percorsiPageCount = DrawPercorsiListPages(pdfDoc, percorsi, pageWidthMm, pageHeightMm, PercorsoIsUndated);
             }
 
             // La pagina Indice elenca le pagine mappa: senza alcuna pagina
@@ -485,12 +493,22 @@ namespace StradarioApp.Services
             const double rowH        = 18;
             const double descRowH    = 10;
             const double iconSize    = 14;
+            const double markerSize  = 10;
+            const double nestedIconSize = 12;
+            const double nestedRowH     = 14;
+            const double nestedDescRowH = 9;
 
-            var titleFont  = new XFont("Arial", 16, XFontStyle.Bold);
-            var descFont   = new XFont("Arial", 6.5, XFontStyle.Regular);
-            var dateFont   = descFont;
-            var labelFont  = descFont;
-            var subFont    = new XFont("Arial", 7.5, XFontStyle.Italic);
+            var titleFont     = new XFont("Arial", 16, XFontStyle.Bold);
+            var descFont      = new XFont("Arial", 6.5, XFontStyle.Regular);
+            var dateFont      = descFont;
+            var labelFont     = descFont;
+            var nestedFont    = new XFont("Arial", 6.5, XFontStyle.Regular);
+            var nestedDescFont = new XFont("Arial", 6, XFontStyle.Italic);
+
+            // Colori fissi (indipendenti dal colore del gruppo/percorso) per
+            // le due frecce Inizio/Fine, così restano riconoscibili ovunque.
+            var startColor = XColor.FromArgb(46, 125, 50);
+            var endColor   = XColor.FromArgb(198, 40, 40);
 
             var iconCache = new Dictionary<string, XImage>();
             XImage GetIcon(PoiIconType icon, string colorHex)
@@ -531,23 +549,52 @@ namespace StradarioApp.Services
                 y = 18 + 40;
             }
 
+            // Disegna l'icona "Inizio" (freccia verso il basso, come un pin
+            // che atterra sul punto) o "Fine" (stessa freccia, più corta, che
+            // tocca una linea di base — il punto in cui il viaggio si ferma).
+            void DrawStartEndMarker(double x, double y0, double size, bool isStart)
+            {
+                var color = isStart ? startColor : endColor;
+                var brush = new XSolidBrush(color);
+                double stemW = size * 0.22;
+                double headW = size * 0.75;
+                double headH = size * 0.55;
+                double cx    = x + size / 2.0;
+                double arrowH = isStart ? size : size * 0.8;
+                double shaftH = arrowH - headH;
+
+                gfx!.DrawRectangle(brush, cx - stemW / 2, y0, stemW, shaftH);
+                var head = new[]
+                {
+                    new XPoint(cx - headW / 2, y0 + shaftH),
+                    new XPoint(cx + headW / 2, y0 + shaftH),
+                    new XPoint(cx, y0 + arrowH)
+                };
+                gfx.DrawPolygon(brush, head, XFillMode.Winding);
+
+                if (!isStart)
+                {
+                    var groundPen = new XPen(color, size * 0.12);
+                    gfx.DrawLine(groundPen, x, y0 + size, x + size, y0 + size);
+                }
+            }
+
             NewPage();
 
             double dateColWidth = 110;
             foreach (var entry in entries)
             {
+                bool hasMarker = entry.IsStart.HasValue;
+                double markerExtra = hasMarker ? markerSize + 4 : 0;
+
                 bool hasDesc = !string.IsNullOrWhiteSpace(entry.Description);
-                double descWidth = tableWidth - iconSize - dateColWidth - 18;
+                double descWidth = tableWidth - iconSize - dateColWidth - 18 - markerExtra;
                 var descLines = hasDesc ? WrapText(gfx!, entry.Description!, descFont, descWidth) : new List<string>();
                 double neededH = rowH + descLines.Count * descRowH;
                 if (y + neededH > h - margin)
                     NewPage();
 
-                string dateText = entry.Date.HasValue
-                    ? (entry.Date.Value.TimeOfDay == TimeSpan.Zero
-                        ? entry.Date.Value.ToString("dd/MM/yyyy")
-                        : entry.Date.Value.ToString("dd/MM/yyyy HH:mm"))
-                    : "—";
+                string dateText = entry.Date.HasValue ? ItineraryOrdering.FormatSingleDate(entry.Date.Value) : "—";
                 gfx!.DrawString(dateText, dateFont, XBrushes.Black,
                     new XRect(margin, y, dateColWidth, rowH), XStringFormats.CenterLeft);
 
@@ -555,11 +602,18 @@ namespace StradarioApp.Services
                 double iconY = y + (rowH - iconSize * 0.85) / 2.0;
                 gfx.DrawImage(GetIcon(entry.Icon, entry.ColorHex), iconX, iconY, iconSize * 0.85, iconSize * 0.85);
 
-                string labelText = string.IsNullOrEmpty(entry.SubLabel) ? entry.Label : $"{entry.Label} ({entry.SubLabel})";
-                double labelWidth = tableWidth - dateColWidth - iconSize - 4;
-                var (labelFitFont, labelFitText) = FitTextSingleLine(gfx, labelText, labelFont, labelWidth - 2, 6.5);
+                double contentX = iconX + iconSize + 4;
+                if (hasMarker)
+                {
+                    double markerY = y + (rowH - markerSize) / 2.0;
+                    DrawStartEndMarker(contentX, markerY, markerSize, entry.IsStart!.Value);
+                    contentX += markerSize + 4;
+                }
+
+                double labelWidth = margin + tableWidth - contentX - 2;
+                var (labelFitFont, labelFitText) = FitTextSingleLine(gfx, entry.Label, labelFont, labelWidth - 2, 6.5);
                 gfx.DrawString(labelFitText, labelFitFont, XBrushes.Black,
-                    new XRect(iconX + iconSize + 4, y, labelWidth, rowH), XStringFormats.CenterLeft);
+                    new XRect(contentX, y, labelWidth, rowH), XStringFormats.CenterLeft);
                 y += rowH;
 
                 foreach (var line in descLines)
@@ -567,6 +621,42 @@ namespace StradarioApp.Services
                     gfx.DrawString(line, descFont, XBrushes.Black,
                         new XRect(iconX + iconSize + 4, y, descWidth, descRowH), XStringFormats.TopLeft);
                     y += descRowH;
+                }
+
+                // Punti del percorso marcati POI, annidati sotto l'entry di
+                // Inizio (o di Fine, se manca l'Inizio) — stesso layout di
+                // DrawPercorsiListPages, ma senza colonna data (i punti non
+                // hanno una data propria).
+                if (entry.NestedPoints != null)
+                {
+                    double nestedX = iconX + iconSize + 12;
+                    foreach (var np in entry.NestedPoints)
+                    {
+                        bool hasNpDesc = !string.IsNullOrWhiteSpace(np.Description);
+                        double npDescWidth = margin + tableWidth - nestedX - nestedIconSize - 6;
+                        var npDescLines = hasNpDesc ? WrapText(gfx!, np.Description!, nestedDescFont, npDescWidth) : new List<string>();
+                        double neededNpH = nestedRowH + npDescLines.Count * nestedDescRowH;
+                        if (y + neededNpH > h - margin)
+                            NewPage();
+
+                        double npIconY = y + (nestedRowH - nestedIconSize * 0.85) / 2.0;
+                        gfx!.DrawImage(GetIcon(np.Icon, entry.ColorHex), nestedX, npIconY, nestedIconSize * 0.85, nestedIconSize * 0.85);
+                        double npLabelWidth = (margin + tableWidth) * 0.55 - nestedX;
+                        var (npLabelFont, npLabelText) = FitTextSingleLine(gfx, np.Label, nestedFont, npLabelWidth - 2, 6);
+                        gfx.DrawString(npLabelText, npLabelFont, XBrushes.Black,
+                            new XRect(nestedX + nestedIconSize + 4, y, npLabelWidth, nestedRowH), XStringFormats.CenterLeft);
+                        string npCoords = $"{np.Lon:F4}°E  {np.Lat:F4}°N";
+                        gfx.DrawString(npCoords, dateFont,
+                            XBrushes.Black, new XRect(margin + tableWidth * 0.62, y, tableWidth * 0.38 - 4, nestedRowH), XStringFormats.CenterLeft);
+                        y += nestedRowH;
+
+                        foreach (var line in npDescLines)
+                        {
+                            gfx.DrawString(line, nestedDescFont, XBrushes.Black,
+                                new XRect(nestedX + nestedIconSize + 4, y, npDescWidth, nestedDescRowH), XStringFormats.TopLeft);
+                            y += nestedDescRowH;
+                        }
+                    }
                 }
             }
 
@@ -577,9 +667,12 @@ namespace StradarioApp.Services
         // una riga per ogni POI con icona, etichetta e coordinate), in testa
         // al documento prima dell'indice. Crea automaticamente tutte le
         // pagine necessarie (nessun troncamento). Ritorna il numero di
-        // pagine create.
+        // pagine create. `itemFilter` (se presente) esclude i POI già
+        // mostrati per intero nel "Piano di viaggio" — un gruppo che non ha
+        // più nessun item dopo il filtro non compare affatto (niente
+        // intestazione vuota).
         private int DrawPoiListPages(PdfDocument pdfDoc, List<PoiGroup> poiGroups,
-            double pageWidthMm, double pageHeightMm)
+            double pageWidthMm, double pageHeightMm, Func<PoiItem, bool>? itemFilter = null)
         {
             const double margin      = 24;
             const double groupRowH    = 20;
@@ -639,6 +732,9 @@ namespace StradarioApp.Services
 
             foreach (var group in poiGroups)
             {
+                var items = itemFilter == null ? group.Items : group.Items.Where(itemFilter).ToList();
+                if (items.Count == 0) continue;
+
                 double groupDescWidth = tableWidth - iconSize - 16;
                 bool hasGroupDesc = !string.IsNullOrWhiteSpace(group.Description);
                 var groupDescLines = hasGroupDesc ? WrapText(gfx!, group.Description, descFont, groupDescWidth) : new List<string>();
@@ -646,11 +742,11 @@ namespace StradarioApp.Services
                 // Il primo POI del gruppo deve stare sulla stessa pagina
                 // dell'intestazione (mai un'intestazione "orfana" a fondo
                 // pagina con i suoi POI rimandati alla pagina successiva).
-                bool firstItemHasDesc = group.Items.Count > 0 && !string.IsNullOrWhiteSpace(group.Items[0].Description);
+                bool firstItemHasDesc = !string.IsNullOrWhiteSpace(items[0].Description);
                 double firstItemDescWidth = tableWidth - iconSize - 18;
                 int firstItemDescLines = firstItemHasDesc
-                    ? WrapText(gfx!, group.Items[0].Description, itemDescFont, firstItemDescWidth).Count : 0;
-                double neededFirstItemH = group.Items.Count > 0 ? itemRowH + firstItemDescLines * itemDescRowH : 0;
+                    ? WrapText(gfx!, items[0].Description, itemDescFont, firstItemDescWidth).Count : 0;
+                double neededFirstItemH = itemRowH + firstItemDescLines * itemDescRowH;
 
                 double neededGroupStartH = groupRowH + groupDescLines.Count * descRowH + neededFirstItemH;
                 if (y + neededGroupStartH > h - margin)
@@ -679,7 +775,7 @@ namespace StradarioApp.Services
                     y += descRowH;
                 }
 
-                foreach (var item in group.Items)
+                foreach (var item in items)
                 {
                     bool hasItemDesc = !string.IsNullOrWhiteSpace(item.Description);
                     double descWidth = tableWidth - iconSize - 18;
@@ -714,28 +810,25 @@ namespace StradarioApp.Services
         }
 
         // Formatta una singola data: solo il giorno se l'orario è mezzanotte
-        // esatta ("nessun orario", stessa convenzione di
-        // MainWindow.FormatItineraryDate), altrimenti data+ora.
-        private static string FormatSingleDate(DateTime d) =>
-            d.TimeOfDay == TimeSpan.Zero ? d.ToString("dd/MM/yyyy") : d.ToString("dd/MM/yyyy HH:mm");
+        // esatta ("nessun orario"), altrimenti data+ora — delega alla
+        // versione condivisa con l'albero (ItineraryOrdering).
+        private static string FormatSingleDate(DateTime d) => ItineraryOrdering.FormatSingleDate(d);
 
         // Formatta l'intervallo Da/A di un percorso per il titolo nell'elenco
-        // percorsi: "" se nessuna data, la sola data Da se manca A, altrimenti
-        // "Da - A".
-        private static string FormatRouteDateRange(DateTime? start, DateTime? end)
-        {
-            if (!start.HasValue) return "";
-            return end.HasValue
-                ? $"{FormatSingleDate(start.Value)} - {FormatSingleDate(end.Value)}"
-                : FormatSingleDate(start.Value);
-        }
+        // percorsi: "" se nessuna data, la sola data se solo una delle due è
+        // impostata (o sono uguali), altrimenti "Da - A" — delega alla stessa
+        // versione condivisa usata dal Piano di viaggio.
+        private static string FormatRouteDateRange(DateTime? start, DateTime? end) =>
+            ItineraryOrdering.FormatDateRange(start, end);
 
         // Disegna l'elenco dei percorsi (swatch colore + nome + descrizione,
         // lunghezza e numero di punti), in testa al documento, dopo l'elenco
         // POI e prima dell'indice. Crea automaticamente tutte le pagine
         // necessarie (nessun troncamento). Ritorna il numero di pagine create.
+        // `routeFilter` (se presente) esclude i percorsi già mostrati per
+        // intero nel "Piano di viaggio".
         private int DrawPercorsiListPages(PdfDocument pdfDoc, List<Percorso> percorsi,
-            double pageWidthMm, double pageHeightMm)
+            double pageWidthMm, double pageHeightMm, Func<Percorso, bool>? routeFilter = null)
         {
             const double margin       = 24;
             const double rowH         = 20;
@@ -797,6 +890,8 @@ namespace StradarioApp.Services
 
             foreach (var r in percorsi)
             {
+                if (routeFilter != null && !routeFilter(r)) continue;
+
                 bool hasDesc = !string.IsNullOrWhiteSpace(r.Description);
                 double descWidth = tableWidth - swatchSz - 18;
                 var descLines = hasDesc ? WrapText(gfx!, r.Description, descFont, descWidth) : new List<string>();

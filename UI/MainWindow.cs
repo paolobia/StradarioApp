@@ -1907,19 +1907,6 @@ namespace StradarioApp.UI
             return border;
         }
 
-        // Foglia di un POI: cliccando si centra la mappa sulle sue coordinate;
-        // icone di modifica ed eliminazione
-        // Mostra solo la data se l'orario è mezzanotte esatta (nessun orario
-        // impostato dall'utente), altrimenti data+ora — usato per il
-        // prefisso data nelle righe POI/percorso dell'albero.
-        private static string FormatItineraryDate(DateTime? date)
-        {
-            if (!date.HasValue) return "";
-            return date.Value.TimeOfDay == TimeSpan.Zero
-                ? date.Value.ToString("dd/MM/yyyy")
-                : date.Value.ToString("dd/MM/yyyy HH:mm");
-        }
-
         private Control BuildPoiItemLeaf(PoiGroup group, PoiItem item)
         {
             bool isMultiSelected = _multiSelectedPoiKeys.Contains((group.Id, item.Id));
@@ -1946,10 +1933,11 @@ namespace StradarioApp.UI
             // illeggibile (solo la data troncata, etichetta invisibile: bug
             // reale trovato durante un test). Su riga propria la data non
             // compete più in larghezza con l'etichetta.
-            if (item.DateStart.HasValue)
+            string poiDateRange = ItineraryOrdering.FormatDateRange(item.DateStart, item.DateEnd);
+            if (poiDateRange.Length > 0)
                 info.Children.Add(new TextBlock
                 {
-                    Text            = FormatItineraryDate(item.DateStart),
+                    Text            = poiDateRange,
                     FontSize        = 10,
                     FontWeight      = FontWeight.Bold,
                     Foreground      = Brushes.DarkSlateBlue,
@@ -2248,11 +2236,11 @@ namespace StradarioApp.UI
             // 7 icone azione), etichetta illeggibile/invisibile anche con
             // TextTrimming (bug reale trovato in un test: "Giro Centro"
             // spariva del tutto, restava solo la data troncata).
-            DateTime? routeDate = route.StartDateTime ?? route.EndDateTime;
-            if (routeDate.HasValue)
+            string routeDateRange = ItineraryOrdering.FormatDateRange(route.StartDateTime, route.EndDateTime);
+            if (routeDateRange.Length > 0)
                 info.Children.Add(new TextBlock
                 {
-                    Text         = FormatItineraryDate(routeDate),
+                    Text         = routeDateRange,
                     FontSize     = 10,
                     FontWeight   = FontWeight.Bold,
                     Foreground   = Brushes.DarkSlateBlue,
