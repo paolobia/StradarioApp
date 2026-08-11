@@ -1868,7 +1868,7 @@ namespace StradarioApp.UI
                 actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Pencil, Strings.Get("MainWindow_ModificaGruppoTooltip"), Brushes.SteelBlue,
                     async () => await OnEditPoiGroup(group), enabled: visible));
                 actions.Children.Add(DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("MainWindow_EliminaGruppoTooltip"), Brushes.Crimson,
-                    () => OnDeletePoiGroup(group), enabled: visible));
+                    async () => await OnDeletePoiGroup(group), enabled: visible));
                 actions.Children.Add(DialogUi.MakeTreeIconButton(visible ? BootstrapIcons.Eye : BootstrapIcons.EyeSlash,
                     visible ? Strings.Get("MainWindow_NascondiGruppoTooltip") : Strings.Get("MainWindow_MostraGruppoTooltip"),
                     visible ? Brushes.SteelBlue : Brushes.Gray, () =>
@@ -1992,7 +1992,7 @@ namespace StradarioApp.UI
             }
 
             var delBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("MainWindow_EliminaPoiTooltip"), Brushes.Crimson,
-                () => OnDeletePoiItem(group, item));
+                async () => await OnDeletePoiItem(group, item));
             Grid.SetColumn(delBtn, 4);
             row.Children.Add(delBtn);
 
@@ -2300,7 +2300,7 @@ namespace StradarioApp.UI
                 row.Children.Add(editBtn);
 
                 var delBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("MainWindow_EliminaPercorsoTooltip"), Brushes.Crimson,
-                    () => OnDeletePercorso(route), enabled: visible);
+                    async () => await OnDeletePercorso(route), enabled: visible);
                 Grid.SetColumn(delBtn, 8);
                 row.Children.Add(delBtn);
 
@@ -2524,7 +2524,7 @@ namespace StradarioApp.UI
 
             // Pulsante elimina
             var delBtn = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("MainWindow_EliminaPaginaTooltip"), Brushes.Crimson,
-                () => DeletePage(page.Id));
+                async () => await DeletePageAsync(page.Id));
             Grid.SetColumn(delBtn, 2);
             row.Children.Add(delBtn);
 
@@ -4941,11 +4941,15 @@ namespace StradarioApp.UI
             _mapCanvas?.InvalidateVisual();
         }
 
-        private void DeletePage(int pageId)
+        private async Task DeletePageAsync(int pageId)
         {
             int idx = _project.Pages.FindIndex(p => p.Id == pageId);
             if (idx < 0) return;
             var page = _project.Pages[idx];
+
+            bool confirmed = await AskYesNo(Strings.Get("MainWindow_EliminaPaginaTitolo"),
+                string.Format(Strings.Get("MainWindow_EliminarePagina"), page.Label));
+            if (!confirmed) return;
 
             _project.Pages.RemoveAt(idx);
             if (_selectedPageId == pageId) _selectedPageId = null;
@@ -5732,8 +5736,12 @@ namespace StradarioApp.UI
             _mapCanvas?.InvalidateVisual();
         }
 
-        private void OnDeletePoiGroup(PoiGroup group)
+        private async Task OnDeletePoiGroup(PoiGroup group)
         {
+            bool confirmed = await AskYesNo(Strings.Get("MainWindow_EliminaGruppoTitolo"),
+                string.Format(Strings.Get("MainWindow_EliminareGruppo"), group.Name, group.Items.Count));
+            if (!confirmed) return;
+
             int idx = _project.PoiGroups.IndexOf(group);
             _project.PoiGroups.Remove(group);
             _navCollapsedGroupIds.Remove(group.Id);
@@ -6164,8 +6172,12 @@ namespace StradarioApp.UI
             _mapCanvas?.InvalidateVisual();
         }
 
-        private void OnDeletePoiItem(PoiGroup group, PoiItem item)
+        private async Task OnDeletePoiItem(PoiGroup group, PoiItem item)
         {
+            bool confirmed = await AskYesNo(Strings.Get("MainWindow_EliminaPoiTitolo"),
+                string.Format(Strings.Get("MainWindow_EliminarePoi"), item.Label));
+            if (!confirmed) return;
+
             int idx = group.Items.IndexOf(item);
             group.Items.Remove(item);
             _multiSelectedPoiKeys.Remove((group.Id, item.Id));
@@ -6373,8 +6385,12 @@ namespace StradarioApp.UI
             ShowStatusMessage(string.Format(Strings.Get("MainWindow_PoiPercorsoConservato"), label, group.Name));
         }
 
-        private void OnDeletePercorso(Percorso route)
+        private async Task OnDeletePercorso(Percorso route)
         {
+            bool confirmed = await AskYesNo(Strings.Get("MainWindow_EliminaPercorsoTitolo"),
+                string.Format(Strings.Get("MainWindow_EliminarePercorso"), route.Label));
+            if (!confirmed) return;
+
             int idx = _project.Percorsi.IndexOf(route);
             _project.Percorsi.Remove(route);
             _hiddenPercorsoIds.Remove(route.Id);

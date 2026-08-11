@@ -391,6 +391,15 @@ namespace StradarioApp.UI
 
             var btnDel = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("RouteEditWindow_EliminaPunto"), Brushes.Crimson, async () =>
             {
+                string pointName = p.IsPoi && !string.IsNullOrWhiteSpace(p.PoiLabel)
+                    ? p.PoiLabel
+                    : (index + 1).ToString();
+                bool confirmedDelete = await DialogUi.AskYesNo(this,
+                    Strings.Get("RouteEditWindow_EliminaPuntoTitolo"),
+                    string.Format(Strings.Get("RouteEditWindow_EliminarePunto"), pointName),
+                    Strings.Get("MainWindow_Si"), Strings.Get("MainWindow_Annulla"));
+                if (!confirmedDelete) return;
+
                 // Un punto marcato come POI (v. BuildPointPoiPanel) porta
                 // etichetta/descrizione/icona proprie: eliminarlo dal
                 // percorso senza avvisare le perderebbe silenziosamente.
