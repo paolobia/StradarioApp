@@ -500,6 +500,7 @@ namespace StradarioApp.Services
             var titleFont     = new XFont("Arial", 16, XFontStyle.Bold);
             var descFont      = new XFont("Arial", 6.5, XFontStyle.Regular);
             var dateFont      = descFont;
+            var dateFontSunday = new XFont("Arial", 6.5, XFontStyle.Bold);
             var labelFont     = descFont;
             var nestedFont    = new XFont("Arial", 6.5, XFontStyle.Regular);
             var nestedDescFont = new XFont("Arial", 6, XFontStyle.Italic);
@@ -555,8 +556,9 @@ namespace StradarioApp.Services
                 if (y + neededH > h - margin)
                     NewPage();
 
-                string dateText = entry.Date.HasValue ? ItineraryOrdering.FormatSingleDate(entry.Date.Value) : "—";
-                gfx!.DrawString(dateText, dateFont, XBrushes.Black,
+                string dateText = entry.Date.HasValue ? ItineraryOrdering.FormatSingleDate(entry.Date.Value, includeDayAbbrev: true, hideBoundaryTimes: true) : "—";
+                bool isSunday = entry.Date.HasValue && entry.Date.Value.DayOfWeek == DayOfWeek.Sunday;
+                gfx!.DrawString(dateText, isSunday ? dateFontSunday : dateFont, XBrushes.Black,
                     new XRect(margin, y, dateColWidth, rowH), XStringFormats.CenterLeft);
 
                 double iconX = margin + dateColWidth;
@@ -779,7 +781,7 @@ namespace StradarioApp.Services
         // impostata (o sono uguali), altrimenti "Da - A" — delega alla stessa
         // versione condivisa usata dal Piano di viaggio.
         private static string FormatRouteDateRange(DateTime? start, DateTime? end) =>
-            ItineraryOrdering.FormatDateRange(start, end);
+            ItineraryOrdering.FormatDateRange(start, end, includeDayAbbrev: true, hideBoundaryTimes: true);
 
         // Disegna l'elenco dei percorsi (swatch colore + nome + descrizione,
         // lunghezza e numero di punti), in testa al documento, dopo l'elenco
