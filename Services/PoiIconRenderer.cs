@@ -17,6 +17,7 @@
 // =============================================================================
 
 using System;
+using System.Collections.Generic;
 using SkiaSharp;
 using StradarioApp.Models;
 
@@ -99,20 +100,231 @@ namespace StradarioApp.Services
 
         // Icona + etichetta con ombra, usata sia sulla mappa interattiva che
         // sui bitmap delle pagine mappa del PDF.
+        // `occupiedLabelRects`/`useForcedPosition`+`forcedPosition` abilitano
+        // il decluttering automatico usato solo in stampa (PdfGenerator): se
+        // `useForcedPosition` è true, la posizione (o l'assenza di etichetta,
+        // se null) è già stata decisa altrove (usato per i POI di gruppo, la
+        // cui etichetta va sempre piazzata PRIMA di quelle dei percorsi —
+        // vedi PdfGenerator.RenderMapPageAsync); altrimenti, se
+        // `occupiedLabelRects` non è null, la posizione viene scelta ora fra
+        // più candidate (vedi TryPlaceLabel) rispetto a quelle già occupate
+        // nella lista condivisa. In tutti i casi l'icona resta sempre
+        // disegnata: solo l'etichetta può essere omessa (mai su richiesta
+        // esplicita: vedi `alwaysShow`).
+        // `alwaysShow`: usato dalla mappa INTERATTIVA (MapRenderer.DrawPois,
+        // insieme a `occupiedLabelRects` condiviso fra tutti i POI dello
+        // stesso frame) — sceglie comunque la migliore fra le 4 posizioni
+        // candidate (vedi ChooseLabelPosition) ma non nasconde mai
+        // l'etichetta anche se nessuna è libera: richiesta esplicita
+        // dell'utente ("la regola del destra/sinistra... facendole tutte
+        // comunque le etichette") dopo aver visto il decluttering funzionare
+        // bene in stampa — sulla mappa interattiva, dove si può comunque
+        // sempre zoomare per separare i marker, nascondere un'etichetta
+        // sarebbe più fastidioso che utile.
         public static void DrawWithLabel(SKCanvas canvas, PoiIconType type, SKColor color,
-            string label, float x, float y, float size)
+            string label, float x, float y, float size,
+            List<SKRect>? occupiedLabelRects = null,
+            bool useForcedPosition = false, (float tx, float ty, float textSize)? forcedPosition = null,
+            IReadOnlyList<(float x1, float y1, float x2, float y2)>? avoidLines = null,
+            bool alwaysShow = false)
         {
             Draw(canvas, type, color, x, y, size);
             if (string.IsNullOrWhiteSpace(label)) return;
 
-            float textSize = Math.Max(9f, size * 0.5f);
-            using var shadow = new SKPaint { Color = new SKColor(255, 255, 255, 210), IsAntialias = true, TextSize = textSize, FakeBoldText = true };
-            using var text   = new SKPaint { Color = SKColors.Black,                  IsAntialias = true, TextSize = textSize, FakeBoldText = true };
+            (float tx, float ty, float textSize)? pos = useForcedPosition ? forcedPosition
+                : occupiedLabelRects != null && alwaysShow ? ChooseLabelPosition(label, x, y, size, occupiedLabelRects)
+                : occupiedLabelRects != null ? TryPlaceLabel(label, x, y, size, occupiedLabelRects, avoidLines)
+                : (x + size * 0.42f, y - size * 0.75f, Math.Max(9f, size * 0.5f));
+            if (pos is not { } p) return;
 
-            float tx = x + size * 0.42f;
-            float ty = y - size * 0.75f;
-            canvas.DrawText(label, tx + 1, ty + 1, shadow);
-            canvas.DrawText(label, tx,     ty,     text);
+            DrawHaloText(canvas, label, p.tx, p.ty, p.textSize);
+        }
+
+        // Disegna testo con un vero contorno bianco tutt'intorno (non una
+        // singola ombra sfalsata di 1px, come in una versione precedente):
+        // segnalato dall'utente come illeggibile sopra una mappa OSM densa,
+        // dove il lato del glifo OPPOSTO alla direzione dell'ombra non aveva
+        // alcun alone e si confondeva con lo sfondo. Un vero stroke bianco
+        // (Style=Stroke, dietro al riempimento nero) resta leggibile in
+        // qualunque direzione. Condiviso da PoiIconRenderer (marker) e
+        // PercorsoRenderer (etichetta del percorso).
+        public static void DrawHaloText(SKCanvas canvas, string text, float x, float y, float textSize)
+        {
+            using var outline = new SKPaint
+            {
+                Color = SKColors.White, IsAntialias = true, TextSize = textSize, FakeBoldText = true,
+                Style = SKPaintStyle.Stroke, StrokeWidth = textSize * 0.30f,
+                StrokeJoin = SKStrokeJoin.Round, StrokeCap = SKStrokeCap.Round
+            };
+            using var fill = new SKPaint
+            {
+                Color = SKColors.Black, IsAntialias = true, TextSize = textSize, FakeBoldText = true,
+                Style = SKPaintStyle.Fill
+            };
+            canvas.DrawText(text, x, y, outline);
+            canvas.DrawText(text, x, y, fill);
+        }
+
+        private static bool RectsOverlap(SKRect a, SKRect b) =>
+            a.Left < b.Right && a.Right > b.Left && a.Top < b.Bottom && a.Bottom > b.Top;
+
+        // Vero se il segmento (x1,y1)-(x2,y2) attraversa (anche solo di
+        // striscio) il rettangolo r — usato per preferire, fra le posizioni
+        // candidate di un'etichetta, quelle che non attraversano la linea di
+        // un percorso ("se possibile", richiesta esplicita dell'utente).
+        private static bool SegmentIntersectsRect(float x1, float y1, float x2, float y2, SKRect r)
+        {
+            if (Math.Max(x1, x2) < r.Left || Math.Min(x1, x2) > r.Right ||
+                Math.Max(y1, y2) < r.Top  || Math.Min(y1, y2) > r.Bottom)
+                return false;
+            if (r.Contains(x1, y1) || r.Contains(x2, y2)) return true;
+            return SegmentsIntersect(x1, y1, x2, y2, r.Left,  r.Top,    r.Right, r.Top)
+                || SegmentsIntersect(x1, y1, x2, y2, r.Right, r.Top,    r.Right, r.Bottom)
+                || SegmentsIntersect(x1, y1, x2, y2, r.Right, r.Bottom, r.Left,  r.Bottom)
+                || SegmentsIntersect(x1, y1, x2, y2, r.Left,  r.Bottom, r.Left,  r.Top);
+        }
+
+        private static bool SegmentsIntersect(
+            float ax1, float ay1, float ax2, float ay2,
+            float bx1, float by1, float bx2, float by2)
+        {
+            float d1 = Cross(bx2 - bx1, by2 - by1, ax1 - bx1, ay1 - by1);
+            float d2 = Cross(bx2 - bx1, by2 - by1, ax2 - bx1, ay2 - by1);
+            float d3 = Cross(ax2 - ax1, ay2 - ay1, bx1 - ax1, by1 - ay1);
+            float d4 = Cross(ax2 - ax1, ay2 - ay1, bx2 - ax1, by2 - ay1);
+            return (d1 > 0) != (d2 > 0) && (d3 > 0) != (d4 > 0);
+        }
+
+        private static float Cross(float ax, float ay, float bx, float by) => ax * by - ay * bx;
+
+        // Prova PIÙ posizioni candidate per l'etichetta di un marker (destra,
+        // sinistra, sopra, sotto — in quest'ordine di preferenza estetica,
+        // "destra" è la posizione storica/di default) rispetto a quelle già
+        // occupate in `occupied`: la prima che non si sovrappone viene
+        // riservata (aggiunta alla lista) e la sua posizione ritornata;
+        // "meglio un'etichetta spostata che nessuna", richiesta esplicita
+        // dell'utente dopo aver visto troppe etichette sparire del tutto su
+        // un progetto molto denso. Ritorna null se nessuna delle 4 posizioni
+        // è libera. I chiamanti con priorità più alta vanno invocati per
+        // primi (vedi PdfGenerator.RenderMapPageAsync).
+        // `avoidLines`: segmenti (in pixel) delle linee dei percorsi già
+        // disegnate — fra le posizioni libere da altre etichette, si
+        // preferisce quella che NON attraversa una linea, se ce n'è una;
+        // altrimenti si accetta comunque la prima libera da altre etichette
+        // (un'etichetta sopra una linea resta più leggibile — ha comunque il
+        // proprio alone bianco — di nessuna etichetta affatto).
+        public static (float tx, float ty, float textSize)? TryPlaceLabel(string label, float x, float y, float size,
+            List<SKRect> occupied, IReadOnlyList<(float x1, float y1, float x2, float y2)>? avoidLines = null)
+        {
+            if (string.IsNullOrWhiteSpace(label)) return null;
+            float textSize = Math.Max(9f, size * 0.5f);
+            using var measure = new SKPaint { TextSize = textSize, FakeBoldText = true };
+            float textWidth = measure.MeasureText(label);
+            var candidates = LabelCandidates(x, y, size, textWidth);
+
+            (float tx, float ty, SKRect rect)? firstFreeOfLabels = null;
+            foreach (var (tx, ty) in candidates)
+            {
+                var rect = new SKRect(tx, ty - textSize, tx + textWidth, ty + textSize * 0.3f);
+                bool overlapsLabel = false;
+                foreach (var r in occupied)
+                    if (RectsOverlap(r, rect)) { overlapsLabel = true; break; }
+                if (overlapsLabel) continue;
+
+                firstFreeOfLabels ??= (tx, ty, rect);
+
+                bool overlapsLine = false;
+                if (avoidLines != null)
+                    foreach (var l in avoidLines)
+                        if (SegmentIntersectsRect(l.x1, l.y1, l.x2, l.y2, rect)) { overlapsLine = true; break; }
+
+                if (!overlapsLine)
+                {
+                    occupied.Add(rect);
+                    return (tx, ty, textSize);
+                }
+            }
+            if (firstFreeOfLabels is { } f)
+            {
+                occupied.Add(f.rect);
+                return (f.tx, f.ty, textSize);
+            }
+            return null;
+        }
+
+        private static (float tx, float ty)[] LabelCandidates(float x, float y, float size, float textWidth) => new[]
+        {
+            (x + size * 0.42f,             y - size * 0.75f), // destra, sopra (default storico)
+            (x - size * 0.42f - textWidth, y - size * 0.75f), // sinistra, sopra
+            (x - textWidth / 2f,           y - size * 0.9f),  // sopra, centrata
+            (x - textWidth / 2f,           y + size * 0.55f), // sotto, centrata
+        };
+
+        // Come TryPlaceLabel, ma non nasconde MAI l'etichetta: se nessuna
+        // delle 4 posizioni candidate è del tutto libera dalle altre già
+        // occupate, sceglie quella con la sovrapposizione MINORE (area totale
+        // di sovrapposizione più piccola) — non semplicemente la prima
+        // (destra) a prescindere, come una versione precedente. BUG REALE
+        // trovato dall'utente rivedendo la mappa interattiva ("due etichette
+        // a destra che si sovrappongono per metà altezza... una poteva
+        // andare a sinistra e si leggeva tutto"): con 4 candidate tutte
+        // parzialmente occupate, il vecchio codice tornava comunque sempre a
+        // destra anche quando sinistra/sopra/sotto si sovrapponevano molto
+        // meno (o niente affatto con lo stesso vicino) — verificato passo
+        // passo con un cluster sintetico densissimo, dove "destra" si
+        // sovrapponeva a un vicino mentre "sinistra" si sovrapponeva SOLO a
+        // un altro vicino diverso, ma con area minore.
+        // Usata dalla mappa interattiva (MapRenderer.DrawPois): "la regola
+        // del destra/sinistra... facendole tutte comunque le etichette",
+        // richiesta esplicita dell'utente — a differenza della stampa, qui
+        // non ha senso far sparire un'etichetta (si può sempre zoomare per
+        // separare i marker), basta sceglierle la posizione meno peggio.
+        public static (float tx, float ty, float textSize) ChooseLabelPosition(string label, float x, float y, float size,
+            List<SKRect> occupied)
+        {
+            float textSize = Math.Max(9f, size * 0.5f);
+            using var measure = new SKPaint { TextSize = textSize, FakeBoldText = true };
+            float textWidth = measure.MeasureText(label);
+            var candidates = LabelCandidates(x, y, size, textWidth);
+
+            (float tx, float ty, SKRect rect)? bestOverlapping = null;
+            float bestOverlapArea = float.MaxValue;
+
+            foreach (var (tx, ty) in candidates)
+            {
+                var rect = new SKRect(tx, ty - textSize, tx + textWidth, ty + textSize * 0.3f);
+                float overlapArea = 0f;
+                foreach (var r in occupied)
+                    overlapArea += OverlapArea(r, rect);
+
+                if (overlapArea == 0f)
+                {
+                    occupied.Add(rect);
+                    return (tx, ty, textSize);
+                }
+                if (overlapArea < bestOverlapArea)
+                {
+                    bestOverlapArea = overlapArea;
+                    bestOverlapping = (tx, ty, rect);
+                }
+            }
+
+            var best = bestOverlapping!.Value;
+            occupied.Add(best.rect);
+            return (best.tx, best.ty, textSize);
+        }
+
+        // Area (px²) di sovrapposizione fra due rettangoli — 0 se non si
+        // toccano. Usata da ChooseLabelPosition per scegliere la posizione
+        // "meno peggio" quando nessuna candidata è del tutto libera.
+        private static float OverlapArea(SKRect a, SKRect b)
+        {
+            float left   = Math.Max(a.Left, b.Left);
+            float right  = Math.Min(a.Right, b.Right);
+            float top    = Math.Max(a.Top, b.Top);
+            float bottom = Math.Min(a.Bottom, b.Bottom);
+            if (right <= left || bottom <= top) return 0f;
+            return (right - left) * (bottom - top);
         }
 
         // Renderizza la sola icona (senza etichetta) su un bitmap trasparente

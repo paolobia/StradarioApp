@@ -112,8 +112,24 @@ namespace StradarioApp.Services
             // Non sovrascrive: il primo trovato vince (priorità cartelle nell'ordine)
             _map.TryAdd(key, path);
 
-            // Registra anche senza varianti per fallback
-            _map.TryAdd($"{family}|false|false", path);
+            // Registra anche come variante "generica" della famiglia (usata
+            // dal fallback finale di ResolveTypeface quando la famiglia
+            // richiesta, es. "Arial", non è installata affatto) — ma SOLO se
+            // questo file è realmente la variante regular: BUG REALE trovato
+            // dall'utente — la riga registrava sempre "{family}|false|false"
+            // incondizionatamente, anche quando bold/italic erano true. Il
+            // dizionario è case-insensitive (vedi sopra), quindi se il file
+            // "-Bold" veniva scansionato prima di quello normale (ordine di
+            // Directory.EnumerateFiles, non garantito), la voce "generica"
+            // della famiglia restava per sempre associata al file Bold — e
+            // la registrazione successiva del file Regular sulla stessa
+            // chiave falliva silenziosamente (TryAdd non sovrascrive).
+            // Risultato: qualunque testo "Regular" richiesto per quella
+            // famiglia veniva silenziosamente reso in Bold, indistinguibile
+            // da un testo davvero in grassetto (es. "Dom" e "Sab" nel piano
+            // di viaggio apparivano identici).
+            if (!bold && !italic)
+                _map.TryAdd($"{family}|false|false", path);
         }
 
         // Interfaccia IFontResolver: restituisce i byte del font richiesto
@@ -171,10 +187,33 @@ namespace StradarioApp.Services
                     return new FontResolverInfo(k);
 
             // Fallback a DejaVu Sans o Liberation Sans, molto comuni su Linux
+            // (es. "Arial" richiesto ma non installato — il caso comune su
+            // Linux senza msttcorefonts). BUG REALE trovato dall'utente: la
+            // versione precedente prendeva la PRIMA chiave contenente il nome
+            // del fallback, ignorando isBold/isItalic — un testo "Bold"
+            // finiva quasi sempre nella variante Regular (quella tipicamente
+            // trovata per prima scansionando le cartelle), rendendolo
+            // indistinguibile da uno normale (es. la sigla "Dom" del piano di
+            // viaggio, che doveva risultare in grassetto, appariva identica
+            // a "Sab"). Ora cerca prima la variante bold/italic esatta fra le
+            // chiavi del fallback, e solo se assente ripiega su una qualunque.
             foreach (var fallback in new[] { "dejavusans", "liberationsans", "freesans", "noto" })
+            {
+                string? exactMatch = null;
+                string? anyMatch   = null;
                 foreach (var k in _map.Keys)
-                    if (k.Contains(fallback))
-                        return new FontResolverInfo(k);
+                {
+                    if (!k.Contains(fallback)) continue;
+                    anyMatch ??= k;
+                    if (k.EndsWith($"|{isBold}|{isItalic}", StringComparison.OrdinalIgnoreCase))
+                    {
+                        exactMatch = k;
+                        break;
+                    }
+                }
+                if (exactMatch != null) return new FontResolverInfo(exactMatch);
+                if (anyMatch   != null) return new FontResolverInfo(anyMatch);
+            }
 
             return null; // PdfSharpCore userà il suo fallback interno
         }

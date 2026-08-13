@@ -5600,96 +5600,18 @@ namespace StradarioApp.UI
                 return;
             }
 
+            // Nessuna domanda "Salva/Chiudi" dopo l'anteprima — richiesta
+            // esplicita dell'utente: il PDF si apre e basta nel visualizzatore
+            // di sistema, se lo si vuole conservare lo si salva da lì (es.
+            // "Salva con nome" del lettore PDF usato). Il file temporaneo non
+            // viene quindi più cancellato subito: il visualizzatore, avviato
+            // come processo esterno asincrono (UseShellExecute), potrebbe
+            // ancora averlo aperto.
             try
             {
                 Process.Start(new ProcessStartInfo(tempPath) { UseShellExecute = true });
             }
-            catch { /* nessun visualizzatore PDF disponibile: l'anteprima resta comunque salvabile */ }
-
-            await ShowPdfPreviewDialog(tempPath, coverTitle);
-        }
-
-        // Dialog di anteprima mostrato dopo la generazione: il PDF è già
-        // aperto nel visualizzatore di sistema; l'utente sceglie se salvarlo
-        // in una posizione definitiva o chiudere (scartando il file temporaneo).
-        // suggestedFileName: lo stesso titolo mostrato sulla copertina del PDF
-        // (coverTitle in OnGeneratePdf) — non necessariamente uguale a
-        // _project.ProjectName, che è solo il nome interno del progetto e può
-        // differire dal nome del file .stradario/dal titolo di copertina.
-        private async Task ShowPdfPreviewDialog(string tempPath, string suggestedFileName)
-        {
-            bool save = false;
-
-            var dlg = new Window
-            {
-                Title  = Strings.Get("MainWindow_AnteprimaPdfTitolo"),
-                Width  = 440,
-                Height = 180,
-                WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                CanResize = false,
-                Content = new StackPanel
-                {
-                    Margin  = new Thickness(18),
-                    Spacing = 16,
-                    Children =
-                    {
-                        new TextBlock
-                        {
-                            Text = Strings.Get("MainWindow_PdfGeneratoMessaggio"),
-                            TextWrapping = TextWrapping.Wrap
-                        },
-                        new StackPanel
-                        {
-                            Orientation = Avalonia.Layout.Orientation.Horizontal,
-                            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
-                            Spacing = 10,
-                            Children =
-                            {
-                                DialogUi.MakeDialogButton(Strings.Get("MainWindow_SalvaEmoji"), primary: true),
-                                DialogUi.MakeDialogButton(Strings.Get("MainWindow_ChiudiEmoji"))
-                            }
-                        }
-                    }
-                }
-            };
-
-            var btns = ((StackPanel)((StackPanel)dlg.Content!).Children[1]);
-            ((Button)btns.Children[0]).Click += (_, _) => { save = true;  dlg.Close(); };
-            ((Button)btns.Children[1]).Click += (_, _) => { save = false; dlg.Close(); };
-
-            await dlg.ShowDialog(this);
-
-            if (save)
-            {
-                var file = await StorageProvider.SaveFilePickerAsync(new Avalonia.Platform.Storage.FilePickerSaveOptions
-                {
-                    Title             = Strings.Get("MainWindow_SalvaPdfTitolo"),
-                    DefaultExtension  = "pdf",
-                    SuggestedFileName = suggestedFileName,
-                    SuggestedStartLocation = await GetSuggestedStartFolderAsync(),
-                    FileTypeChoices   = new[]
-                    {
-                        new Avalonia.Platform.Storage.FilePickerFileType(Strings.Get("MainWindow_FiltroPdf"))
-                            { Patterns = new[] { "*.pdf" } }
-                    }
-                });
-
-                if (file != null)
-                {
-                    try
-                    {
-                        File.Copy(tempPath, file.Path.LocalPath, overwrite: true);
-                        RememberLastUsedFolder(file.Path.LocalPath);
-                        ShowStatusMessage(string.Format(Strings.Get("MainWindow_PdfSalvato"), file.Path.LocalPath));
-                    }
-                    catch (Exception ex)
-                    {
-                        await ShowError(string.Format(Strings.Get("MainWindow_ErroreSalvataggio"), ex.Message));
-                    }
-                }
-            }
-
-            try { File.Delete(tempPath); } catch { /* file temporaneo, ignora eventuali errori */ }
+            catch { /* nessun visualizzatore PDF disponibile */ }
         }
 
         // ---------------------------------------------------------------

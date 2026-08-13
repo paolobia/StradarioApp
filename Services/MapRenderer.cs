@@ -202,11 +202,24 @@ namespace StradarioApp.Services
 
             DrawPages(canvas, canvasWidth, canvasHeight, centerLon, centerLat, zoom, pages, selectedPageId);
 
+            // Condivisa fra TUTTI i percorsi e TUTTI i POI di questo stesso
+            // frame (ricreata a ogni RenderMap, non persistita fra un frame e
+            // l'altro): sceglie per ogni etichetta la posizione (destra/
+            // sinistra/sopra/sotto) che si sovrappone meno alle altre già
+            // disegnate — incluse quelle di percorsi/POI diversi — ma non ne
+            // nasconde mai nessuna. BUG REALE segnalato dall'utente: due
+            // percorsi diversi con un estremo nello stesso punto (es. un
+            // cambio treno) mostravano le rispettive etichette (di percorso
+            // e dei punti-POI) sovrapposte fra loro, perché solo i marker
+            // POI "singoli" avevano già questo trattamento — ora è unico e
+            // condiviso fra DrawRoutes e DrawPois.
+            var occupiedLabelRects = new List<SKRect>();
+
             if (routes != null && routes.Count > 0)
-                DrawRoutes(canvas, canvasWidth, canvasHeight, centerLon, centerLat, zoom, routes, poiGroups, highlightedRouteId);
+                DrawRoutes(canvas, canvasWidth, canvasHeight, centerLon, centerLat, zoom, routes, poiGroups, highlightedRouteId, occupiedLabelRects);
 
             if (poiGroups != null && poiGroups.Count > 0)
-                DrawPois(canvas, canvasWidth, canvasHeight, centerLon, centerLat, zoom, poiGroups, highlightedPoi);
+                DrawPois(canvas, canvasWidth, canvasHeight, centerLon, centerLat, zoom, poiGroups, highlightedPoi, occupiedLabelRects);
 
             if (previewRoute != null)
             {
@@ -225,33 +238,41 @@ namespace StradarioApp.Services
             double zoom,
             List<Percorso> routes,
             List<PoiGroup>? poiGroups,
-            int? highlightedRouteId = null)
+            int? highlightedRouteId,
+            List<SKRect> occupiedLabelRects)
         {
             (double x, double y) Project(double lon, double lat) =>
                 GeoUtils.GeoToPixel(lon, lat, centerLon, centerLat, zoom, canvasWidth, canvasHeight);
-
-            // Punti da evitare per l'etichetta del percorso: tutti i POI
-            // visibili nella stessa vista (vedi PercorsoRenderer.Draw).
-            var avoid = poiGroups?.SelectMany(g => g.Items).Select(it => (it.Lon, it.Lat)).ToList();
 
             foreach (var route in routes)
             {
                 // Percorso appena cliccato nell'albero: spessore raddoppiato
                 // per un secondo, per individuarlo subito dopo il centraggio.
                 float strokeMultiplier = route.Id == highlightedRouteId ? 2f : 1f;
-                PercorsoRenderer.Draw(canvas, route, Project, avoidLabelNear: avoid,
-                    strokeWidthMultiplier: strokeMultiplier);
+                PercorsoRenderer.Draw(canvas, route, Project,
+                    strokeWidthMultiplier: strokeMultiplier,
+                    occupiedLabelRects: occupiedLabelRects);
             }
         }
 
-        // Disegna i marker di tutti i gruppi di POI sopra la mappa e le pagine
+        // Disegna i marker di tutti i gruppi di POI sopra la mappa e le pagine.
+        // occupiedLabelRects è condivisa con DrawRoutes per questo stesso
+        // frame (vedi RenderMap): sceglie fra destra/sinistra/sopra/sotto la
+        // posizione che si sovrappone meno alle etichette già disegnate
+        // (marker POI E percorsi), ma non ne nasconde mai nessuna (a
+        // differenza della stampa) — richiesta esplicita dell'utente dopo
+        // aver visto il decluttering funzionare bene in stampa, "già
+        // migliorerebbe" anche solo scegliendo meglio il lato, senza bisogno
+        // di nascondere nulla sulla mappa interattiva (dove si può comunque
+        // sempre zoomare per separare i marker).
         private void DrawPois(
             SKCanvas canvas,
             float canvasWidth, float canvasHeight,
             double centerLon, double centerLat,
             double zoom,
             List<PoiGroup> poiGroups,
-            (int GroupId, int ItemId)? highlightedPoi = null)
+            (int GroupId, int ItemId)? highlightedPoi,
+            List<SKRect> occupiedLabelRects)
         {
             const float markerSize = 22f;
 
@@ -273,7 +294,8 @@ namespace StradarioApp.Services
                     float size = isHighlighted ? markerSize * 2f : markerSize;
 
                     PoiIconRenderer.DrawWithLabel(canvas, item.Icon ?? PoiIconType.Pin, color, item.Label,
-                        (float)x, (float)y, size);
+                        (float)x, (float)y, size,
+                        occupiedLabelRects: occupiedLabelRects, alwaysShow: true);
                 }
             }
         }

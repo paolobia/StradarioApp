@@ -1178,7 +1178,21 @@ namespace StradarioApp.Services
             var fillBrush   = new XSolidBrush(XColor.FromArgb(50, 30, 120, 220));
             var labelFont   = new XFont("Arial", 7, XFontStyle.Bold);
             var numFont     = new XFont("Arial", 6);
-            var shadowBrush = new XSolidBrush(XColor.FromArgb(180, 255, 255, 255));
+            var shadowBrush = new XSolidBrush(XColor.FromArgb(255, 255, 255, 255));
+
+            // XGraphics/PdfSharpCore non ha uno stroke di testo nativo (a
+            // differenza di SkiaSharp, vedi PoiIconRenderer.DrawHaloText):
+            // simula un vero alone bianco disegnando il testo 8 volte,
+            // spostato di ±1pt in ogni direzione, PRIMA del testo nero finale
+            // — non una singola ombra sfalsata come in una versione
+            // precedente (illeggibile sul lato del glifo opposto all'ombra,
+            // segnalato dall'utente su una mappa OSM densa).
+            void DrawHaloString(string s, XFont font, XRect rect, XStringFormat format)
+            {
+                foreach (var (dx, dy) in HaloOffsets)
+                    gfx.DrawString(s, font, shadowBrush, new XRect(rect.X + dx, rect.Y + dy, rect.Width, rect.Height), format);
+                gfx.DrawString(s, font, XBrushes.Black, rect, format);
+            }
 
             foreach (var page in pages)
             {
@@ -1196,7 +1210,7 @@ namespace StradarioApp.Services
                 gfx.DrawRectangle(fillBrush, x1, y1, rw, rh);
                 gfx.DrawRectangle(rectPen,   x1, y1, rw, rh);
 
-                // Label centrata con ombra — rimpicciolita/troncata per
+                // Label centrata con alone — rimpicciolita/troncata per
                 // entrare nel rettangolo pagina (spesso piccolo sulla mappa
                 // riassuntiva): a font fisso un'etichetta lunga usciva dal
                 // rettangolo senza alcun adattamento.
@@ -1204,8 +1218,7 @@ namespace StradarioApp.Services
                 {
                     var labelRect = new XRect(x1 + 1, y1 + 1, rw - 2, rh - 2);
                     var (pageLabelFont, pageLabelText) = FitTextSingleLine(gfx, page.Label, labelFont, rw - 2, 4.5);
-                    gfx.DrawString(pageLabelText, pageLabelFont, shadowBrush, labelRect, XStringFormats.Center);
-                    gfx.DrawString(pageLabelText, pageLabelFont, XBrushes.Black, labelRect, XStringFormats.Center);
+                    DrawHaloString(pageLabelText, pageLabelFont, labelRect, XStringFormats.Center);
                 }
 
                 // Numero di pagina in basso a destra (se il rettangolo è abbastanza grande)
@@ -1214,37 +1227,150 @@ namespace StradarioApp.Services
                         new XRect(x1 + 1, y2 - 10, rw - 2, 9), XStringFormats.BottomRight);
             }
 
-            // Percorsi: disegnati come polilinee vettoriali (stesso backend
-            // XGraphics dei rettangoli pagina, non SkiaSharp: la mappa
-            // riassuntiva è già un bitmap di sfondo, i rettangoli/percorsi
-            // sono overlay vettoriali sopra di esso).
+            // Percorsi/POI: disegnati in QUATTRO fasi separate e GLOBALI (su
+            // tutti i percorsi/POI insieme, non un percorso per volta): 1)
+            // tutte le linee, 2) decisioni di decluttering (nessun disegno),
+            // 3) tutte le icone, 4) tutte le etichette — stesso schema e
+            // stessa motivazione delle pagine mappa (SkiaSharp), vedi
+            // RenderMapPageAsync: prima le fasi erano interlacciate per
+            // percorso e la linea di un percorso disegnato DOPO finiva sopra
+            // l'etichetta di un percorso disegnato prima, illeggibile — bug
+            // reale segnalato dall'utente ("ho delle etichette SOTTO a delle
+            // linee").
             var routeLabelFont = new XFont("Arial", 6.5, XFontStyle.Bold);
+
+            // --- FASE 1: LINEE (tutti i percorsi) -----------------------------
+            var routePens = new Dictionary<Percorso, XPen>();
+            var routePtsPdf = new Dictionary<Percorso, List<(double px, double py)>>();
             foreach (var route in percorsi)
             {
                 if (route.Points.Count == 0) continue;
-
-                var color   = settings.PdfContrastMode == PdfContrastMode.BlackWhite
+                var color = settings.PdfContrastMode == PdfContrastMode.BlackWhite
                     ? SKColors.Black : PercorsoRenderer.ParseColor(route.ColorHex);
-                var pen     = new XPen(XColor.FromArgb(color.Alpha, color.Red, color.Green, color.Blue), 1.6);
-                var ptsPdf  = route.Points.Select(p => GeoToPdf(p.Lon, p.Lat)).ToList();
+                var pen = new XPen(XColor.FromArgb(color.Alpha, color.Red, color.Green, color.Blue), 1.6);
+                var ptsPdf = route.Points.Select(p => GeoToPdf(p.Lon, p.Lat)).ToList();
+                routePens[route] = pen;
+                routePtsPdf[route] = ptsPdf;
 
                 if (ptsPdf.Count >= 2)
-                {
                     for (int i = 1; i < ptsPdf.Count; i++)
                         gfx.DrawLine(pen, ptsPdf[i - 1].px, ptsPdf[i - 1].py, ptsPdf[i].px, ptsPdf[i].py);
-                }
+            }
 
-                if (!string.IsNullOrWhiteSpace(route.Label))
+            // Segmenti di tutte le linee appena disegnate — usati in fase 2
+            // per preferire posizioni-etichetta che non le attraversano ("se
+            // possibile", richiesta esplicita dell'utente).
+            var lineSegments = new List<(double x1, double y1, double x2, double y2)>();
+            foreach (var ptsPdf in routePtsPdf.Values)
+                for (int i = 1; i < ptsPdf.Count; i++)
+                    lineSegments.Add((ptsPdf[i - 1].px, ptsPdf[i - 1].py, ptsPdf[i].px, ptsPdf[i].py));
+
+            // --- FASE 2: DECISIONI ETICHETTE (nessun disegno) -----------------
+            // Decluttering automatico (stessa logica delle pagine mappa, vedi
+            // PoiIconRenderer.TryPlaceLabel, qui riscritta per XGraphics
+            // invece di SkiaSharp — la mappa riassuntiva condensa l'intero
+            // progetto in un'unica immagine piccola, dove le sovrapposizioni
+            // sono ancora più probabili che nelle singole pagine). Priorità:
+            // i POI di gruppo riservano il loro spazio PRIMA di processare
+            // percorsi/punti-POI inline, quindi vincono in caso di
+            // sovrapposizione.
+            var occupiedRects = new List<XRect>();
+
+            // Rettangolo di riserva dimensionato sulla larghezza REALE del
+            // testo (dopo FitTextSingleLine), non su una larghezza fissa di
+            // 80pt per ogni etichetta indipendentemente dalla sua lunghezza.
+            // BUG REALE trovato dall'utente su un progetto vero (Cina.stradario,
+            // 13 POI singoli + 117 POI inline su 37 percorsi, 0 pagine mappa —
+            // tutto deve stare sull'unica riassuntiva a scala nazionale): 80pt
+            // su una pagina che copre l'intera Cina equivalgono a diversi gradi
+            // di longitudine, quindi anche etichette cortissime ("K W") si
+            // "mangiavano" uno spazio enorme, esaurendo quasi subito i posti
+            // disponibili — quasi solo le (poche) etichette dei gruppi POI,
+            // valutate per prime, riuscivano a entrare, schiacciando quasi
+            // tutte le 117 dei percorsi anche quando geograficamente distanti.
+            //
+            // TryPlaceLabel prova PIÙ posizioni candidate attorno al punto
+            // (destra, sinistra, sopra, sotto — in quest'ordine di preferenza
+            // estetica) invece di arrendersi subito se la sola posizione a
+            // destra è occupata: "meglio un'etichetta spostata che nessuna",
+            // richiesta esplicita dell'utente dopo aver visto troppe etichette
+            // sparire su un progetto molto denso. Fra le posizioni libere da
+            // altre etichette, preferisce quella che non attraversa una linea
+            // di percorso, se ce n'è una. Ritorna null se nessuna delle 4
+            // posizioni è libera dalle altre etichette.
+            (XFont Font, string Text, XRect Rect)? TryPlaceLabel(double px, double py, string label)
+            {
+                if (string.IsNullOrWhiteSpace(label)) return null;
+                var (font, text) = FitTextSingleLine(gfx, label, routeLabelFont, 78, 5.5);
+                double textW = gfx.MeasureString(text, font).Width;
+                double cw = textW + 4, ch = 9;
+                var candidates = new[]
                 {
-                    var (rlFont, rlText) = FitTextSingleLine(gfx, route.Label, routeLabelFont, 78, 5.5);
-                    gfx.DrawString(rlText, rlFont, shadowBrush,
-                        new XRect(ptsPdf[0].px + 2, ptsPdf[0].py - 8, 80, 9), XStringFormats.TopLeft);
+                    new XRect(px + 3,           py - 8,      cw, ch), // destra
+                    new XRect(px - cw - 3,      py - 8,      cw, ch), // sinistra
+                    new XRect(px - cw / 2,      py - ch - 5, cw, ch), // sopra, centrata
+                    new XRect(px - cw / 2,      py + 5,      cw, ch), // sotto, centrata
+                };
+
+                (XFont, string, XRect)? firstFreeOfLabels = null;
+                foreach (var rect in candidates)
+                {
+                    bool overlapsLabel = false;
+                    foreach (var r in occupiedRects)
+                        if (r.IntersectsWith(rect)) { overlapsLabel = true; break; }
+                    if (overlapsLabel) continue;
+
+                    firstFreeOfLabels ??= (font, text, rect);
+
+                    bool overlapsLine = false;
+                    foreach (var l in lineSegments)
+                        if (SegmentIntersectsRect(l.x1, l.y1, l.x2, l.y2, rect)) { overlapsLine = true; break; }
+
+                    if (!overlapsLine)
+                    {
+                        occupiedRects.Add(rect);
+                        return (font, text, rect);
+                    }
+                }
+                if (firstFreeOfLabels is { } f)
+                {
+                    occupiedRects.Add(f.Item3);
+                    return f;
+                }
+                return null;
+            }
+
+            var groupLabelPlacement = new Dictionary<PoiItem, (XFont Font, string Text, XRect Rect)?>();
+            foreach (var pg in poiGroups)
+                foreach (var pi in pg.Items)
+                {
+                    var (ppx, ppy) = GeoToPdf(pi.Lon, pi.Lat);
+                    groupLabelPlacement[pi] = TryPlaceLabel(ppx, ppy, pi.Label);
                 }
 
-                // Punti marcati come POI: la pagina riassuntiva è puramente
-                // vettoriale (nessun PoiIconRenderer/bitmap qui), quindi un
-                // cerchietto pieno + etichetta breve, stesso stile minimale
-                // già usato per route.Label sopra.
+            var routeLabelPlacement  = new Dictionary<Percorso, (XFont Font, string Text, XRect Rect)?>();
+            var inlinePoiPlacement   = new Dictionary<GeoPoint, (XFont Font, string Text, XRect Rect)?>();
+            foreach (var route in percorsi)
+            {
+                if (!routePtsPdf.TryGetValue(route, out var ptsPdf)) continue;
+
+                bool hasInlinePoi = route.Points.Any(p => p.IsPoi);
+                if (!hasInlinePoi && !string.IsNullOrWhiteSpace(route.Label))
+                    routeLabelPlacement[route] = TryPlaceLabel(ptsPdf[0].px, ptsPdf[0].py, route.Label);
+
+                for (int i = 0; i < route.Points.Count; i++)
+                {
+                    if (!route.Points[i].IsPoi) continue;
+                    inlinePoiPlacement[route.Points[i]] = TryPlaceLabel(ptsPdf[i].px, ptsPdf[i].py, route.Points[i].PoiLabel);
+                }
+            }
+
+            // --- FASE 3: ICONE (tutti i percorsi, poi tutti i POI di gruppo) -
+            foreach (var route in percorsi)
+            {
+                if (!routePtsPdf.TryGetValue(route, out var ptsPdf)) continue;
+                var color = settings.PdfContrastMode == PdfContrastMode.BlackWhite
+                    ? SKColors.Black : PercorsoRenderer.ParseColor(route.ColorHex);
                 var poiBrush = new XSolidBrush(XColor.FromArgb(color.Alpha, color.Red, color.Green, color.Blue));
                 for (int i = 0; i < route.Points.Count; i++)
                 {
@@ -1252,12 +1378,6 @@ namespace StradarioApp.Services
                     var (px, py) = ptsPdf[i];
                     gfx.DrawEllipse(poiBrush, px - 2.2, py - 2.2, 4.4, 4.4);
                     gfx.DrawEllipse(XPens.White, px - 2.2, py - 2.2, 4.4, 4.4);
-                    if (!string.IsNullOrWhiteSpace(route.Points[i].PoiLabel))
-                    {
-                        var (plFont, plText) = FitTextSingleLine(gfx, route.Points[i].PoiLabel, routeLabelFont, 78, 5.5);
-                        gfx.DrawString(plText, plFont, shadowBrush,
-                            new XRect(px + 3, py - 8, 80, 9), XStringFormats.TopLeft);
-                    }
                 }
             }
 
@@ -1277,14 +1397,26 @@ namespace StradarioApp.Services
                     var (px, py) = GeoToPdf(item.Lon, item.Lat);
                     gfx.DrawEllipse(poiBrush, px - 2.5, py - 2.5, 5, 5);
                     gfx.DrawEllipse(XPens.White, px - 2.5, py - 2.5, 5, 5);
-                    if (!string.IsNullOrWhiteSpace(item.Label))
-                    {
-                        var (ilFont, ilText) = FitTextSingleLine(gfx, item.Label, routeLabelFont, 78, 5.5);
-                        gfx.DrawString(ilText, ilFont, shadowBrush,
-                            new XRect(px + 3, py - 8, 80, 9), XStringFormats.TopLeft);
-                    }
                 }
             }
+
+            // --- FASE 4: ETICHETTE (tutte, usando le posizioni di fase 2) ----
+            foreach (var route in percorsi)
+            {
+                if (routeLabelPlacement.TryGetValue(route, out var rp) && rp is { } r)
+                    DrawHaloString(r.Text, r.Font, r.Rect, XStringFormats.TopLeft);
+                foreach (var gp in route.Points)
+                {
+                    if (!gp.IsPoi) continue;
+                    if (inlinePoiPlacement.TryGetValue(gp, out var ip) && ip is { } p)
+                        DrawHaloString(p.Text, p.Font, p.Rect, XStringFormats.TopLeft);
+                }
+            }
+
+            foreach (var group in poiGroups)
+                foreach (var item in group.Items)
+                    if (groupLabelPlacement.TryGetValue(item, out var gp2) && gp2 is { } p2)
+                        DrawHaloString(p2.Text, p2.Font, p2.Rect, XStringFormats.TopLeft);
         }
 
         // ---------------------------------------------------------------
@@ -1367,6 +1499,17 @@ namespace StradarioApp.Services
         // Scarica i tile OSM e costruisce la bitmap della mappa per una pagina,
         // disegnandovi sopra anche i marker dei POI ricadenti nell'area.
         // Delega a RenderTilesAsync dopo aver calcolato zoom e dimensioni.
+        // Disegna la mappa di una pagina in QUATTRO fasi separate e GLOBALI
+        // (su tutti i percorsi/POI della pagina insieme, non un percorso per
+        // volta): 1) tutte le linee, 2) decisioni di decluttering (nessun
+        // disegno), 3) tutte le icone, 4) tutte le etichette. Prima le fasi
+        // erano interlacciate per percorso (linea+icone+etichetta di un
+        // percorso, poi il successivo): la linea di un percorso disegnato
+        // DOPO finiva sopra l'etichetta di un percorso disegnato prima,
+        // rendendola illeggibile — bug reale segnalato dall'utente ("ho
+        // delle etichette SOTTO a delle linee"). Disegnando prima OGNI linea
+        // e solo alla fine OGNI etichetta, un'etichetta non può mai finire
+        // sotto una linea qualsiasi.
         private async Task<SKBitmap?> RenderMapPageAsync(MapPage page, StradarioSettings settings,
             List<PoiGroup> poiGroups, List<Percorso> percorsi)
         {
@@ -1388,78 +1531,156 @@ namespace StradarioApp.Services
             // Contrasto (solo PDF, su richiesta): applicato al raster dei tile
             // PRIMA di percorsi/POI, così le sovrapposizioni vettoriali restano nitide.
             bitmap = ApplyContrastPipeline(bitmap, settings);
+            if (bitmap == null) return null;
 
             bool forceBlackWhite = settings.PdfContrastMode == PdfContrastMode.BlackWhite;
-
-            if (bitmap != null && percorsi.Count > 0)
-                DrawRoutesOnBitmap(bitmap, page.GeoBounds.CenterLon, page.GeoBounds.CenterLat,
-                    zoom, tileSizePx, pixW, pixH, percorsi, poiGroups, forceBlackWhite);
-
-            if (bitmap != null && poiGroups.Count > 0)
-                DrawPoisOnBitmap(bitmap, page.GeoBounds.CenterLon, page.GeoBounds.CenterLat,
-                    zoom, tileSizePx, pixW, pixH, poiGroups, forceBlackWhite);
-
-            return bitmap;
-        }
-
-        // Disegna i percorsi ricadenti nell'area della pagina direttamente sul
-        // bitmap ad alta risoluzione, usando la stessa proiezione di RenderTilesAsync.
-        // Disegnati prima dei POI così i marker restano sempre in primo piano.
-        // In modalità "Contrasta B/N" il colore del percorso viene ignorato e
-        // forzato a nero puro: sulla mappa desaturata i colori dei gruppi non
-        // sono più distinguibili tra loro, mentre il nero massimizza la resa.
-        private void DrawRoutesOnBitmap(
-            SKBitmap bitmap,
-            double centerLon, double centerLat, int zoom, double tileSizePx,
-            int pixW, int pixH,
-            List<Percorso> percorsi, List<PoiGroup> poiGroups, bool forceBlackWhite = false)
-        {
-            using var canvas = new SKCanvas(bitmap);
+            double clon = page.GeoBounds.CenterLon, clat = page.GeoBounds.CenterLat;
 
             (double x, double y) Project(double lon, double lat) =>
-                GeoUtils.GeoToBitmapPixel(lon, lat, centerLon, centerLat, zoom, tileSizePx, pixW, pixH);
+                GeoUtils.GeoToBitmapPixel(lon, lat, clon, clat, zoom, tileSizePx, pixW, pixH);
 
-            // Punti da evitare per l'etichetta del percorso: tutti i POI di
-            // questa pagina (vedi PercorsoRenderer.Draw) — coprono anche il
-            // caso di un percorso che coincide con un gruppo di POI.
-            var avoid = poiGroups.SelectMany(g => g.Items).Select(it => (it.Lon, it.Lat)).ToList();
-
-            foreach (var route in percorsi)
-                PercorsoRenderer.Draw(canvas, route, Project,
-                    colorOverride: forceBlackWhite ? SKColors.Black : (SKColor?)null,
-                    avoidLabelNear: avoid);
-        }
-
-        // Disegna i marker dei POI ricadenti nell'area della pagina (con un
-        // piccolo margine) direttamente sul bitmap ad alta risoluzione, usando
-        // la stessa proiezione impiegata da RenderTilesAsync per i tile.
-        // Stesso discorso di DrawRoutesOnBitmap per forceBlackWhite.
-        private void DrawPoisOnBitmap(
-            SKBitmap bitmap,
-            double centerLon, double centerLat, int zoom, double tileSizePx,
-            int pixW, int pixH,
-            List<PoiGroup> poiGroups, bool forceBlackWhite = false)
-        {
-            const float markerSize = 26f;
             using var canvas = new SKCanvas(bitmap);
+
+            // --- FASE 1: LINEE (tutti i percorsi) -----------------------------
+            foreach (var route in percorsi)
+                PercorsoRenderer.DrawLine(canvas, route, Project,
+                    colorOverride: forceBlackWhite ? SKColors.Black : (SKColor?)null);
+
+            // Segmenti di tutte le linee appena disegnate, in pixel — usati in
+            // fase 2 per preferire posizioni-etichetta che non le attraversano
+            // ("se possibile", richiesta esplicita dell'utente).
+            var lineSegments = new List<(float x1, float y1, float x2, float y2)>();
+            foreach (var route in percorsi)
+            {
+                var pts = route.Points.Select(p => Project(p.Lon, p.Lat)).ToList();
+                for (int i = 1; i < pts.Count; i++)
+                    lineSegments.Add(((float)pts[i - 1].x, (float)pts[i - 1].y, (float)pts[i].x, (float)pts[i].y));
+            }
+
+            // --- FASE 2: DECISIONI ETICHETTE (nessun disegno) -----------------
+            // Priorità: POI di gruppo per primi (occupano lo spazio prima),
+            // poi punti-POI inline dei percorsi, poi l'etichetta del
+            // percorso stesso (solo se non ha punti-POI inline — altrimenti
+            // resta soppressa, i punti-POI bastano a identificarlo).
+            var occupiedLabelRects = new List<SKRect>();
+
+            var groupLabelPlacement = new Dictionary<PoiItem, (float tx, float ty, float textSize)?>();
+            foreach (var group in poiGroups)
+                foreach (var item in group.Items)
+                {
+                    var (gx, gy) = Project(item.Lon, item.Lat);
+                    if (gx < -PoiMarkerSizePx || gx > pixW + PoiMarkerSizePx ||
+                        gy < -PoiMarkerSizePx || gy > pixH + PoiMarkerSizePx)
+                        continue;
+                    groupLabelPlacement[item] = PoiIconRenderer.TryPlaceLabel(
+                        item.Label, (float)gx, (float)gy, PoiMarkerSizePx, occupiedLabelRects, lineSegments);
+                }
+
+            var routeInlinePlacement = new Dictionary<GeoPoint, (float tx, float ty, float textSize)?>();
+            var routeLabelPlacement  = new Dictionary<Percorso, (float tx, float ty, float textSize)?>();
+            foreach (var route in percorsi)
+            {
+                if (route.Points.Count == 0) continue;
+                var pts = route.Points.Select(p => Project(p.Lon, p.Lat)).ToList();
+                bool hasInlinePoi = false;
+
+                for (int i = 0; i < route.Points.Count; i++)
+                {
+                    var gp = route.Points[i];
+                    if (!gp.IsPoi) continue;
+                    hasInlinePoi = true;
+                    routeInlinePlacement[gp] = PoiIconRenderer.TryPlaceLabel(
+                        gp.PoiLabel, (float)pts[i].x, (float)pts[i].y,
+                        PercorsoRenderer.InlinePoiMarkerSizePx, occupiedLabelRects, lineSegments);
+                }
+
+                if (!hasInlinePoi && !string.IsNullOrWhiteSpace(route.Label))
+                    routeLabelPlacement[route] = PoiIconRenderer.TryPlaceLabel(
+                        route.Label, (float)pts[0].x, (float)pts[0].y, 24f, occupiedLabelRects, lineSegments);
+            }
+
+            // --- FASE 3: ICONE (tutti i percorsi, poi tutti i POI di gruppo) -
+            foreach (var route in percorsi)
+                PercorsoRenderer.DrawVerticesOnly(canvas, route, Project,
+                    colorOverride: forceBlackWhite ? SKColors.Black : (SKColor?)null);
 
             foreach (var group in poiGroups)
             {
                 var color = forceBlackWhite ? SKColors.Black : PoiIconRenderer.ParseColor(group.ColorHex);
                 foreach (var item in group.Items)
                 {
-                    var (x, y) = GeoUtils.GeoToBitmapPixel(item.Lon, item.Lat,
-                        centerLon, centerLat, zoom, tileSizePx, pixW, pixH);
-
-                    if (x < -markerSize || x > pixW + markerSize ||
-                        y < -markerSize || y > pixH + markerSize)
-                        continue;
-
-                    PoiIconRenderer.DrawWithLabel(canvas, item.Icon ?? PoiIconType.Pin, color, item.Label,
-                        (float)x, (float)y, markerSize);
+                    if (!groupLabelPlacement.ContainsKey(item)) continue; // fuori pagina
+                    var (x, y) = Project(item.Lon, item.Lat);
+                    PoiIconRenderer.Draw(canvas, item.Icon ?? PoiIconType.Pin, color, (float)x, (float)y, PoiMarkerSizePx);
                 }
             }
+
+            // --- FASE 4: ETICHETTE (tutte, usando le posizioni di fase 2) ----
+            foreach (var route in percorsi)
+            {
+                var routeColor = forceBlackWhite ? SKColors.Black : PercorsoRenderer.ParseColor(route.ColorHex);
+                if (routeLabelPlacement.TryGetValue(route, out var rp) && rp is { } r)
+                    PoiIconRenderer.DrawHaloText(canvas, route.Label, r.tx, r.ty, r.textSize);
+
+                foreach (var gp in route.Points)
+                {
+                    if (!gp.IsPoi) continue;
+                    if (routeInlinePlacement.TryGetValue(gp, out var ip) && ip is { } p)
+                        PoiIconRenderer.DrawHaloText(canvas, gp.PoiLabel, p.tx, p.ty, p.textSize);
+                }
+            }
+
+            foreach (var group in poiGroups)
+                foreach (var item in group.Items)
+                    if (groupLabelPlacement.TryGetValue(item, out var gp2) && gp2 is { } p2)
+                        PoiIconRenderer.DrawHaloText(canvas, item.Label, p2.tx, p2.ty, p2.textSize);
+
+            return bitmap;
         }
+
+        // Dimensione (px) dei marker POI sui bitmap di pagina.
+        private const float PoiMarkerSizePx = 26f;
+
+        // Offset (pt) degli 8 alberi/direzioni usati da DrawOverviewPage per
+        // simulare un vero alone di testo con XGraphics (vedi
+        // DrawHaloString lì dentro).
+        private static readonly (double dx, double dy)[] HaloOffsets =
+        {
+            (-1, -1), (0, -1), (1, -1),
+            (-1,  0),          (1,  0),
+            (-1,  1), (0,  1), (1,  1)
+        };
+
+        // Versione XRect/double dello stesso test usato da
+        // PoiIconRenderer.TryPlaceLabel (SKRect/float) per la mappa
+        // riassuntiva (backend XGraphics): vero se il segmento (x1,y1)-(x2,y2)
+        // attraversa (anche solo di striscio) il rettangolo r.
+        private static bool SegmentIntersectsRect(double x1, double y1, double x2, double y2, XRect r)
+        {
+            if (Math.Max(x1, x2) < r.Left || Math.Min(x1, x2) > r.Right ||
+                Math.Max(y1, y2) < r.Top  || Math.Min(y1, y2) > r.Bottom)
+                return false;
+            if ((x1 >= r.Left && x1 <= r.Right && y1 >= r.Top && y1 <= r.Bottom) ||
+                (x2 >= r.Left && x2 <= r.Right && y2 >= r.Top && y2 <= r.Bottom))
+                return true;
+            return SegmentsIntersect(x1, y1, x2, y2, r.Left,  r.Top,    r.Right, r.Top)
+                || SegmentsIntersect(x1, y1, x2, y2, r.Right, r.Top,    r.Right, r.Bottom)
+                || SegmentsIntersect(x1, y1, x2, y2, r.Right, r.Bottom, r.Left,  r.Bottom)
+                || SegmentsIntersect(x1, y1, x2, y2, r.Left,  r.Bottom, r.Left,  r.Top);
+        }
+
+        private static bool SegmentsIntersect(
+            double ax1, double ay1, double ax2, double ay2,
+            double bx1, double by1, double bx2, double by2)
+        {
+            double d1 = Cross(bx2 - bx1, by2 - by1, ax1 - bx1, ay1 - by1);
+            double d2 = Cross(bx2 - bx1, by2 - by1, ax2 - bx1, ay2 - by1);
+            double d3 = Cross(ax2 - ax1, ay2 - ay1, bx1 - ax1, by1 - ay1);
+            double d4 = Cross(ax2 - ax1, ay2 - ay1, bx2 - ax1, by2 - ay1);
+            return (d1 > 0) != (d2 > 0) && (d3 > 0) != (d4 > 0);
+        }
+
+        private static double Cross(double ax, double ay, double bx, double by) => ax * by - ay * bx;
 
         // Disegna la pagina PDF: mappa + bordi con pagine adiacenti
         private void DrawMapPage(
