@@ -155,7 +155,8 @@ namespace StradarioApp.Services
             SKColor? colorOverride = null, bool drawVertices = true,
             IReadOnlyList<(double Lon, double Lat)>? avoidLabelNear = null,
             float strokeWidthMultiplier = 1f,
-            List<SKRect>? occupiedLabelRects = null)
+            List<SKRect>? occupiedLabelRects = null,
+            HashSet<(string Label, long LonKey, long LatKey)>? seenLabelKeys = null)
         {
             if (route.Points.Count == 0) return;
 
@@ -177,8 +178,14 @@ namespace StradarioApp.Services
                         // Un punto marcato come POI si disegna come un vero
                         // marker (icona + etichetta), sempre col colore del
                         // percorso — mai il semplice pallino di vertice.
+                        // Se un ALTRO POI (di questo o di un altro percorso,
+                        // o di un gruppo POI) nello stesso punto ha già
+                        // stampato la stessa etichetta, l'icona resta comunque
+                        // disegnata ma il testo viene evitato (v. seenLabelKeys).
+                        bool skipLabel = seenLabelKeys != null && !string.IsNullOrWhiteSpace(gp.PoiLabel)
+                            && !seenLabelKeys.Add((gp.PoiLabel, GeoUtils.LabelDedupKey(gp.Lon), GeoUtils.LabelDedupKey(gp.Lat)));
                         PoiIconRenderer.DrawWithLabel(canvas, gp.PoiIcon, color, gp.PoiLabel, (float)pts[i].x, (float)pts[i].y, poiSize,
-                            occupiedLabelRects: occupiedLabelRects, alwaysShow: occupiedLabelRects != null);
+                            occupiedLabelRects: occupiedLabelRects, alwaysShow: occupiedLabelRects != null, skipLabel: skipLabel);
                         continue;
                     }
                     float r = (i == 0 || i == pts.Count - 1) ? 5.5f : 3f;
@@ -191,9 +198,19 @@ namespace StradarioApp.Services
             {
                 float textSize = 12f;
 
+                // Ancora dell'etichetta del NOME percorso: il baricentro
+                // (pesato per lunghezza segmento) invece del primo punto —
+                // su un percorso lungo il primo punto è spesso ai margini
+                // della porzione di mappa visibile/stampata, mentre il
+                // baricentro resta leggibile indipendentemente da dove il
+                // percorso viene tagliato dalla vista/pagina.
+                var (centroidLon, centroidLat) = GeoUtils.PolylineCentroid(route.Points);
+                var (ccx, ccy) = project(centroidLon, centroidLat);
+                float cx = (float)ccx, cy = (float)ccy;
+
                 if (occupiedLabelRects != null)
                 {
-                    var pos = PoiIconRenderer.ChooseLabelPosition(route.Label, (float)pts[0].x, (float)pts[0].y, 24f, occupiedLabelRects);
+                    var pos = PoiIconRenderer.ChooseLabelPosition(route.Label, cx, cy, 24f, occupiedLabelRects);
                     PoiIconRenderer.DrawHaloText(canvas, route.Label, pos.tx, pos.ty, pos.textSize);
                 }
                 else
@@ -204,24 +221,24 @@ namespace StradarioApp.Services
                     bool tooClose = avoidLabelNear != null && avoidLabelNear.Any(p =>
                     {
                         var (ax, ay) = project(p.Lon, p.Lat);
-                        double dx = ax - pts[0].x, dy = ay - pts[0].y;
+                        double dx = ax - cx, dy = ay - cy;
                         return dx * dx + dy * dy < AvoidRadiusPx * AvoidRadiusPx;
                     });
 
                     float lx, ly;
                     if (tooClose)
                     {
-                        // Un marker (tipicamente un POI) è troppo vicino al primo
-                        // punto: sposta l'etichetta sotto-sinistra invece che
-                        // sopra-destra, più lontana dal punto.
+                        // Un marker (tipicamente un POI) è troppo vicino al
+                        // baricentro: sposta l'etichetta sotto-sinistra invece
+                        // che sopra-destra, più lontana dal punto.
                         float textWidth = measure.MeasureText(route.Label);
-                        lx = (float)pts[0].x - textWidth - 9;
-                        ly = (float)pts[0].y + 22;
+                        lx = cx - textWidth - 9;
+                        ly = cy + 22;
                     }
                     else
                     {
-                        lx = (float)pts[0].x + 9;
-                        ly = (float)pts[0].y - 9;
+                        lx = cx + 9;
+                        ly = cy - 9;
                     }
 
                     PoiIconRenderer.DrawHaloText(canvas, route.Label, lx, ly, textSize);

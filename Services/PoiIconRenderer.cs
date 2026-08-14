@@ -126,10 +126,15 @@ namespace StradarioApp.Services
             List<SKRect>? occupiedLabelRects = null,
             bool useForcedPosition = false, (float tx, float ty, float textSize)? forcedPosition = null,
             IReadOnlyList<(float x1, float y1, float x2, float y2)>? avoidLines = null,
-            bool alwaysShow = false)
+            bool alwaysShow = false, bool skipLabel = false)
         {
             Draw(canvas, type, color, x, y, size);
-            if (string.IsNullOrWhiteSpace(label)) return;
+            // L'icona si disegna comunque (sono comunque marker distinti,
+            // spesso di colore diverso perché appartengono a percorsi/gruppi
+            // diversi) — solo il testo va evitato quando un altro POI nello
+            // STESSO punto ha già stampato la STESSA etichetta (v. chiamanti,
+            // che calcolano skipLabel confrontando lon/lat/testo).
+            if (skipLabel || string.IsNullOrWhiteSpace(label)) return;
 
             (float tx, float ty, float textSize)? pos = useForcedPosition ? forcedPosition
                 : occupiedLabelRects != null && alwaysShow ? ChooseLabelPosition(label, x, y, size, occupiedLabelRects)

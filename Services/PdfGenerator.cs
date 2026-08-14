@@ -1340,12 +1340,20 @@ namespace StradarioApp.Services
                 return null;
             }
 
+            // Quando più POI (di gruppo o inline su percorsi diversi)
+            // coincidono nello stesso punto con la stessa etichetta
+            // testuale, va stampata una sola volta — l'icona di ciascuno
+            // resta comunque disegnata in fase 3 (v. GeoUtils.LabelDedupKey).
+            var seenLabelKeys = new HashSet<(string Label, long LonKey, long LatKey)>();
+
             var groupLabelPlacement = new Dictionary<PoiItem, (XFont Font, string Text, XRect Rect)?>();
             foreach (var pg in poiGroups)
                 foreach (var pi in pg.Items)
                 {
                     var (ppx, ppy) = GeoToPdf(pi.Lon, pi.Lat);
-                    groupLabelPlacement[pi] = TryPlaceLabel(ppx, ppy, pi.Label);
+                    bool isDuplicateLabel = !string.IsNullOrWhiteSpace(pi.Label)
+                        && !seenLabelKeys.Add((pi.Label, GeoUtils.LabelDedupKey(pi.Lon), GeoUtils.LabelDedupKey(pi.Lat)));
+                    groupLabelPlacement[pi] = isDuplicateLabel ? null : TryPlaceLabel(ppx, ppy, pi.Label);
                 }
 
             var routeLabelPlacement  = new Dictionary<Percorso, (XFont Font, string Text, XRect Rect)?>();
@@ -1356,12 +1364,21 @@ namespace StradarioApp.Services
 
                 bool hasInlinePoi = route.Points.Any(p => p.IsPoi);
                 if (!hasInlinePoi && !string.IsNullOrWhiteSpace(route.Label))
-                    routeLabelPlacement[route] = TryPlaceLabel(ptsPdf[0].px, ptsPdf[0].py, route.Label);
+                {
+                    // Ancora nel baricentro (pesato per lunghezza segmento)
+                    // invece del primo punto — v. GeoUtils.PolylineCentroid.
+                    var (centroidLon, centroidLat) = GeoUtils.PolylineCentroid(route.Points);
+                    var (ccx, ccy) = GeoToPdf(centroidLon, centroidLat);
+                    routeLabelPlacement[route] = TryPlaceLabel(ccx, ccy, route.Label);
+                }
 
                 for (int i = 0; i < route.Points.Count; i++)
                 {
-                    if (!route.Points[i].IsPoi) continue;
-                    inlinePoiPlacement[route.Points[i]] = TryPlaceLabel(ptsPdf[i].px, ptsPdf[i].py, route.Points[i].PoiLabel);
+                    var gp = route.Points[i];
+                    if (!gp.IsPoi) continue;
+                    bool isDuplicateLabel = !string.IsNullOrWhiteSpace(gp.PoiLabel)
+                        && !seenLabelKeys.Add((gp.PoiLabel, GeoUtils.LabelDedupKey(gp.Lon), GeoUtils.LabelDedupKey(gp.Lat)));
+                    inlinePoiPlacement[gp] = isDuplicateLabel ? null : TryPlaceLabel(ptsPdf[i].px, ptsPdf[i].py, gp.PoiLabel);
                 }
             }
 
@@ -1564,6 +1581,12 @@ namespace StradarioApp.Services
             // resta soppressa, i punti-POI bastano a identificarlo).
             var occupiedLabelRects = new List<SKRect>();
 
+            // Quando più POI (di gruppo o inline su percorsi diversi)
+            // coincidono nello stesso punto con la stessa etichetta
+            // testuale, va stampata una sola volta — l'icona di ciascuno
+            // resta comunque disegnata in fase 3 (v. GeoUtils.LabelDedupKey).
+            var seenLabelKeys = new HashSet<(string Label, long LonKey, long LatKey)>();
+
             var groupLabelPlacement = new Dictionary<PoiItem, (float tx, float ty, float textSize)?>();
             foreach (var group in poiGroups)
                 foreach (var item in group.Items)
@@ -1572,7 +1595,9 @@ namespace StradarioApp.Services
                     if (gx < -PoiMarkerSizePx || gx > pixW + PoiMarkerSizePx ||
                         gy < -PoiMarkerSizePx || gy > pixH + PoiMarkerSizePx)
                         continue;
-                    groupLabelPlacement[item] = PoiIconRenderer.TryPlaceLabel(
+                    bool isDuplicateLabel = !string.IsNullOrWhiteSpace(item.Label)
+                        && !seenLabelKeys.Add((item.Label, GeoUtils.LabelDedupKey(item.Lon), GeoUtils.LabelDedupKey(item.Lat)));
+                    groupLabelPlacement[item] = isDuplicateLabel ? null : PoiIconRenderer.TryPlaceLabel(
                         item.Label, (float)gx, (float)gy, PoiMarkerSizePx, occupiedLabelRects, lineSegments);
                 }
 
@@ -1589,14 +1614,22 @@ namespace StradarioApp.Services
                     var gp = route.Points[i];
                     if (!gp.IsPoi) continue;
                     hasInlinePoi = true;
-                    routeInlinePlacement[gp] = PoiIconRenderer.TryPlaceLabel(
+                    bool isDuplicateLabel = !string.IsNullOrWhiteSpace(gp.PoiLabel)
+                        && !seenLabelKeys.Add((gp.PoiLabel, GeoUtils.LabelDedupKey(gp.Lon), GeoUtils.LabelDedupKey(gp.Lat)));
+                    routeInlinePlacement[gp] = isDuplicateLabel ? null : PoiIconRenderer.TryPlaceLabel(
                         gp.PoiLabel, (float)pts[i].x, (float)pts[i].y,
                         PercorsoRenderer.InlinePoiMarkerSizePx, occupiedLabelRects, lineSegments);
                 }
 
                 if (!hasInlinePoi && !string.IsNullOrWhiteSpace(route.Label))
+                {
+                    // Ancora nel baricentro (pesato per lunghezza segmento)
+                    // invece del primo punto — v. GeoUtils.PolylineCentroid.
+                    var (centroidLon, centroidLat) = GeoUtils.PolylineCentroid(route.Points);
+                    var (ccx, ccy) = Project(centroidLon, centroidLat);
                     routeLabelPlacement[route] = PoiIconRenderer.TryPlaceLabel(
-                        route.Label, (float)pts[0].x, (float)pts[0].y, 24f, occupiedLabelRects, lineSegments);
+                        route.Label, (float)ccx, (float)ccy, 24f, occupiedLabelRects, lineSegments);
+                }
             }
 
             // --- FASE 3: ICONE (tutti i percorsi, poi tutti i POI di gruppo) -

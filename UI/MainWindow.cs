@@ -102,6 +102,25 @@ namespace StradarioApp.UI
         // Pagina selezionata nella lista
         private int? _selectedPageId = null;
 
+        // POI/percorso "corrente" nell'albero: impostato quando l'oggetto
+        // viene cliccato sulla mappa MENTRE è bloccato (IsLocked) — un click
+        // su un oggetto bloccato non può avviarne il drag (v. FindPoiAtPoint/
+        // FindRoutePointAtPoint, che escludono i bloccati), quindi prima non
+        // succedeva nulla di visibile; ora l'oggetto viene almeno evidenziato
+        // nell'albero, stesso pattern di _selectedPageId (bordo blu).
+        private (int GroupId, int ItemId)? _selectedPoiKey = null;
+        private int? _selectedPercorsoId = null;
+        // Riferimento al Control creato per l'elemento correntemente
+        // selezionato (ripopolato ad ogni BuildNavigationTree) — serve solo
+        // per scrollarlo in vista con BringIntoView dopo un click sulla
+        // mappa; _scrollSelectionIntoView arma lo scroll una tantum (non ad
+        // ogni refresh, altrimenti la lista "salterebbe" alla selezione
+        // anche per interazioni che non c'entrano, es. modificare un altro
+        // elemento con lo stesso _selectedPoiKey ancora impostato).
+        private Control? _selectedPoiControl;
+        private Control? _selectedPercorsoControl;
+        private bool _scrollSelectionIntoView;
+
         // Stato di espansione dell'albero di navigazione nel pannello sinistro
         // (rami "Pagine" / "Gruppi POI" e i singoli gruppi al loro interno)
         private bool _navPagesExpanded    = true;
@@ -1441,6 +1460,13 @@ namespace StradarioApp.UI
             _poiDragActive     = false;
             _pageDragCandidate = null;
             _pageDragActive    = false;
+            // Ripopolati sotto da BuildPoiItemLeaf/BuildPercorsoNavItem se
+            // l'elemento correntemente selezionato (_selectedPoiKey/
+            // _selectedPercorsoId) viene ricreato in questa passata — servono
+            // a scrollarlo in vista dopo un click sulla mappa (v.
+            // RefreshNavigationTree).
+            _selectedPoiControl      = null;
+            _selectedPercorsoControl = null;
 
             string filter = (_navFilterText ?? "").Trim().ToLowerInvariant();
             bool   filtering = filter.Length > 0;
@@ -1910,17 +1936,19 @@ namespace StradarioApp.UI
         private Control BuildPoiItemLeaf(PoiGroup group, PoiItem item)
         {
             bool isMultiSelected = _multiSelectedPoiKeys.Contains((group.Id, item.Id));
+            bool isSelected      = _selectedPoiKey == (group.Id, item.Id);
 
             var border = new Border
             {
-                Background      = isMultiSelected ? new SolidColorBrush(Color.Parse("#FFE0B2")) : Brushes.White,
-                BorderBrush     = isMultiSelected ? Brushes.DarkOrange : Brushes.Gainsboro,
-                BorderThickness = new Thickness(isMultiSelected ? 2 : 1),
+                Background      = isMultiSelected ? new SolidColorBrush(Color.Parse("#FFE0B2")) : isSelected ? new SolidColorBrush(Color.Parse("#CCE8FF")) : Brushes.White,
+                BorderBrush     = isMultiSelected ? Brushes.DarkOrange : isSelected ? Brushes.SteelBlue : Brushes.Gainsboro,
+                BorderThickness = new Thickness(isMultiSelected || isSelected ? 2 : 1),
                 CornerRadius    = new CornerRadius(3),
                 Padding         = new Thickness(6, 4),
                 Margin          = new Thickness(0, 1),
                 Cursor          = new Cursor(StandardCursorType.Hand)
             };
+            if (isSelected) _selectedPoiControl = border;
 
             var row = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto,Auto") };
 
@@ -2135,23 +2163,7 @@ namespace StradarioApp.UI
         // con soli 2 vertici conta quanto un tratto della stessa lunghezza
         // spezzettato in molti punti ravvicinati.
         private static (double lon, double lat) ComputePolylineCentroid(IReadOnlyList<GeoPoint> points)
-        {
-            if (points.Count == 1) return (points[0].Lon, points[0].Lat);
-
-            double sumLon = 0, sumLat = 0, sumLen = 0;
-            for (int i = 0; i < points.Count - 1; i++)
-            {
-                var a = points[i];
-                var b = points[i + 1];
-                double len = GeoUtils.DistanceKm(a.Lon, a.Lat, b.Lon, b.Lat);
-                sumLon += (a.Lon + b.Lon) / 2.0 * len;
-                sumLat += (a.Lat + b.Lat) / 2.0 * len;
-                sumLen += len;
-            }
-
-            if (sumLen <= 0) return (points[0].Lon, points[0].Lat);
-            return (sumLon / sumLen, sumLat / sumLen);
-        }
+            => GeoUtils.PolylineCentroid(points);
 
         // Voce di un percorso nell'albero: swatch colore, etichetta, lunghezza
         // e numero di punti; cliccando (fuori dai bottoni) si centra la mappa
@@ -2171,17 +2183,19 @@ namespace StradarioApp.UI
             // _multiSelectedRoutePointKeys).
             bool hasLeaves = route.Points.Count > 0;
             bool pointsExpanded = !_navCollapsedPercorsoIds.Contains(route.Id);
+            bool isSelected = route.Id == _selectedPercorsoId;
 
             var border = new Border
             {
-                Background      = Brushes.White,
-                BorderBrush     = Brushes.Gainsboro,
-                BorderThickness = new Thickness(1),
+                Background      = isSelected ? new SolidColorBrush(Color.Parse("#CCE8FF")) : Brushes.White,
+                BorderBrush     = isSelected ? Brushes.SteelBlue : Brushes.Gainsboro,
+                BorderThickness = new Thickness(isSelected ? 2 : 1),
                 CornerRadius    = new CornerRadius(3),
                 Padding         = new Thickness(6, 4),
                 Margin          = new Thickness(0, 1),
                 Cursor          = new Cursor(StandardCursorType.Hand)
             };
+            if (isSelected) _selectedPercorsoControl = border;
 
             // Ordine colonne: freccia, conteggio punti, swatch colore, nome,
             // azioni — conteggio sempre PRIMA dello swatch, stessa
@@ -2197,7 +2211,23 @@ namespace StradarioApp.UI
                     Width      = 14,
                     FontWeight = FontWeight.Bold,
                     Cursor     = new Cursor(StandardCursorType.Hand),
-                    VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+                    Background = Brushes.Transparent,
+                    TextAlignment     = Avalonia.Media.TextAlignment.Center,
+                    VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch
+                };
+                // Gestore proprio con e.Handled = true: l'area cliccabile
+                // dell'intera colonna (non solo il glifo di testo, che è
+                // molto più basso dell'altezza riga con 2-3 righe di info)
+                // deve intercettare il click PRIMA che arrivi al gestore
+                // "centra sulla mappa" di border.PointerPressed sotto — un
+                // Grid.SetColumn(arrow,0) con Stretch verticale rende
+                // hit-testabile tutta la colonna 0.
+                arrow.PointerPressed += (s, e) =>
+                {
+                    if (pointsExpanded) _navCollapsedPercorsoIds.Add(route.Id);
+                    else                _navCollapsedPercorsoIds.Remove(route.Id);
+                    RefreshNavigationTree();
+                    e.Handled = true;
                 };
                 Grid.SetColumn(arrow, 0);
                 row.Children.Add(arrow);
@@ -2335,15 +2365,6 @@ namespace StradarioApp.UI
             border.PointerPressed += (s, e) =>
             {
                 if (e.Source is Button || (e.Source is Control c && c.FindAncestorOfType<Button>() != null)) return;
-                // Click sulla freccia: alterna solo la visibilità delle righe
-                // "Punto N", non deve anche ricentrare la mappa.
-                if (arrow != null && (ReferenceEquals(e.Source, arrow) || (e.Source is Control ac && ac.FindAncestorOfType<TextBlock>() == arrow)))
-                {
-                    if (pointsExpanded) _navCollapsedPercorsoIds.Add(route.Id);
-                    else                _navCollapsedPercorsoIds.Remove(route.Id);
-                    RefreshNavigationTree();
-                    return;
-                }
                 if (route.Points.Count == 0) return;
                 (_viewCenterLon, _viewCenterLat) = ComputePolylineCentroid(route.Points);
                 HighlightRoute(route.Id);
@@ -3235,6 +3256,42 @@ namespace StradarioApp.UI
                     return;
                 }
 
+                // Nessun hit su un POI/vertice SBLOCCATO (altrimenti già
+                // gestito sopra come drag): un click su un oggetto BLOCCATO
+                // non può avviare il drag, ma va comunque reso "corrente"
+                // nell'albero, invece di non fare nulla.
+                var hitAnyPoi = FindAnyPoiAtPoint(pos, cw, ch);
+                if (hitAnyPoi != null)
+                {
+                    _selectedPoiKey     = (hitAnyPoi.Value.group.Id, hitAnyPoi.Value.item.Id);
+                    _selectedPercorsoId = null;
+                    // Il bordo evidenziato non serve a nulla se il ramo/
+                    // gruppo che contiene l'elemento resta collassato: forza
+                    // l'espansione necessaria a renderlo davvero visibile.
+                    _navPoiExpanded = true;
+                    _navCollapsedGroupIds.Remove(hitAnyPoi.Value.group.Id);
+                    _scrollSelectionIntoView = true;
+                    RefreshNavigationTree();
+                }
+                else
+                {
+                    var hitAnyRoutePoint = FindAnyLockedRoutePointAtPoint(pos, cw, ch);
+                    // Nessun punto colpito: prova anche sulla LINEA fra due
+                    // punti (non solo sui vertici) — un percorso è spesso
+                    // fatto di pochi vertici molto distanti fra loro, quindi
+                    // la maggior parte del tracciato cliccabile è la linea,
+                    // non un vertice.
+                    var hitRoute = hitAnyRoutePoint?.route ?? FindAnyRouteLineAtPoint(pos, cw, ch);
+                    if (hitRoute != null)
+                    {
+                        _selectedPercorsoId = hitRoute.Id;
+                        _selectedPoiKey     = null;
+                        _navPercorsiExpanded = true;
+                        _scrollSelectionIntoView = true;
+                        RefreshNavigationTree();
+                    }
+                }
+
                 // Controlla se il click cade dentro la pagina selezionata
                 var selPage = _selectedPageId.HasValue
                     ? _project.Pages.Find(p => p.Id == _selectedPageId.Value)
@@ -4032,6 +4089,61 @@ namespace StradarioApp.UI
                     double dx = pt.X - x, dy = pt.Y - y;
                     if (dx * dx + dy * dy <= PoiHitRadiusPx * PoiHitRadiusPx)
                         return (route, i);
+                }
+            }
+            return null;
+        }
+
+        // Come FindRoutePointAtPoint, ma include i percorsi BLOCCATI e
+        // considera OGNI punto (non solo quelli IsPoi) — usato solo per
+        // rendere "corrente" nell'albero un percorso bloccato cliccato sulla
+        // mappa (v. OnMapPointerPressed), non per il drag/tooltip. Un punto
+        // IsPoi usa lo stesso raggio (più largo) di un POI vero e proprio,
+        // dato che si disegna come marker altrettanto grande — un raggio
+        // uniforme più stretto (RoutePointHitRadiusPx, pensato per i piccoli
+        // pallini-vertice) lo rendeva troppo difficile da colpire.
+        private (Percorso route, int index)? FindAnyLockedRoutePointAtPoint(Point pt, float cw, float ch)
+        {
+            foreach (var route in _project.Percorsi)
+            {
+                if (_hiddenPercorsoIds.Contains(route.Id)) continue;
+                for (int i = 0; i < route.Points.Count; i++)
+                {
+                    var p = route.Points[i];
+                    var (x, y) = GeoUtils.GeoToPixel(p.Lon, p.Lat,
+                        _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
+                    double dx = pt.X - x, dy = pt.Y - y;
+                    double radius = p.IsPoi ? PoiHitRadiusPx : RoutePointHitRadiusPx;
+                    if (dx * dx + dy * dy <= radius * radius)
+                        return (route, i);
+                }
+            }
+            return null;
+        }
+
+        // Come FindRouteSegmentAtPoint, ma include i percorsi BLOCCATI —
+        // usato solo per rendere "corrente" nell'albero un percorso bloccato
+        // cliccato su una sua LINEA (non su un vertice), non per inserire un
+        // punto (quello resta esclusivo dei percorsi sbloccati).
+        private Percorso? FindAnyRouteLineAtPoint(Point pt, float cw, float ch)
+        {
+            foreach (var route in _project.Percorsi)
+            {
+                if (_hiddenPercorsoIds.Contains(route.Id)) continue;
+                for (int i = 0; i < route.Points.Count - 1; i++)
+                {
+                    var a = route.Points[i];
+                    var b = route.Points[i + 1];
+                    var (ax, ay) = GeoUtils.GeoToPixel(a.Lon, a.Lat, _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
+                    var (bx, by) = GeoUtils.GeoToPixel(b.Lon, b.Lat, _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
+                    double dx = bx - ax, dy = by - ay;
+                    double len2 = dx * dx + dy * dy;
+                    double t = len2 <= 1e-9 ? 0 : ((pt.X - ax) * dx + (pt.Y - ay) * dy) / len2;
+                    t = Math.Clamp(t, 0, 1);
+                    double px = ax + t * dx, py = ay + t * dy;
+                    double ddx = pt.X - px, ddy = pt.Y - py;
+                    if (ddx * ddx + ddy * ddy <= SegmentHitRadiusPx * SegmentHitRadiusPx)
+                        return route;
                 }
             }
             return null;
@@ -5241,8 +5353,27 @@ namespace StradarioApp.UI
                     // Impostare Offset subito verrebbe clampato a (0,0): lo
                     // ScrollViewer non ha ancora misurato Extent/Viewport
                     // finché non passa un ciclo di layout dopo l'attach.
-                    Dispatcher.UIThread.Post(() => newScroll.Offset = preservedOffset,
-                        DispatcherPriority.Loaded);
+                    if (_scrollSelectionIntoView)
+                    {
+                        // Un click sulla mappa su un oggetto bloccato ha appena
+                        // impostato la selezione: scrolla l'albero fino a
+                        // renderla visibile invece di limitarsi a evidenziarla
+                        // (poteva restare fuori dall'area visibile, richiesta
+                        // esplicita dell'utente) — BringIntoView richiede anch'
+                        // esso un ciclo di layout completato, stesso motivo del
+                        // ramo Offset sotto, quindi va Post-ato allo stesso modo.
+                        var target = (Control?)_selectedPoiControl ?? _selectedPercorsoControl;
+                        _scrollSelectionIntoView = false;
+                        if (target != null)
+                            Dispatcher.UIThread.Post(() => target.BringIntoView(), DispatcherPriority.Loaded);
+                        else
+                            Dispatcher.UIThread.Post(() => newScroll.Offset = preservedOffset, DispatcherPriority.Loaded);
+                    }
+                    else
+                    {
+                        Dispatcher.UIThread.Post(() => newScroll.Offset = preservedOffset,
+                            DispatcherPriority.Loaded);
+                    }
 
                     // Aggiorna anche il blocco info impostazioni
                     var settingsPanel = dock.Children.OfType<StackPanel>().FirstOrDefault();
@@ -5269,6 +5400,8 @@ namespace StradarioApp.UI
             _currentFilePath = null;
             _isDirty         = false;
             _selectedPageId  = null;
+            _selectedPoiKey     = null;
+            _selectedPercorsoId = null;
             _viewCenterLon   = 12.4964;
             _viewCenterLat   = 41.9028;
             _viewZoom        = 10.0;
@@ -5357,6 +5490,8 @@ namespace StradarioApp.UI
                 _viewCenterLat   = _project.ViewCenterLat;
                 _viewZoom        = _project.ViewZoom;
                 _selectedPageId  = null;
+                _selectedPoiKey     = null;
+                _selectedPercorsoId = null;
                 _isDirty         = false;
                 _undoStack.Clear();
                 _redoStack.Clear();

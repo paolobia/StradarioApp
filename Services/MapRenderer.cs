@@ -215,11 +215,21 @@ namespace StradarioApp.Services
             // condiviso fra DrawRoutes e DrawPois.
             var occupiedLabelRects = new List<SKRect>();
 
+            // Condiviso fra DrawRoutes e DrawPois: quando più POI (inline su
+            // percorsi diversi, o un gruppo POI + un inline) coincidono nello
+            // STESSO punto con la STESSA etichetta testuale, il testo va
+            // stampato una sola volta (l'icona resta comunque disegnata per
+            // ognuno) — altrimenti più tentativi di piazzamento sullo stesso
+            // punto finiscono per sovrapporsi fra loro nonostante il
+            // decluttering. Chiave arrotondata a ~0.1m (1e6) per considerare
+            // "stesso punto" anche minime differenze di arrotondamento.
+            var seenLabelKeys = new HashSet<(string Label, long LonKey, long LatKey)>();
+
             if (routes != null && routes.Count > 0)
-                DrawRoutes(canvas, canvasWidth, canvasHeight, centerLon, centerLat, zoom, routes, poiGroups, highlightedRouteId, occupiedLabelRects);
+                DrawRoutes(canvas, canvasWidth, canvasHeight, centerLon, centerLat, zoom, routes, poiGroups, highlightedRouteId, occupiedLabelRects, seenLabelKeys);
 
             if (poiGroups != null && poiGroups.Count > 0)
-                DrawPois(canvas, canvasWidth, canvasHeight, centerLon, centerLat, zoom, poiGroups, highlightedPoi, occupiedLabelRects);
+                DrawPois(canvas, canvasWidth, canvasHeight, centerLon, centerLat, zoom, poiGroups, highlightedPoi, occupiedLabelRects, seenLabelKeys);
 
             if (previewRoute != null)
             {
@@ -239,7 +249,8 @@ namespace StradarioApp.Services
             List<Percorso> routes,
             List<PoiGroup>? poiGroups,
             int? highlightedRouteId,
-            List<SKRect> occupiedLabelRects)
+            List<SKRect> occupiedLabelRects,
+            HashSet<(string Label, long LonKey, long LatKey)> seenLabelKeys)
         {
             (double x, double y) Project(double lon, double lat) =>
                 GeoUtils.GeoToPixel(lon, lat, centerLon, centerLat, zoom, canvasWidth, canvasHeight);
@@ -251,7 +262,8 @@ namespace StradarioApp.Services
                 float strokeMultiplier = route.Id == highlightedRouteId ? 2f : 1f;
                 PercorsoRenderer.Draw(canvas, route, Project,
                     strokeWidthMultiplier: strokeMultiplier,
-                    occupiedLabelRects: occupiedLabelRects);
+                    occupiedLabelRects: occupiedLabelRects,
+                    seenLabelKeys: seenLabelKeys);
             }
         }
 
@@ -272,7 +284,8 @@ namespace StradarioApp.Services
             double zoom,
             List<PoiGroup> poiGroups,
             (int GroupId, int ItemId)? highlightedPoi,
-            List<SKRect> occupiedLabelRects)
+            List<SKRect> occupiedLabelRects,
+            HashSet<(string Label, long LonKey, long LatKey)> seenLabelKeys)
         {
             const float markerSize = 22f;
 
@@ -293,9 +306,12 @@ namespace StradarioApp.Services
                     bool isHighlighted = highlightedPoi is { } h && h.GroupId == group.Id && h.ItemId == item.Id;
                     float size = isHighlighted ? markerSize * 2f : markerSize;
 
+                    bool skipLabel = !string.IsNullOrWhiteSpace(item.Label)
+                        && !seenLabelKeys.Add((item.Label, GeoUtils.LabelDedupKey(item.Lon), GeoUtils.LabelDedupKey(item.Lat)));
+
                     PoiIconRenderer.DrawWithLabel(canvas, item.Icon ?? PoiIconType.Pin, color, item.Label,
                         (float)x, (float)y, size,
-                        occupiedLabelRects: occupiedLabelRects, alwaysShow: true);
+                        occupiedLabelRects: occupiedLabelRects, alwaysShow: true, skipLabel: skipLabel);
                 }
             }
         }

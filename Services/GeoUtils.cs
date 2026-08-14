@@ -9,6 +9,7 @@
 // =============================================================================
 
 using System;
+using System.Collections.Generic;
 using StradarioApp.Models;
 
 namespace StradarioApp.Services
@@ -232,5 +233,38 @@ namespace StradarioApp.Services
                      * Math.Sin(dLon / 2) * Math.Sin(dLon / 2);
             return 2.0 * EarthRadiusKm * Math.Asin(Math.Sqrt(a));
         }
+
+        // Baricentro di una spezzata, pesato per la lunghezza di ogni
+        // segmento (non la semplice media dei vertici, che sovrapeserebbe
+        // i tratti con molti punti ravvicinati rispetto a un lungo tratto
+        // rettilineo con pochi vertici) — usato sia per centrare la mappa
+        // su un percorso cliccato in albero, sia come ancora dell'etichetta
+        // del nome percorso (mappa interattiva e PDF).
+        public static (double lon, double lat) PolylineCentroid(IReadOnlyList<GeoPoint> points)
+        {
+            if (points.Count == 1) return (points[0].Lon, points[0].Lat);
+
+            double sumLon = 0, sumLat = 0, sumLen = 0;
+            for (int i = 0; i < points.Count - 1; i++)
+            {
+                var a = points[i];
+                var b = points[i + 1];
+                double len = DistanceKm(a.Lon, a.Lat, b.Lon, b.Lat);
+                sumLon += (a.Lon + b.Lon) / 2.0 * len;
+                sumLat += (a.Lat + b.Lat) / 2.0 * len;
+                sumLen += len;
+            }
+
+            if (sumLen <= 0) return (points[0].Lon, points[0].Lat);
+            return (sumLon / sumLen, sumLat / sumLen);
+        }
+
+        // Arrotonda una coordinata (lon o lat) a una chiave intera con
+        // precisione ~0.1m, per riconoscere due punti come "lo stesso posto"
+        // pur con minime differenze di arrotondamento in virgola mobile —
+        // usato per deduplicare l'etichetta testuale quando più POI (inline
+        // su percorsi diversi, o un gruppo POI + un inline) coincidono nello
+        // stesso punto con lo stesso testo.
+        public static long LabelDedupKey(double coord) => (long)Math.Round(coord * 1_000_000.0);
     }
 }
