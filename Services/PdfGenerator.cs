@@ -897,11 +897,22 @@ namespace StradarioApp.Services
                 // il percorso stesso (non nella pagina POI separata, restano
                 // "dentro la definizione del percorso" come richiesto) — stesso
                 // layout icona/etichetta/coordinate/descrizione di DrawPoiListPages.
-                foreach (var point in r.Points)
+                var firstRoutePoint = r.Points[0];
+                for (int pi = 0; pi < r.Points.Count; pi++)
                 {
+                    var point = r.Points[pi];
                     if (!point.IsPoi) continue;
 
-                    bool hasPointDesc = !string.IsNullOrWhiteSpace(point.PoiDescription);
+                    // Percorso ad anello (ultimo punto coincidente col primo,
+                    // stesso POI): la descrizione è già stata stampata alla
+                    // riga del primo punto, non ripeterla identica alla fine.
+                    bool isClosingLoopDuplicate = pi == r.Points.Count - 1 && pi > 0
+                        && firstRoutePoint.IsPoi
+                        && Math.Abs(point.Lon - firstRoutePoint.Lon) < 1e-7
+                        && Math.Abs(point.Lat - firstRoutePoint.Lat) < 1e-7
+                        && string.Equals(point.PoiDescription, firstRoutePoint.PoiDescription, StringComparison.Ordinal);
+
+                    bool hasPointDesc = !isClosingLoopDuplicate && !string.IsNullOrWhiteSpace(point.PoiDescription);
                     double pointDescWidth = tableWidth - poiIconSize - 20;
                     var pointDescLines = hasPointDesc ? WrapText(gfx!, point.PoiDescription, poiDescFont, pointDescWidth) : new List<string>();
                     double neededPointH = poiItemRowH + pointDescLines.Count * poiDescRowH;
