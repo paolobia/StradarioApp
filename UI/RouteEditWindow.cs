@@ -1,10 +1,13 @@
 // =============================================================================
 // UI/RouteEditWindow.cs
 //
-// SINOSSI: Dialog di modifica di un percorso.
-//   Campi: etichetta, descrizione, colore (palette di swatch, riuso di
-//   PoiIconRenderer.Palette) ed elenco punti (lon/lat modificabili, elimina,
-//   sposta su/giù, aggiungi punto dal centro vista mappa corrente).
+// SINOSSI: Dialog di modifica di un percorso, a due tab (stesso pattern di
+//   SettingsWindow): "Percorso" (etichetta, descrizione, date, colore) e
+//   "Punti" (una pagina per punto — lon/lat, POI e relativo pannello — con
+//   frecce ◀/▶ per scorrere avanti/indietro). Prima era tutto su una sola
+//   colonna con l'elenco punti compresso in righe strette; separare in tab
+//   dà alla descrizione del percorso spazio reale a destra di Da/A, e a ogni
+//   punto un'intera pagina invece di una riga sottile.
 //   ANTEPRIMA LIVE: ogni modifica viene applicata SUBITO all'oggetto
 //   `Percorso` reale passato dal chiamante (route), non a una copia — così
 //   MainWindow può ridisegnare la mappa/l'albero ad ogni cambio tramite il
@@ -56,11 +59,17 @@ namespace StradarioApp.UI
         private TextBox?   _tbLabel;
         private TextBox?   _tbDescription;
         private WrapPanel?  _colorPanel;
-        private StackPanel? _pointsPanel;
         private TextBlock?  _statusText;
         private TextBlock?  _summaryText;
         private DateTimeFieldPair? _daField;
         private DateTimeFieldPair? _aField;
+
+        // Tab "Punti": indice della pagina correntemente mostrata.
+        private int _pointIndex = 0;
+        private ContentControl? _pointPageHost;
+        private TextBlock? _pointNavTitle;
+        private Button? _btnPointPrev;
+        private Button? _btnPointNext;
 
         public RouteEditWindow(Percorso route, double currentViewLon, double currentViewLat, Action? onLiveChange = null,
             Action<GeoPoint, Percorso>? onKeepDeletedPoiAsStandalone = null)
@@ -85,14 +94,14 @@ namespace StradarioApp.UI
             _backupPoints      = route.Points.Select(ClonePoint).ToList();
 
             Title  = route.Id == 0 ? Strings.Get("RouteEditWindow_TitoloNuovo") : string.Format(Strings.Get("RouteEditWindow_TitoloModifica"), route.Label);
-            Width  = 720;
-            Height = 620;
-            MinWidth  = 640;
-            MinHeight = 440;
+            Width  = 980;
+            Height = 640;
+            MinWidth  = 820;
+            MinHeight = 480;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
             BuildUI(route);
-            RefreshPoints();
+            RefreshPointPage();
 
             Closing += (_, _) =>
             {
@@ -129,75 +138,6 @@ namespace StradarioApp.UI
         {
             var root = new DockPanel { LastChildFill = true, Margin = new Thickness(16) };
 
-            var top = new Grid
-            {
-                RowDefinitions    = new RowDefinitions("Auto,Auto,Auto,Auto,Auto,Auto"),
-                ColumnDefinitions = new ColumnDefinitions("100,*")
-            };
-
-            int row = 0;
-            AddLabel(top, Strings.Get("RouteEditWindow_Etichetta"), row);
-            _tbLabel = new TextBox { Text = r.Label };
-            _tbLabel.LostFocus += (_, _) =>
-            {
-                string label = _tbLabel.Text?.Trim() ?? "";
-                _route.Label = string.IsNullOrEmpty(label) ? Strings.Get("RouteEditWindow_LabelDefault") : label;
-                _onLiveChange?.Invoke();
-            };
-            AddControl(top, _tbLabel, row++);
-
-            AddLabel(top, Strings.Get("RouteEditWindow_Descrizione"), row);
-            _tbDescription = new TextBox
-            {
-                Text          = r.Description,
-                AcceptsReturn = true,
-                TextWrapping  = TextWrapping.Wrap,
-                MinHeight     = 44,
-                MaxHeight     = 54
-            };
-            _tbDescription.LostFocus += (_, _) =>
-            {
-                _route.Description = _tbDescription.Text?.Trim() ?? "";
-                _onLiveChange?.Invoke();
-            };
-            AddControl(top, _tbDescription, row++);
-
-            AddLabel(top, Strings.Get("RouteEditWindow_Da"), row);
-            _daField = DialogUi.MakeDateTimeFieldPair(r.StartDateTime);
-            AddControl(top, _daField.Panel, row++);
-
-            AddLabel(top, Strings.Get("RouteEditWindow_A"), row);
-            _aField = DialogUi.MakeDateTimeFieldPair(r.EndDateTime);
-            AddControl(top, _aField.Panel, row++);
-
-            // Finché "A" resta vuoto, segue quello che si scrive in "Da".
-            DialogUi.WireAutoFillSecondFromFirst(_daField, _aField);
-
-            void CommitDates()
-            {
-                _route.StartDateTime = DialogUi.CombineDateTimeFields(_daField!);
-                _route.EndDateTime   = DialogUi.CombineDateTimeFields(_aField!);
-                _onLiveChange?.Invoke();
-            }
-            _daField.Calendar.PropertyChanged += (_, _) => CommitDates();
-            _aField.Calendar.PropertyChanged  += (_, _) => CommitDates();
-            _daField.TimeChanged += _ => CommitDates();
-            _aField.TimeChanged  += _ => CommitDates();
-
-            AddLabel(top, Strings.Get("RouteEditWindow_Colore"), row);
-            _colorPanel = new WrapPanel { Orientation = Orientation.Horizontal };
-            AddControl(top, _colorPanel, row++);
-            BuildColorSwatches();
-
-            _summaryText = new TextBlock { FontSize = 11, Foreground = Brushes.DimGray, Margin = new Thickness(0, 6, 0, 0) };
-            Grid.SetRow(_summaryText, row);
-            Grid.SetColumn(_summaryText, 0);
-            Grid.SetColumnSpan(_summaryText, 2);
-            top.Children.Add(_summaryText);
-
-            DockPanel.SetDock(top, Dock.Top);
-            root.Children.Add(top);
-
             // ---- Bottoni OK/Annulla in basso ----
             var btnRow = new StackPanel
             {
@@ -227,32 +167,98 @@ namespace StradarioApp.UI
             DockPanel.SetDock(_statusText, Dock.Bottom);
             root.Children.Add(_statusText);
 
-            // ---- Sezione punti ----
-            var pointsHeader = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Spacing     = 8,
-                Margin      = new Thickness(0, 10, 0, 4)
-            };
-            pointsHeader.Children.Add(new TextBlock { Text = Strings.Get("RouteEditWindow_PuntiDelPercorso"), FontWeight = FontWeight.Bold, VerticalAlignment = VerticalAlignment.Center });
-            var btnAddPoint = DialogUi.MakeIconTextButton(BootstrapIcons.Locate, Strings.Get("RouteEditWindow_AggiungiPunto"));
-            btnAddPoint.Padding = new Thickness(8, 4);
-            btnAddPoint.FontSize = 11;
-            btnAddPoint.Click += (_, _) =>
-            {
-                _workingPoints.Add(new GeoPoint { Lon = _currentViewLon, Lat = _currentViewLat });
-                RefreshPoints();
-                _onLiveChange?.Invoke();
-            };
-            pointsHeader.Children.Add(btnAddPoint);
-            DockPanel.SetDock(pointsHeader, Dock.Top);
-            root.Children.Add(pointsHeader);
-
-            _pointsPanel = new StackPanel { Spacing = 3 };
-            var scroll = new ScrollViewer { Content = _pointsPanel };
-            root.Children.Add(scroll);
+            var tabs = new TabControl();
+            tabs.Items.Add(new TabItem { Header = Strings.Get("RouteEditWindow_TabPercorso"), Content = BuildRouteTab(r) });
+            tabs.Items.Add(new TabItem { Header = Strings.Get("RouteEditWindow_TabPunti"),     Content = BuildPointsTab() });
+            root.Children.Add(tabs);
 
             Content = root;
+        }
+
+        // ---- Tab 1: dati del percorso ----------------------------------
+        // Stesso schema del tab "Punti" (BuildPointPage): campi impilati in
+        // alto in un DockPanel, Descrizione come ultimo figlio che riempie
+        // (LastChildFill) tutto lo spazio residuo — non più affiancata a
+        // Da/A, richiesta esplicita dopo la prima versione "a due colonne".
+        private Control BuildRouteTab(Percorso r)
+        {
+            var outer = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 14, 0, 0) };
+
+            var grid = new Grid
+            {
+                RowDefinitions    = new RowDefinitions("Auto,Auto,Auto,Auto"),
+                ColumnDefinitions = new ColumnDefinitions("100,*"),
+                Margin            = new Thickness(0, 0, 0, 14)
+            };
+
+            AddLabel(grid, Strings.Get("RouteEditWindow_Etichetta"), 0);
+            _tbLabel = new TextBox { Text = r.Label };
+            _tbLabel.LostFocus += (_, _) =>
+            {
+                string label = _tbLabel.Text?.Trim() ?? "";
+                _route.Label = string.IsNullOrEmpty(label) ? Strings.Get("RouteEditWindow_LabelDefault") : label;
+                _onLiveChange?.Invoke();
+            };
+            AddControl(grid, _tbLabel, 0);
+
+            AddLabel(grid, Strings.Get("RouteEditWindow_Da"), 1);
+            _daField = DialogUi.MakeDateTimeFieldPair(r.StartDateTime);
+            AddControl(grid, _daField.Panel, 1);
+
+            AddLabel(grid, Strings.Get("RouteEditWindow_A"), 2);
+            _aField = DialogUi.MakeDateTimeFieldPair(r.EndDateTime);
+            AddControl(grid, _aField.Panel, 2);
+
+            // Finché "A" resta vuoto, segue quello che si scrive in "Da".
+            DialogUi.WireAutoFillSecondFromFirst(_daField, _aField);
+
+            void CommitDates()
+            {
+                _route.StartDateTime = DialogUi.CombineDateTimeFields(_daField!);
+                _route.EndDateTime   = DialogUi.CombineDateTimeFields(_aField!);
+                _onLiveChange?.Invoke();
+            }
+            _daField.Calendar.PropertyChanged += (_, _) => CommitDates();
+            _aField.Calendar.PropertyChanged  += (_, _) => CommitDates();
+            _daField.TimeChanged += _ => CommitDates();
+            _aField.TimeChanged  += _ => CommitDates();
+
+            AddLabel(grid, Strings.Get("RouteEditWindow_Colore"), 3);
+            _colorPanel = new WrapPanel { Orientation = Orientation.Horizontal };
+            AddControl(grid, _colorPanel, 3);
+            BuildColorSwatches();
+
+            DockPanel.SetDock(grid, Dock.Top);
+            outer.Children.Add(grid);
+
+            _summaryText = new TextBlock { FontSize = 11, Foreground = Brushes.DimGray, Margin = new Thickness(0, 0, 0, 14) };
+            DockPanel.SetDock(_summaryText, Dock.Top);
+            outer.Children.Add(_summaryText);
+            RecalcSummary();
+
+            // Ultimo figlio (fill): Descrizione, a piena larghezza e
+            // riempie tutto lo spazio verticale residuo del tab.
+            var descRow = new Grid { ColumnDefinitions = new ColumnDefinitions("100,*") };
+            descRow.Children.Add(new TextBlock { Text = Strings.Get("RouteEditWindow_Descrizione"), VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 8, 8, 0) });
+            _tbDescription = new TextBox
+            {
+                Text          = r.Description,
+                AcceptsReturn = true,
+                TextWrapping  = TextWrapping.Wrap,
+                VerticalContentAlignment = VerticalAlignment.Top,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                MinHeight     = 90
+            };
+            _tbDescription.LostFocus += (_, _) =>
+            {
+                _route.Description = _tbDescription.Text?.Trim() ?? "";
+                _onLiveChange?.Invoke();
+            };
+            Grid.SetColumn(_tbDescription, 1);
+            descRow.Children.Add(_tbDescription);
+            outer.Children.Add(descRow);
+
+            return outer;
         }
 
         private void BuildColorSwatches()
@@ -279,32 +285,15 @@ namespace StradarioApp.UI
                     _selectedColor = hex;
                     _route.ColorHex = hex;
                     BuildColorSwatches();
+                    RefreshPointPage(); // la spunta POI del punto corrente riflette il colore del percorso
                     _onLiveChange?.Invoke();
                 };
                 _colorPanel.Children.Add(swatch);
             }
         }
 
-        private void RefreshPoints()
+        private void RecalcSummary()
         {
-            if (_pointsPanel == null) return;
-            _pointsPanel.Children.Clear();
-
-            if (_workingPoints.Count == 0)
-            {
-                _pointsPanel.Children.Add(new TextBlock
-                {
-                    Text         = Strings.Get("RouteEditWindow_NessunPunto"),
-                    FontSize     = 11,
-                    Foreground   = Brushes.Gray,
-                    Margin       = new Thickness(2, 8),
-                    TextWrapping = TextWrapping.Wrap
-                });
-            }
-
-            for (int i = 0; i < _workingPoints.Count; i++)
-                _pointsPanel.Children.Add(BuildPointRow(i));
-
             double lengthKm = 0;
             for (int i = 1; i < _workingPoints.Count; i++)
                 lengthKm += GeoUtils.DistanceKm(
@@ -315,79 +304,154 @@ namespace StradarioApp.UI
                 _summaryText.Text = string.Format(Strings.Get("RouteEditWindow_PuntiLunghezza"), _workingPoints.Count, lengthKm.ToString("0.##"));
         }
 
-        private Control BuildPointRow(int index)
+        // ---- Tab 2: punti, una pagina alla volta -----------------------
+        private Control BuildPointsTab()
+        {
+            var root = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 14, 0, 0) };
+
+            var navRow = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto,Auto") };
+
+            _btnPointPrev = DialogUi.MakeTreeIconButton(BootstrapIcons.ChevronLeft, Strings.Get("RouteEditWindow_PuntoPrecedente"), Brushes.SteelBlue, () =>
+            {
+                if (_pointIndex > 0) { _pointIndex--; RefreshPointPage(); }
+            }, size: 30);
+            Grid.SetColumn(_btnPointPrev, 0);
+            navRow.Children.Add(_btnPointPrev);
+
+            _pointNavTitle = new TextBlock
+            {
+                FontWeight          = FontWeight.Bold,
+                FontSize            = 13,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment   = VerticalAlignment.Center
+            };
+            Grid.SetColumn(_pointNavTitle, 1);
+            navRow.Children.Add(_pointNavTitle);
+
+            _btnPointNext = DialogUi.MakeTreeIconButton(BootstrapIcons.ChevronRight, Strings.Get("RouteEditWindow_PuntoSuccessivo"), Brushes.SteelBlue, () =>
+            {
+                if (_pointIndex < _workingPoints.Count - 1) { _pointIndex++; RefreshPointPage(); }
+            }, size: 30);
+            Grid.SetColumn(_btnPointNext, 2);
+            navRow.Children.Add(_btnPointNext);
+
+            var btnAddPoint = DialogUi.MakeIconTextButton(BootstrapIcons.Locate, Strings.Get("RouteEditWindow_AggiungiPunto"));
+            btnAddPoint.Padding  = new Thickness(8, 4);
+            btnAddPoint.FontSize = 11;
+            btnAddPoint.Margin   = new Thickness(12, 0, 0, 0);
+            btnAddPoint.Click += (_, _) =>
+            {
+                _workingPoints.Add(new GeoPoint { Lon = _currentViewLon, Lat = _currentViewLat });
+                _pointIndex = _workingPoints.Count - 1;
+                RefreshPointPage();
+                _onLiveChange?.Invoke();
+            };
+            Grid.SetColumn(btnAddPoint, 3);
+            navRow.Children.Add(btnAddPoint);
+
+            DockPanel.SetDock(navRow, Dock.Top);
+            root.Children.Add(navRow);
+
+            // Niente ScrollViewer attorno: un ContentControl dentro uno
+            // ScrollViewer verrebbe misurato con altezza "infinita" e non
+            // si estenderebbe mai oltre il proprio contenuto minimo — per
+            // far arrivare la Descrizione fino in fondo al tab serve che
+            // questo host riceva davvero l'altezza residua reale del
+            // DockPanel (fill, LastChildFill).
+            _pointPageHost = new ContentControl { Margin = new Thickness(0, 14, 0, 0) };
+            root.Children.Add(_pointPageHost);
+
+            return root;
+        }
+
+        private void RefreshPointPage()
+        {
+            if (_pointIndex >= _workingPoints.Count) _pointIndex = _workingPoints.Count - 1;
+            if (_pointIndex < 0) _pointIndex = 0;
+
+            if (_btnPointPrev != null) _btnPointPrev.IsEnabled = _pointIndex > 0;
+            if (_btnPointNext != null) _btnPointNext.IsEnabled = _pointIndex < _workingPoints.Count - 1;
+
+            if (_pointNavTitle != null)
+            {
+                _pointNavTitle.Text = _workingPoints.Count == 0
+                    ? Strings.Get("RouteEditWindow_NessunPunto")
+                    : string.Format(Strings.Get("RouteEditWindow_PuntoDiTotale"), _pointIndex + 1, _workingPoints.Count);
+            }
+
+            if (_pointPageHost != null)
+                _pointPageHost.Content = _workingPoints.Count == 0 ? null : BuildPointPage(_pointIndex);
+
+            RecalcSummary();
+        }
+
+        private Control BuildPointPage(int index)
         {
             var p = _workingPoints[index];
 
-            var border = new Border
+            // DockPanel, non StackPanel: solo così l'ultimo figlio (il
+            // pannello POI, quando presente) può riempire con
+            // LastChildFill tutta l'altezza residua della pagina invece di
+            // fermarsi alla propria dimensione minima.
+            var outer = new DockPanel { LastChildFill = true };
+
+            var grid = new Grid
             {
-                Background      = Brushes.White,
-                BorderBrush     = Brushes.Gainsboro,
-                BorderThickness = new Thickness(1),
-                CornerRadius    = new CornerRadius(3),
-                Margin          = new Thickness(0, 1),
-                Padding         = new Thickness(6, 3)
+                RowDefinitions    = new RowDefinitions("Auto,Auto"),
+                ColumnDefinitions = new ColumnDefinitions("110,*"),
+                Margin            = new Thickness(0, 0, 0, 14)
             };
 
-            var outer = new StackPanel { Spacing = 4 };
+            AddLabel(grid, Strings.Get("RouteEditWindow_Longitudine"), 0);
+            var tbLon = new TextBox { Text = $"{p.Lon:F6}", MaxWidth = 200, HorizontalAlignment = HorizontalAlignment.Left };
+            AddControl(grid, tbLon, 0);
 
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,*,Auto,Auto,Auto,Auto") };
+            AddLabel(grid, Strings.Get("RouteEditWindow_Latitudine"), 1);
+            var tbLat = new TextBox { Text = $"{p.Lat:F6}", MaxWidth = 200, HorizontalAlignment = HorizontalAlignment.Left };
+            AddControl(grid, tbLat, 1);
 
-            row.Children.Add(new TextBlock
-            {
-                Text = (index + 1).ToString(),
-                Width = 18,
-                FontSize = 11,
-                Foreground = Brushes.DimGray,
-                VerticalAlignment = VerticalAlignment.Center
-            });
-
-            var tbLon = new TextBox { Text = $"{p.Lon:F6}", FontSize = 11, Margin = new Thickness(2, 0) };
-            var tbLat = new TextBox { Text = $"{p.Lat:F6}", FontSize = 11, Margin = new Thickness(2, 0) };
             tbLon.LostFocus += (_, _) => CommitPoint(index, tbLon, tbLat);
             tbLat.LostFocus += (_, _) => CommitPoint(index, tbLon, tbLat);
-            Grid.SetColumn(tbLon, 1);
-            Grid.SetColumn(tbLat, 2);
-            row.Children.Add(tbLon);
-            row.Children.Add(tbLat);
 
-            // Attiva/disattiva "questo punto è anche un POI": il colore
-            // dell'icona segue quello del percorso quando attivo, così si
-            // vede a colpo d'occhio senza bisogno di un riquadro colorato
-            // separato (coerente con MakeTreeIconButton, che colora solo il
-            // glifo, mai lo sfondo).
+            DockPanel.SetDock(grid, Dock.Top);
+            outer.Children.Add(grid);
+
+            var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, 0, 0, 14) };
+
             var poiBrush = p.IsPoi ? new SolidColorBrush(Color.Parse(_selectedColor)) : (IBrush)Brushes.Gray;
-            var btnPoi = DialogUi.MakeTreeIconButton(BootstrapIcons.Locate, Strings.Get("RouteEditWindow_TogglePoi"), poiBrush, () =>
+            var btnPoi = DialogUi.MakeIconTextButton(BootstrapIcons.Locate, Strings.Get("RouteEditWindow_TogglePoi"));
+            btnPoi.FontSize = 11;
+            btnPoi.Padding  = new Thickness(8, 4);
+            btnPoi.Click += (_, _) =>
             {
                 p.IsPoi = !p.IsPoi;
                 if (p.IsPoi && string.IsNullOrWhiteSpace(p.PoiLabel))
                     p.PoiLabel = $"POI{index + 1}";
                 if (p.IsPoi) ApplySuggestedIcon(p);
-                RefreshPoints();
+                RefreshPointPage();
                 _onLiveChange?.Invoke();
-            });
-            Grid.SetColumn(btnPoi, 3);
-            row.Children.Add(btnPoi);
+            };
+            actions.Children.Add(btnPoi);
 
             var btnUp = DialogUi.MakeTreeIconButton(BootstrapIcons.ChevronUp, Strings.Get("RouteEditWindow_SpostaSu"), Brushes.SteelBlue, () =>
             {
                 if (index == 0) return;
                 (_workingPoints[index - 1], _workingPoints[index]) = (_workingPoints[index], _workingPoints[index - 1]);
-                RefreshPoints();
+                _pointIndex = index - 1;
+                RefreshPointPage();
                 _onLiveChange?.Invoke();
             });
-            Grid.SetColumn(btnUp, 4);
-            row.Children.Add(btnUp);
+            actions.Children.Add(btnUp);
 
             var btnDown = DialogUi.MakeTreeIconButton(BootstrapIcons.ChevronDown, Strings.Get("RouteEditWindow_SpostaGiu"), Brushes.SteelBlue, () =>
             {
                 if (index == _workingPoints.Count - 1) return;
                 (_workingPoints[index + 1], _workingPoints[index]) = (_workingPoints[index], _workingPoints[index + 1]);
-                RefreshPoints();
+                _pointIndex = index + 1;
+                RefreshPointPage();
                 _onLiveChange?.Invoke();
             });
-            Grid.SetColumn(btnDown, 5);
-            row.Children.Add(btnDown);
+            actions.Children.Add(btnDown);
 
             var btnDel = DialogUi.MakeTreeIconButton(BootstrapIcons.Close, Strings.Get("RouteEditWindow_EliminaPunto"), Brushes.Crimson, async () =>
             {
@@ -417,31 +481,40 @@ namespace StradarioApp.UI
                     if (keep) _onKeepDeletedPoiAsStandalone(p, _route);
                 }
                 _workingPoints.RemoveAt(index);
-                RefreshPoints();
+                if (_pointIndex >= _workingPoints.Count) _pointIndex = _workingPoints.Count - 1;
+                RefreshPointPage();
                 _onLiveChange?.Invoke();
             });
-            Grid.SetColumn(btnDel, 6);
-            row.Children.Add(btnDel);
+            actions.Children.Add(btnDel);
 
-            outer.Children.Add(row);
+            DockPanel.SetDock(actions, Dock.Top);
+            outer.Children.Add(actions);
 
-            if (p.IsPoi)
-                outer.Children.Add(BuildPointPoiPanel(p));
+            // Ultimo figlio del DockPanel (LastChildFill): riempie tutto lo
+            // spazio verticale residuo. Se il punto non è marcato POI non
+            // c'è niente da mostrare qui — un pannello vuoto assorbe
+            // comunque lo spazio così "actions" sopra non viene stirato al
+            // suo posto.
+            outer.Children.Add(p.IsPoi ? BuildPointPoiPanel(p) : new Panel());
 
-            border.Child = outer;
-            return border;
+            return outer;
         }
 
         // Pannello espanso mostrato quando un punto è marcato come POI:
         // griglia icone (stesso pattern di PoiGroupEditWindow.BuildIconGrid,
         // ma colorata col colore del PERCORSO, mai un colore proprio) più
-        // etichetta e descrizione. Modifiche applicate direttamente sul
-        // GeoPoint di lavoro (già l'oggetto reale, v. anteprima live).
+        // etichetta e descrizione, ora a piena larghezza/altezza (l'intera
+        // pagina del punto è dedicata a un solo punto). Modifiche applicate
+        // direttamente sul GeoPoint di lavoro (già l'oggetto reale, v.
+        // anteprima live).
         private Control BuildPointPoiPanel(GeoPoint p)
         {
-            var panel = new StackPanel { Spacing = 4, Margin = new Thickness(20, 2, 2, 4) };
+            // DockPanel: icone ed etichetta restano in alto (Dock.Top), la
+            // riga Descrizione è l'ultimo figlio e con LastChildFill si
+            // estende fino in fondo alla pagina del punto.
+            var panel = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 4, 0, 4) };
 
-            var iconPanel = new WrapPanel { Orientation = Orientation.Horizontal };
+            var iconPanel = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
 
             var color = PoiIconRenderer.ParseColor(_selectedColor);
             foreach (var entry in PoiIcons.All)
@@ -453,57 +526,59 @@ namespace StradarioApp.UI
 
                 var tile = new Border
                 {
-                    Width           = 30,
-                    Height          = 30,
+                    Width           = 34,
+                    Height          = 34,
                     Margin          = new Thickness(1),
                     CornerRadius    = new CornerRadius(4),
                     Background      = isSelected ? new SolidColorBrush(Color.Parse("#CCE8FF")) : Brushes.Transparent,
                     BorderBrush     = isSelected ? Brushes.SteelBlue : Brushes.LightGray,
                     BorderThickness = new Thickness(1),
                     Cursor          = new Cursor(StandardCursorType.Hand),
-                    Child           = new Image { Source = avaloniaBmp, Width = 22, Height = 22, Stretch = Stretch.Uniform }
+                    Child           = new Image { Source = avaloniaBmp, Width = 24, Height = 24, Stretch = Stretch.Uniform }
                 };
                 ToolTip.SetTip(tile, entry.Name);
                 tile.PointerPressed += (_, _) =>
                 {
                     p.PoiIcon = entry.Type;
-                    RefreshPoints();
+                    RefreshPointPage();
                     _onLiveChange?.Invoke();
                 };
                 iconPanel.Children.Add(tile);
             }
+            DockPanel.SetDock(iconPanel, Dock.Top);
             panel.Children.Add(iconPanel);
 
-            var labelRow = new Grid { ColumnDefinitions = new ColumnDefinitions("70,*") };
-            labelRow.Children.Add(new TextBlock { Text = Strings.Get("RouteEditWindow_PoiLabel"), VerticalAlignment = VerticalAlignment.Center, FontSize = 11 });
-            var tbPoiLabel = new TextBox { Text = p.PoiLabel, FontSize = 11 };
+            var labelRow = new Grid { ColumnDefinitions = new ColumnDefinitions("110,*"), Margin = new Thickness(0, 0, 0, 8) };
+            labelRow.Children.Add(new TextBlock { Text = Strings.Get("RouteEditWindow_PoiLabel"), VerticalAlignment = VerticalAlignment.Center });
+            var tbPoiLabel = new TextBox { Text = p.PoiLabel, MaxWidth = 300, HorizontalAlignment = HorizontalAlignment.Left };
             tbPoiLabel.LostFocus += (_, _) =>
             {
                 p.PoiLabel = tbPoiLabel.Text ?? "";
                 bool iconChanged = ApplySuggestedIcon(p);
-                if (iconChanged) RefreshPoints();
+                if (iconChanged) RefreshPointPage();
                 _onLiveChange?.Invoke();
             };
             Grid.SetColumn(tbPoiLabel, 1);
             labelRow.Children.Add(tbPoiLabel);
+            DockPanel.SetDock(labelRow, Dock.Top);
             panel.Children.Add(labelRow);
 
-            var descRow = new Grid { ColumnDefinitions = new ColumnDefinitions("70,*") };
-            descRow.Children.Add(new TextBlock { Text = Strings.Get("RouteEditWindow_PoiDescrizione"), VerticalAlignment = VerticalAlignment.Top, FontSize = 11 });
+            var descRow = new Grid { ColumnDefinitions = new ColumnDefinitions("110,*") };
+            descRow.Children.Add(new TextBlock { Text = Strings.Get("RouteEditWindow_PoiDescrizione"), VerticalAlignment = VerticalAlignment.Top });
             var tbPoiDesc = new TextBox
             {
                 Text          = p.PoiDescription,
-                FontSize      = 11,
                 AcceptsReturn = true,
                 TextWrapping  = TextWrapping.Wrap,
-                MinHeight     = 40,
-                MaxHeight     = 60
+                VerticalContentAlignment = VerticalAlignment.Top,
+                MinHeight     = 110,
+                VerticalAlignment = VerticalAlignment.Stretch
             };
             tbPoiDesc.LostFocus += (_, _) =>
             {
                 p.PoiDescription = tbPoiDesc.Text ?? "";
                 bool iconChanged = ApplySuggestedIcon(p);
-                if (iconChanged) RefreshPoints();
+                if (iconChanged) RefreshPointPage();
                 _onLiveChange?.Invoke();
             };
             Grid.SetColumn(tbPoiDesc, 1);
@@ -537,35 +612,30 @@ namespace StradarioApp.UI
             if (double.TryParse((tbLat.Text ?? "").Replace(',', '.'), NumberStyles.Float, inv, out double lat))
                 _workingPoints[index].Lat = Math.Clamp(lat, -85, 85);
 
-            double lengthKm = 0;
-            for (int i = 1; i < _workingPoints.Count; i++)
-                lengthKm += GeoUtils.DistanceKm(
-                    _workingPoints[i - 1].Lon, _workingPoints[i - 1].Lat,
-                    _workingPoints[i].Lon,     _workingPoints[i].Lat);
-            if (_summaryText != null)
-                _summaryText.Text = string.Format(Strings.Get("RouteEditWindow_PuntiLunghezza"), _workingPoints.Count, lengthKm.ToString("0.##"));
-
+            RecalcSummary();
             _onLiveChange?.Invoke();
         }
 
-        private void AddLabel(Grid grid, string text, int row)
+        private void AddLabel(Grid grid, string text, int row, int column = 0, int span = 1, bool isDescLabel = false)
         {
             var lbl = new TextBlock
             {
                 Text              = text,
                 VerticalAlignment = VerticalAlignment.Top,
-                Margin            = new Thickness(0, 8, 8, 0)
+                Margin            = new Thickness(0, isDescLabel ? 20 : 8, 8, 0)
             };
             Grid.SetRow(lbl, row);
-            Grid.SetColumn(lbl, 0);
+            Grid.SetColumn(lbl, column);
+            if (span > 1) Grid.SetColumnSpan(lbl, span);
             grid.Children.Add(lbl);
         }
 
-        private void AddControl(Grid grid, Control ctrl, int row)
+        private void AddControl(Grid grid, Control ctrl, int row, int column = 1, int span = 1)
         {
             ctrl.Margin = new Thickness(0, 4, 0, 0);
             Grid.SetRow(ctrl, row);
-            Grid.SetColumn(ctrl, 1);
+            Grid.SetColumn(ctrl, column);
+            if (span > 1) Grid.SetColumnSpan(ctrl, span);
             grid.Children.Add(ctrl);
         }
 

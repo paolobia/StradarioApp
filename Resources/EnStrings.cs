@@ -205,6 +205,13 @@ namespace StradarioApp.Resources
             ["RouteEditWindow_PoiDescrizione"] = "Description:",
             ["RouteEditWindow_MinimoDuePunti"] = "The route must have at least 2 points.",
             ["RouteEditWindow_LabelDefault"] = "Route",
+            ["RouteEditWindow_TabPercorso"] = "Route",
+            ["RouteEditWindow_TabPunti"] = "Points",
+            ["RouteEditWindow_PuntoDiTotale"] = "Point {0} of {1}",
+            ["RouteEditWindow_PuntoPrecedente"] = "Previous point",
+            ["RouteEditWindow_PuntoSuccessivo"] = "Next point",
+            ["RouteEditWindow_Longitudine"] = "Longitude:",
+            ["RouteEditWindow_Latitudine"] = "Latitude:",
 
             // UI/PoiManagerWindow.cs
             ["PoiManagerWindow_Titolo"] = "Manage points of interest",

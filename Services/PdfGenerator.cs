@@ -546,7 +546,40 @@ namespace StradarioApp.Services
 
             NewPage();
 
-            double dateColWidth = 110;
+            // Colonna data larga solo quanto serve al testo più lungo
+            // effettivamente presente (misurato, non un valore fisso a
+            // occhio) più un piccolo margine — prima era un fisso 110pt che
+            // lasciava un vuoto vistoso tra la fine dell'orario e l'icona;
+            // il resto (18pt fissi già sottratti sotto, invariati) va tutto
+            // alla colonna di descrizione a destra.
+            const double dateColPadding = 4;
+            const double dateColMinWidth = 30;
+            double dateColWidth = dateColMinWidth;
+            foreach (var entry in entries)
+            {
+                string dt = entry.Date.HasValue ? ItineraryOrdering.FormatSingleDate(entry.Date.Value, includeDayAbbrev: true, hideBoundaryTimes: true) : "—";
+                double dtWidth = gfx!.MeasureString(dt, dateFontSunday).Width; // font Bold (Domenica) è il più largo dei due
+                if (dtWidth > dateColWidth) dateColWidth = dtWidth;
+            }
+            dateColWidth += dateColPadding;
+
+            // Riga sottile che separa la colonna data dall'icona/etichetta,
+            // continua per tutta l'altezza della tabella (non spezzata voce
+            // per voce) — stesso grigio chiaro usato altrove per i
+            // separatori di colonna (v. DrawPercorsiListPages). Ricomincia
+            // da capo a ogni cambio pagina (PageBreak sotto).
+            var dateColSepPen = new XPen(XColor.FromArgb(200, 200, 200), 0.5);
+            double dateColLineX = margin + dateColWidth - 2;
+            double lineTopY = y;
+
+            void PageBreak()
+            {
+                if (gfx != null)
+                    gfx.DrawLine(dateColSepPen, dateColLineX, lineTopY, dateColLineX, y);
+                NewPage();
+                lineTopY = y;
+            }
+
             foreach (var entry in entries)
             {
                 bool hasDesc = !string.IsNullOrWhiteSpace(entry.Description);
@@ -554,7 +587,7 @@ namespace StradarioApp.Services
                 var descLines = hasDesc ? WrapText(gfx!, entry.Description!, descFont, descWidth) : new List<string>();
                 double neededH = rowH + descLines.Count * descRowH;
                 if (y + neededH > h - margin)
-                    NewPage();
+                    PageBreak();
 
                 string dateText = entry.Date.HasValue ? ItineraryOrdering.FormatSingleDate(entry.Date.Value, includeDayAbbrev: true, hideBoundaryTimes: true) : "—";
                 bool isSunday = entry.Date.HasValue && entry.Date.Value.DayOfWeek == DayOfWeek.Sunday;
@@ -599,7 +632,7 @@ namespace StradarioApp.Services
                         var npDescLines = hasNpDesc ? WrapText(gfx!, np.Description!, nestedDescFont, npDescWidth) : new List<string>();
                         double neededNpH = nestedRowH + npDescLines.Count * nestedDescRowH;
                         if (y + neededNpH > h - margin)
-                            NewPage();
+                            PageBreak();
 
                         double npIconY = y + (nestedRowH - nestedIconSize * 0.85) / 2.0;
                         gfx!.DrawImage(GetIcon(np.Icon, entry.ColorHex), nestedX, npIconY, nestedIconSize * 0.85, nestedIconSize * 0.85);
@@ -621,6 +654,11 @@ namespace StradarioApp.Services
                     }
                 }
             }
+
+            // Tratto finale della riga, per l'ultima pagina (le pagine
+            // precedenti sono già state chiuse da PageBreak sopra).
+            if (gfx != null)
+                gfx.DrawLine(dateColSepPen, dateColLineX, lineTopY, dateColLineX, y);
 
             return pageCount;
         }
