@@ -77,7 +77,7 @@ namespace StradarioApp.Services
 
             // Calcola dimensioni pagina PDF
             var (pageWidthMm, pageHeightMm) = settings.GetPageDimensionsMm();
-            string title = string.IsNullOrWhiteSpace(coverTitle) ? project.ProjectName : coverTitle!;
+            string title = string.IsNullOrWhiteSpace(coverTitle) ? Path.GetFileNameWithoutExtension(outputPath) : coverTitle!;
 
             var pdfDoc = new PdfDocument();
             pdfDoc.Info.Title   = title;
@@ -159,7 +159,7 @@ namespace StradarioApp.Services
                 progress?.Invoke(itineraryPageCount + poiPageCount + percorsiPageCount, totalSteps, "Generazione indice...");
                 var indexPage = pdfDoc.AddPage();
                 SetPageSize(indexPage, pageWidthMm, pageHeightMm);
-                DrawIndexPage(indexPage, sorted, project.ProjectName, settings);
+                DrawIndexPage(indexPage, sorted, title, settings);
             }
 
             // ---------------------------------------------------------------
@@ -169,7 +169,7 @@ namespace StradarioApp.Services
             var overviewPage = pdfDoc.AddPage();
             SetPageSize(overviewPage, pageWidthMm, pageHeightMm);
             var overviewBitmap = await RenderOverviewAsync(sorted, poiGroups, percorsi, settings);
-            DrawOverviewPage(overviewPage, overviewBitmap, sorted, poiGroups, percorsi, project.ProjectName, settings);
+            DrawOverviewPage(overviewPage, overviewBitmap, sorted, poiGroups, percorsi, title, settings);
             overviewBitmap?.Dispose();
 
             // ---------------------------------------------------------------

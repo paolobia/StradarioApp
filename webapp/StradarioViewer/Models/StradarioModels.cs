@@ -17,7 +17,6 @@ namespace StradarioViewer.Models;
 
 public sealed class StradarioProject
 {
-    public string ProjectName { get; set; } = "";
     public List<PoiGroup> PoiGroups { get; set; } = new();
     public List<Percorso> Percorsi { get; set; } = new();
     public double ViewCenterLon { get; set; } = 12.4964;

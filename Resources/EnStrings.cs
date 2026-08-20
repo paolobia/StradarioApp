@@ -329,7 +329,7 @@ namespace StradarioApp.Resources
             ["MainWindow_FiltroStradario"] = "Stradario",
             ["MainWindow_TitoloApp"] = "Stradario",
             ["MainWindow_SenzaTitolo"] = "Untitled",
-            ["MainWindow_StatusBarRiepilogo"] = "{0} pages   ·   {1} POIs ({2} groups)   ·   {3} routes   ·   {4} [{5}]{6}",
+            ["MainWindow_StatusBarRiepilogo"] = "{0} pages   ·   {1} POIs ({2} groups)   ·   {3} routes   ·   {4}{5}",
             ["MainWindow_Svuota"] = "Clear",
             ["MainWindow_FileRecenti"] = "Recent files",
             ["MainWindow_NuovoProgetto"] = "New project",
@@ -550,7 +550,7 @@ namespace StradarioApp.Resources
             ["MainWindow_EsportaPercorsiTitolo"] = "Export routes",
             ["MainWindow_FiltroKmzZip"] = "KMZ (zip)",
             ["MainWindow_Ok"] = "OK",
-            ["MainWindow_TitoloConProgetto"] = "Stradario - {0} [{1}]{2}",
+            ["MainWindow_TitoloConProgetto"] = "Stradario - {0}{1}",
             ["MainWindow_ErroreTitolo"] = "Error",
 
             ["AboutWindow_Titolo"] = "About StradarioApp",

@@ -801,7 +801,7 @@ namespace StradarioApp.UI
                         {
                             Title            = Strings.Get("MainWindow_SalvaProgettoTitolo"),
                             DefaultExtension = "stradario",
-                            SuggestedFileName = _project.ProjectName,
+                            SuggestedFileName = SuggestedProjectFileName(),
                             SuggestedStartLocation = await GetSuggestedStartFolderAsync(),
                             FileTypeChoices  = new[]
                             {
@@ -988,7 +988,7 @@ namespace StradarioApp.UI
             _statusBarSummaryText.Text = string.Format(
                 Strings.Get("MainWindow_StatusBarRiepilogo"),
                 _project.Pages.Count, poiCount, _project.PoiGroups.Count,
-                _project.Percorsi.Count, _project.ProjectName, file, (_isDirty ? " •" : ""));
+                _project.Percorsi.Count, file, (_isDirty ? " •" : ""));
         }
 
         // Mostra un messaggio temporaneo nella barra di stato (esito di
@@ -5396,7 +5396,7 @@ namespace StradarioApp.UI
             if (!await ConfirmDiscardCurrentProjectAsync()) return;
 
             // Crea nuovo progetto vuoto centrato su Roma
-            _project         = new StradarioProject { ProjectName = Strings.Get("MainWindow_NuovoStradarioProjectName") };
+            _project         = new StradarioProject();
             _currentFilePath = null;
             _isDirty         = false;
             _selectedPageId  = null;
@@ -5554,6 +5554,15 @@ namespace StradarioApp.UI
 
         private async void OnSaveProjectAs(object? sender, RoutedEventArgs e) => await SaveProjectAsAsync();
 
+        // Nome suggerito nei dialog "Salva come": il progetto non ha più un
+        // nome proprio (rimosso — si ricava tutto dal nome del file), quindi
+        // suggerisce il nome del file già in uso, se il progetto è già stato
+        // salvato una volta, altrimenti un nome di default generico.
+        private string SuggestedProjectFileName()
+            => _currentFilePath != null
+                ? Path.GetFileNameWithoutExtension(_currentFilePath)
+                : Strings.Get("MainWindow_NuovoStradarioProjectName");
+
         // Estratto da OnSaveProjectAs (che resta il solo event handler per il
         // pulsante toolbar) così ConfirmDiscardCurrentProjectAsync può sapere
         // se il "Salva come" è andato a buon fine o è stato annullato
@@ -5565,7 +5574,7 @@ namespace StradarioApp.UI
             {
                 Title                  = Strings.Get("MainWindow_SalvaProgettoTitolo"),
                 DefaultExtension       = "stradario",
-                SuggestedFileName      = _project.ProjectName,
+                SuggestedFileName      = SuggestedProjectFileName(),
                 SuggestedStartLocation = await GetSuggestedStartFolderAsync(),
                 FileTypeChoices = new[]
                 {
@@ -5716,10 +5725,11 @@ namespace StradarioApp.UI
 
             var generator = new PdfGenerator();
             // Titolo di copertina: il nome del file .stradario senza estensione
-            // se il progetto è già stato salvato, altrimenti il nome progetto.
+            // se il progetto è già stato salvato, altrimenti un nome di default
+            // generico (il progetto non ha più un nome proprio).
             string coverTitle = _currentFilePath != null
                 ? Path.GetFileNameWithoutExtension(_currentFilePath)
-                : _project.ProjectName;
+                : Strings.Get("MainWindow_NuovoStradarioProjectName");
             try
             {
                 await generator.GenerateAsync(_project, tempPath,
@@ -7122,7 +7132,7 @@ namespace StradarioApp.UI
         {
             string file   = _currentFilePath != null ? Path.GetFileName(_currentFilePath) : Strings.Get("MainWindow_SenzaTitolo");
             string dirty  = _isDirty ? " •" : "";
-            Title = string.Format(Strings.Get("MainWindow_TitoloConProgetto"), _project.ProjectName, file, dirty);
+            Title = string.Format(Strings.Get("MainWindow_TitoloConProgetto"), file, dirty);
             UpdateStatusBarSummary();
         }
 

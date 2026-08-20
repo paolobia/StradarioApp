@@ -542,7 +542,6 @@ namespace StradarioApp.Models
     // Struttura completa del progetto stradario (salvata su file)
     public class StradarioProject
     {
-        public string ProjectName { get; set; } = "Nuovo Stradario";
         public StradarioSettings Settings { get; set; } = new StradarioSettings();
         public List<MapPage> Pages { get; set; } = new List<MapPage>();
 

@@ -25,11 +25,7 @@ else
 {
     <div class="day-toolbar">
         <div class="day-toolbar-title">
-            <strong>@Plan.Project.ProjectName</strong>
-            @if (!string.IsNullOrEmpty(Plan.FileName))
-            {
-                <span class="file-name">(@Plan.FileName)</span>
-            }
+            <strong>@ProjectDisplayName()</strong>
         </div>
         <div class="day-nav">
             @if (_availableDays.Count > 0)
@@ -180,4 +176,9 @@ else
 
     private static string FormatDay(DateOnly day)
         => day.ToString("dddd d MMMM yyyy", new System.Globalization.CultureInfo("it-IT"));
+
+    // Il progetto non ha un nome proprio (rimosso — si ricava tutto dal nome
+    // del file caricato).
+    private string ProjectDisplayName()
+        => string.IsNullOrEmpty(Plan.FileName) ? "" : Path.GetFileNameWithoutExtension(Plan.FileName);
 }
