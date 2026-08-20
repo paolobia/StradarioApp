@@ -31,7 +31,7 @@ da tenere in tasca per consultare i percorsi del progetto sul telefono.
 
 ## Gallery
 
-23 screenshot reali (dati di esempio, progetto "Firenze Demo" inventato),
+24 screenshot reali (dati di esempio, progetto "Firenze Demo" inventato),
 organizzati per area funzionale — dalla mappa interattiva all'output PDF
 finale, che è il vero prodotto dell'app.
 
@@ -172,6 +172,25 @@ finale, che è il vero prodotto dell'app.
 <sub><b>Contrasto adattivo</b> (CLAHE) — local contrast stretching, still in color.</sub>
 </td>
 <td width="33%"></td>
+</tr>
+</table>
+
+---
+
+### 📱 StradarioViewer — l'app compagna sul telefono
+
+<table>
+<tr>
+<td width="40%">
+<img src="docs/screenshots/24-stradarioviewer.jpg" width="100%" alt="StradarioViewer screenshot" />
+</td>
+<td width="60%">
+<sub>Selezionando un percorso/POI (dalla lista o dalla mappa) la mappa si
+centra sul punto e ne mostra etichetta e descrizione. App separata,
+installabile come PWA — vedi
+<a href="https://paolobia.github.io/StradarioApp/">https://paolobia.github.io/StradarioApp/</a>
+e <a href="webapp/StradarioViewer/README.md">webapp/StradarioViewer/README.md</a>.</sub>
+</td>
 </tr>
 </table>
 
