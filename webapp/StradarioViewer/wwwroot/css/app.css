@@ -141,13 +141,22 @@ html, body, #app {
 
 .day-toolbar {
     flex: 0 0 auto;
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid #ddd;
+}
+
+.day-toolbar-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
-    padding: 0.5rem 1rem;
-    border-bottom: 1px solid #ddd;
-    flex-wrap: wrap;
+}
+
+.day-toolbar-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
 }
 
 .day-toolbar-title .file-name {
@@ -159,7 +168,9 @@ html, body, #app {
 .day-nav {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 0.6rem;
+    margin-top: 0.4rem;
 }
 
 .current-day {

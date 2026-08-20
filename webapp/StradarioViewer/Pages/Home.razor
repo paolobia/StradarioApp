@@ -24,8 +24,11 @@ else if (Plan.Project == null)
 else
 {
     <div class="day-toolbar">
-        <div class="day-toolbar-title">
-            <strong>@ProjectDisplayName()</strong>
+        <div class="day-toolbar-row">
+            <div class="day-toolbar-title">
+                <strong>@ProjectDisplayName()</strong>
+            </div>
+            <button class="btn btn-sm btn-outline-danger" @onclick="ReloadFileAsync">Carica un altro file</button>
         </div>
         <div class="day-nav">
             @if (_availableDays.Count > 0)
@@ -39,7 +42,6 @@ else
                 <span class="current-day"><em>Nessuna data nel progetto — mostro tutto</em></span>
             }
         </div>
-        <button class="btn btn-sm btn-outline-danger" @onclick="ReloadFileAsync">Carica un altro file</button>
     </div>
 
     <div class="day-body">

@@ -8,6 +8,10 @@ viaggio dal telefono, non per crearlo o modificarlo.
 
 **👉 Usala qui: https://paolobia.github.io/StradarioApp/**
 
+<img src="docs/screenshot.jpg" width="320" alt="StradarioViewer: mappa centrata su un POI selezionato, con etichetta e descrizione" />
+
+*Selezionando un percorso/POI (dalla lista o dalla mappa) la mappa si centra sul punto e ne mostra etichetta e descrizione.*
+
 Blazor WebAssembly (.NET 8), 100% client-side: nessun backend, nessun
 database. I dati restano nel `localStorage` del browser — il file va
 caricato una sola volta, resta disponibile alle visite successive. Funziona
