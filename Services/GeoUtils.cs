@@ -266,5 +266,35 @@ namespace StradarioApp.Services
         // su percorsi diversi, o un gruppo POI + un inline) coincidono nello
         // stesso punto con lo stesso testo.
         public static long LabelDedupKey(double coord) => (long)Math.Round(coord * 1_000_000.0);
+
+        // Proiezione lineare "fit-to-rect", indipendente da zoom/tile OSM
+        // (a differenza di GeoToPixel/PixelToGeo/GeoToBitmapPixel sopra):
+        // mappa un punto geografico su un pixel dentro un riquadro width×height
+        // dato un GeoRect di riferimento, con correzione cos(centerLat)
+        // sull'asse longitudine (stessa idea già usata in
+        // PdfGenerator.CalcOverallBounds/RenderOverviewAsync per il rapporto
+        // gradi-lon/gradi-lat) e lettera-boxing se l'aspect ratio di bounds
+        // non coincide con quello del riquadro target. Usata dalla mini-mappa
+        // schematica della pagina indice (confini, percorsi, città), che non
+        // scarica tile e non ha uno zoom OSM su cui appoggiarsi.
+        public static (double X, double Y) GeoToPixelLinear(double lon, double lat, GeoRect bounds, double width, double height)
+        {
+            double cosLat = Math.Cos(bounds.CenterLat * Math.PI / 180.0);
+            double lonExtent = Math.Max(bounds.Width, 1e-9) * cosLat;
+            double latExtent = Math.Max(bounds.Height, 1e-9);
+
+            // Scala unica (min dei due rapporti) per non deformare l'aspect
+            // ratio geografico, poi centra il risultato nel riquadro target.
+            double scale = Math.Min(width / lonExtent, height / latExtent);
+            double usedW = lonExtent * scale;
+            double usedH = latExtent * scale;
+            double offsetX = (width - usedW) / 2.0;
+            double offsetY = (height - usedH) / 2.0;
+
+            double x = offsetX + (lon - bounds.MinLon) * cosLat * scale;
+            double y = offsetY + (bounds.MaxLat - lat) * scale; // Y cresce verso il basso
+
+            return (x, y);
+        }
     }
 }

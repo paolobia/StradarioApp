@@ -88,7 +88,7 @@ namespace StradarioApp.Services
             // ---------------------------------------------------------------
             var coverPage = pdfDoc.AddPage();
             SetPageSize(coverPage, pageWidthMm, pageHeightMm);
-            DrawCoverPage(coverPage, title, settings);
+            DrawCoverPage(coverPage, title, settings, percorsi);
 
             // ---------------------------------------------------------------
             // Pagine iniziali: "Piano di viaggio" (se il progetto ha almeno
@@ -242,7 +242,7 @@ namespace StradarioApp.Services
         // una riga sottile di separazione e un sottotitolo con scala/formato
         // e data di generazione. Stile professionale: nero, nessun corsivo,
         // nessun colore decorativo.
-        private void DrawCoverPage(PdfPage page, string title, StradarioSettings settings)
+        private void DrawCoverPage(PdfPage page, string title, StradarioSettings settings, List<Percorso> percorsi)
         {
             using var gfx = XGraphics.FromPdfPage(page);
             double w = page.Width.Point;
@@ -252,22 +252,63 @@ namespace StradarioApp.Services
 
             var titleFont    = new XFont("Arial", 28, XFontStyle.Bold);
             var subtitleFont = new XFont("Arial", 11);
-
-            double centerY = h * 0.42;
-
-            gfx.DrawString(title, titleFont, XBrushes.Black,
-                new XRect(40, centerY - 40, w - 80, 60), XStringFormats.Center);
-
-            double ruleY = centerY + 30;
-            gfx.DrawLine(XPens.Black, w * 0.28, ruleY, w * 0.72, ruleY);
+            var footerFont   = new XFont("Arial", 8);
 
             string subtitle = $"Scala {settings.GetScaleLabel()}  |  {settings.PageSize} {settings.Orientation}  |  {DateTime.Now:d MMMM yyyy}";
-            gfx.DrawString(subtitle, subtitleFont, XBrushes.Black,
-                new XRect(40, ruleY + 14, w - 80, 20), XStringFormats.Center);
 
-            var footerFont = new XFont("Arial", 8);
-            gfx.DrawString("StradarioApp", footerFont, XBrushes.Black,
-                new XRect(0, h - 40, w, 16), XStringFormats.BottomCenter);
+            // Se ci sono percorsi da mostrare, la copertina si divide in due
+            // metà: titolo/sottotitolo compressi nella metà superiore, mini-
+            // mappa schematica (confini/coste + percorsi + città maggiori,
+            // vedi DrawLocatorMap) nella metà inferiore, SENZA bordo intorno
+            // all'immagine (richiesta esplicita dell'utente) — a differenza
+            // di ogni altra mappa nel PDF, che ha sempre un riquadro nero
+            // attorno. Senza percorsi, resta il layout originale a
+            // tutta pagina con titolo centrato verticalmente.
+            if (percorsi.Count > 0 &&
+                CalcOverallBounds(new List<MapPage>(), new List<PoiGroup>(), percorsi) is { } locatorBounds)
+            {
+                // La metà superiore (titolo/sottotitolo) è più corta di una
+                // vera metà pagina: cede il 20% del suo spazio (che restava
+                // comunque vuoto sopra/sotto il testo) alla mappa sottostante,
+                // che così viene più grande — richiesta esplicita dell'utente.
+                double topHalfH = h / 2.0 * 0.8;
+                double centerY  = topHalfH * 0.5;
+
+                gfx.DrawString(title, titleFont, XBrushes.Black,
+                    new XRect(40, centerY - 34, w - 80, 50), XStringFormats.Center);
+
+                double ruleY = centerY + 20;
+                gfx.DrawLine(XPens.Black, w * 0.28, ruleY, w * 0.72, ruleY);
+
+                gfx.DrawString(subtitle, subtitleFont, XBrushes.Black,
+                    new XRect(40, ruleY + 12, w - 80, 20), XStringFormats.Center);
+
+                const double mapMarginX   = 24;
+                const double footerH      = 20;
+                double mapTop    = topHalfH + 8;
+                double mapBottom = h - footerH;
+                var locatorRect = new XRect(mapMarginX, mapTop, w - 2 * mapMarginX, mapBottom - mapTop);
+                DrawLocatorMap(gfx, locatorRect, locatorBounds, percorsi, drawBorder: false);
+
+                gfx.DrawString("StradarioApp", footerFont, XBrushes.Black,
+                    new XRect(0, h - footerH, w, 16), XStringFormats.BottomCenter);
+            }
+            else
+            {
+                double centerY = h * 0.42;
+
+                gfx.DrawString(title, titleFont, XBrushes.Black,
+                    new XRect(40, centerY - 40, w - 80, 60), XStringFormats.Center);
+
+                double ruleY = centerY + 30;
+                gfx.DrawLine(XPens.Black, w * 0.28, ruleY, w * 0.72, ruleY);
+
+                gfx.DrawString(subtitle, subtitleFont, XBrushes.Black,
+                    new XRect(40, ruleY + 14, w - 80, 20), XStringFormats.Center);
+
+                gfx.DrawString("StradarioApp", footerFont, XBrushes.Black,
+                    new XRect(0, h - 40, w, 16), XStringFormats.BottomCenter);
+            }
         }
 
         // Disegna la pagina indice.
@@ -377,6 +418,218 @@ namespace StradarioApp.Services
             var colPen = new XPen(XColor.FromArgb(180, 180, 180));
             gfx.DrawLine(colPen, xCenter, tableTop, xCenter, y);
             gfx.DrawLine(colPen, xDesc,   tableTop, xDesc,   y);
+        }
+
+        // Mini-mappa schematica: confini nazionali/coste (WorldBordersService,
+        // Natural Earth 1:110m) come terra grigio chiarissimo + contorni
+        // sottili, nome nazione come watermark al centro dell'area
+        // visualizzata, percorsi sopra, etichette (percorsi + città maggiori
+        // via CityDatabase) SEMPRE disegnate per ultime, con alone bianco,
+        // così restano leggibili sopra qualunque cosa. NON usa tile OSM né
+        // lo zoom-based GeoToPdf dell'overview: proiezione lineare
+        // fit-to-rect (GeoUtils.GeoToPixelLinear), perché qui non c'è uno
+        // sfondo raster da allineare, solo geometria vettoriale.
+        private void DrawLocatorMap(XGraphics gfx, XRect targetRect, GeoRect bounds, List<Percorso> percorsi, bool drawBorder = true)
+        {
+            gfx.Save();
+            gfx.IntersectClip(targetRect);
+
+            gfx.DrawRectangle(XBrushes.White, targetRect);
+
+            (double x, double y) Project(double lon, double lat)
+            {
+                var (px, py) = GeoUtils.GeoToPixelLinear(lon, lat, bounds, targetRect.Width, targetRect.Height);
+                return (targetRect.X + px, targetRect.Y + py);
+            }
+
+            // Un anello geograficamente lontano da bounds va scartato PRIMA
+            // di proiettarlo: alcuni paesi (Russia, Fiji, USA via Alaska...)
+            // attraversano l'antimeridiano, quindi il bbox del intero
+            // poligono copre quasi tutte le longitudini pur avendo ogni
+            // singolo anello ben localizzato altrove — un filtro solo
+            // per-poligono lascerebbe passare anelli lontanissimi, con
+            // rischio di linee spurie che "attraversano" per caso l'area
+            // visibile.
+            bool RingInBounds(List<(double Lon, double Lat)> ring, out double rMinLon, out double rMaxLon, out double rMinLat, out double rMaxLat)
+            {
+                rMinLon = ring.Min(p => p.Lon); rMaxLon = ring.Max(p => p.Lon);
+                rMinLat = ring.Min(p => p.Lat); rMaxLat = ring.Max(p => p.Lat);
+                return !(rMaxLon < bounds.MinLon || rMinLon > bounds.MaxLon ||
+                         rMaxLat < bounds.MinLat || rMinLat > bounds.MaxLat);
+            }
+
+            var visiblePolys = WorldBordersService.GetPolygonsInBounds(bounds).ToList();
+
+            // --- Terra (riempimento grigio chiarissimo) ----------------------
+            var landBrush = new XSolidBrush(XColor.FromArgb(255, 238, 238, 238));
+            foreach (var poly in visiblePolys)
+            {
+                var path = new XGraphicsPath();
+                bool any = false;
+                foreach (var ring in poly.Rings)
+                {
+                    if (ring.Count < 3 || !RingInBounds(ring, out _, out _, out _, out _)) continue;
+                    var pts = new XPoint[ring.Count];
+                    for (int i = 0; i < ring.Count; i++)
+                    {
+                        var (px, py) = Project(ring[i].Lon, ring[i].Lat);
+                        pts[i] = new XPoint(px, py);
+                    }
+                    path.AddPolygon(pts);
+                    any = true;
+                }
+                if (any) gfx.DrawPath(landBrush, path);
+            }
+
+            // --- Confini/coste -----------------------------------------------
+            var borderPen = new XPen(XColor.FromArgb(255, 160, 160, 160), 0.5);
+            foreach (var poly in visiblePolys)
+            {
+                foreach (var ring in poly.Rings)
+                {
+                    if (ring.Count < 2 || !RingInBounds(ring, out _, out _, out _, out _)) continue;
+
+                    var pts = new XPoint[ring.Count];
+                    for (int i = 0; i < ring.Count; i++)
+                    {
+                        var (px, py) = Project(ring[i].Lon, ring[i].Lat);
+                        pts[i] = new XPoint(px, py);
+                    }
+                    gfx.DrawLines(borderPen, pts);
+                    gfx.DrawLine(borderPen, pts[pts.Length - 1], pts[0]); // chiude l'anello
+                }
+            }
+
+            // --- Nome nazione come watermark -----------------------------
+            // Un solo nome per nazione, posizionato al centro della porzione
+            // di bbox che ricade dentro l'area visualizzata (non il baricentro
+            // reale del poligono, che potrebbe cadere fuori vista per un
+            // paese solo parzialmente inquadrato) — scartate le nazioni la
+            // cui porzione visibile è marginale (bordo/angolo), per non
+            // affollare la mappa di nomi poco significativi qui.
+            //
+            // Il bbox usato è quello degli anelli VICINI a bounds (già
+            // filtrati da RingInBounds), non poly.Bbox (bbox dell'INTERO
+            // poligono): alcune nazioni hanno territori d'oltremare o
+            // attraversano l'antimeridiano (Russia, Francia...), quindi il
+            // loro bbox complessivo è enorme e "contiene" quasi ogni vista
+            // nel mondo — con poly.Bbox, la Russia risultava sempre
+            // sovrapposta all'Italia (bug reale visto in un rendering di
+            // prova: "Russia" e "France" disegnati uno sopra l'altro esatto
+            // al centro di una vista su Roma-Firenze-Milano).
+            var countryFont  = new XFont("Arial", 12, XFontStyle.Bold);
+            var countryBrush = new XSolidBrush(XColor.FromArgb(255, 190, 190, 190));
+            double viewArea = bounds.Width * bounds.Height;
+            foreach (var poly in visiblePolys)
+            {
+                if (string.IsNullOrWhiteSpace(poly.Name)) continue;
+
+                double localMinLon = double.MaxValue, localMaxLon = double.MinValue;
+                double localMinLat = double.MaxValue, localMaxLat = double.MinValue;
+                bool anyLocalRing = false;
+                foreach (var ring in poly.Rings)
+                {
+                    if (ring.Count < 2 || !RingInBounds(ring, out var rMinLon, out var rMaxLon, out var rMinLat, out var rMaxLat)) continue;
+                    localMinLon = Math.Min(localMinLon, rMinLon); localMaxLon = Math.Max(localMaxLon, rMaxLon);
+                    localMinLat = Math.Min(localMinLat, rMinLat); localMaxLat = Math.Max(localMaxLat, rMaxLat);
+                    anyLocalRing = true;
+                }
+                if (!anyLocalRing) continue;
+
+                double ovMinLon = Math.Max(localMinLon, bounds.MinLon);
+                double ovMaxLon = Math.Min(localMaxLon, bounds.MaxLon);
+                double ovMinLat = Math.Max(localMinLat, bounds.MinLat);
+                double ovMaxLat = Math.Min(localMaxLat, bounds.MaxLat);
+                double ovW = ovMaxLon - ovMinLon, ovH = ovMaxLat - ovMinLat;
+                if (ovW <= 0 || ovH <= 0 || ovW * ovH < viewArea * 0.08) continue;
+
+                var (cx, cy) = Project((ovMinLon + ovMaxLon) / 2.0, (ovMinLat + ovMaxLat) / 2.0);
+                var size = gfx.MeasureString(poly.Name, countryFont);
+                gfx.DrawString(poly.Name, countryFont, countryBrush,
+                    new XRect(cx - size.Width / 2, cy - size.Height / 2, size.Width, size.Height), XStringFormats.Center);
+            }
+
+            // --- Percorsi (solo linee: le etichette si disegnano per ultime) --
+            var routePens = new Dictionary<Percorso, XColor>();
+            foreach (var route in percorsi)
+            {
+                if (route.Points.Count == 0) continue;
+                var color = PercorsoRenderer.ParseColor(route.ColorHex);
+                var routeColor = XColor.FromArgb(255, color.Red, color.Green, color.Blue);
+                routePens[route] = routeColor;
+
+                var pts = new XPoint[route.Points.Count];
+                for (int i = 0; i < route.Points.Count; i++)
+                {
+                    var (px, py) = Project(route.Points[i].Lon, route.Points[i].Lat);
+                    pts[i] = new XPoint(px, py);
+                }
+                if (pts.Length >= 2) gfx.DrawLines(new XPen(routeColor, 1.4), pts);
+            }
+
+            // --- Città maggiori (solo puntino: il nome si disegna per ultimo) -
+            var cityDotBrush = new XSolidBrush(XColor.FromArgb(255, 80, 80, 80));
+            var cities = CityDatabase.FindTopCities(bounds, 5);
+            foreach (var city in cities)
+            {
+                var (x, y) = Project(city.Lon, city.Lat);
+                gfx.DrawEllipse(cityDotBrush, x - 1.2, y - 1.2, 2.4, 2.4);
+            }
+
+            // --- Etichette (SEMPRE per ultime, alone bianco) ------------------
+            // Simula un vero alone bianco disegnando il testo 8 volte,
+            // spostato di ±1pt in ogni direzione, prima del testo colorato
+            // finale — XGraphics/PdfSharpCore non ha uno stroke di testo
+            // nativo (stesso schema di DrawOverviewPage.DrawHaloString).
+            var shadowBrush = new XSolidBrush(XColor.FromArgb(255, 255, 255, 255));
+            void DrawHaloString(string s, XFont font, XBrush brush, XRect rect, XStringFormat format)
+            {
+                foreach (var (dx, dy) in HaloOffsets)
+                    gfx.DrawString(s, font, shadowBrush, new XRect(rect.X + dx, rect.Y + dy, rect.Width, rect.Height), format);
+                gfx.DrawString(s, font, brush, rect, format);
+            }
+
+            var routeLabelFont = new XFont("Arial", 6.5, XFontStyle.Bold);
+            var cityFont       = new XFont("Arial", 6);
+
+            // Decluttering minimale: un rettangolo occupato per etichetta già
+            // piazzata, le successive che si sovrappongono vengono saltate
+            // (niente riposizionamento a più candidati come nell'overview —
+            // qui gli elementi sono pochi, non ne vale la pena).
+            var labelRects = new List<XRect>();
+            bool TryReserve(XRect r)
+            {
+                foreach (var occ in labelRects)
+                    if (occ.IntersectsWith(r)) return false;
+                labelRects.Add(r);
+                return true;
+            }
+
+            foreach (var route in percorsi)
+            {
+                if (route.Points.Count == 0 || !routePens.TryGetValue(route, out var routeColor)) continue;
+
+                var (cLon, cLat) = GeoUtils.PolylineCentroid(route.Points);
+                var (cx, cy) = Project(cLon, cLat);
+
+                var size = gfx.MeasureString(route.Label, routeLabelFont);
+                var labelRect = new XRect(cx - size.Width / 2, cy - size.Height / 2, size.Width, size.Height);
+                if (TryReserve(labelRect))
+                    DrawHaloString(route.Label, routeLabelFont, new XSolidBrush(routeColor), labelRect, XStringFormats.Center);
+            }
+
+            foreach (var city in cities)
+            {
+                var (x, y) = Project(city.Lon, city.Lat);
+                var size = gfx.MeasureString(city.Name, cityFont);
+                var labelRect = new XRect(x + 3, y - size.Height / 2, size.Width, size.Height);
+                if (TryReserve(labelRect))
+                    DrawHaloString(city.Name, cityFont, XBrushes.Black, labelRect, XStringFormats.CenterLeft);
+            }
+
+            gfx.Restore();
+            if (drawBorder)
+                gfx.DrawRectangle(XPens.Gray, targetRect);
         }
 
         // Spezza un testo in più righe che entrano in maxWidth (word-wrap
@@ -585,19 +838,13 @@ namespace StradarioApp.Services
                 bool hasDesc = !string.IsNullOrWhiteSpace(entry.Description);
                 double descWidth = tableWidth - iconSize - dateColWidth - 18;
                 var descLines = hasDesc ? WrapText(gfx!, entry.Description!, descFont, descWidth) : new List<string>();
-                double neededH = rowH + descLines.Count * descRowH;
-                if (y + neededH > h - margin)
-                    PageBreak();
 
-                string dateText = entry.Date.HasValue ? ItineraryOrdering.FormatSingleDate(entry.Date.Value, includeDayAbbrev: true, hideBoundaryTimes: true) : "—";
-                bool isSunday = entry.Date.HasValue && entry.Date.Value.DayOfWeek == DayOfWeek.Sunday;
-                gfx!.DrawString(dateText, isSunday ? dateFontSunday : dateFont, XBrushes.Black,
-                    new XRect(margin, y, dateColWidth, rowH), XStringFormats.CenterLeft);
-
+                // L'etichetta va sempre a capo su più righe se non entra,
+                // MAI troncata con l'ellissi (richiesta esplicita
+                // dell'utente) — a differenza di prima (FitTextSingleLine),
+                // che riduceva il font e poi tagliava. L'altezza della riga
+                // cresce di conseguenza quando serve più di una riga.
                 double iconX = margin + dateColWidth;
-                double iconY = y + (rowH - iconSize * 0.85) / 2.0;
-                gfx.DrawImage(GetIcon(entry.Icon, entry.ColorHex), iconX, iconY, iconSize * 0.85, iconSize * 0.85);
-
                 double contentX = iconX + iconSize + 4;
                 string labelText = entry.IsStart switch
                 {
@@ -606,10 +853,29 @@ namespace StradarioApp.Services
                     null  => entry.Label
                 };
                 double labelWidth = margin + tableWidth - contentX - 2;
-                var (labelFitFont, labelFitText) = FitTextSingleLine(gfx, labelText, labelFont, labelWidth - 2, 6.5);
-                gfx.DrawString(labelFitText, labelFitFont, XBrushes.Black,
-                    new XRect(contentX, y, labelWidth, rowH), XStringFormats.CenterLeft);
-                y += rowH;
+                var labelLines = WrapText(gfx!, labelText, labelFont, labelWidth);
+                double entryRowH = Math.Max(rowH, labelLines.Count * descRowH);
+
+                double neededH = entryRowH + descLines.Count * descRowH;
+                if (y + neededH > h - margin)
+                    PageBreak();
+
+                string dateText = entry.Date.HasValue ? ItineraryOrdering.FormatSingleDate(entry.Date.Value, includeDayAbbrev: true, hideBoundaryTimes: true) : "—";
+                bool isSunday = entry.Date.HasValue && entry.Date.Value.DayOfWeek == DayOfWeek.Sunday;
+                gfx!.DrawString(dateText, isSunday ? dateFontSunday : dateFont, XBrushes.Black,
+                    new XRect(margin, y, dateColWidth, entryRowH), XStringFormats.CenterLeft);
+
+                double iconY = y + (entryRowH - iconSize * 0.85) / 2.0;
+                gfx.DrawImage(GetIcon(entry.Icon, entry.ColorHex), iconX, iconY, iconSize * 0.85, iconSize * 0.85);
+
+                double ly = y + (entryRowH - labelLines.Count * descRowH) / 2.0;
+                foreach (var line in labelLines)
+                {
+                    gfx.DrawString(line, labelFont, XBrushes.Black,
+                        new XRect(contentX, ly, labelWidth, descRowH), XStringFormats.CenterLeft);
+                    ly += descRowH;
+                }
+                y += entryRowH;
 
                 foreach (var line in descLines)
                 {
@@ -625,30 +891,41 @@ namespace StradarioApp.Services
                 if (entry.NestedPoints != null)
                 {
                     double nestedX = iconX + iconSize + 12;
+                    double npContentX = nestedX + nestedIconSize + 4;
+
+                    // Le coordinate GPS non servono a niente in stampa (non
+                    // sono azionabili su carta) — rimosse, richiesta
+                    // esplicita dell'utente: la larghezza che occupavano va
+                    // tutta all'etichetta, che ora va a capo su più righe
+                    // invece di essere troncata con l'ellissi.
+                    double npLabelWidth = margin + tableWidth - npContentX - 2;
+
                     foreach (var np in entry.NestedPoints)
                     {
                         bool hasNpDesc = !string.IsNullOrWhiteSpace(np.Description);
-                        double npDescWidth = margin + tableWidth - nestedX - nestedIconSize - 6;
-                        var npDescLines = hasNpDesc ? WrapText(gfx!, np.Description!, nestedDescFont, npDescWidth) : new List<string>();
-                        double neededNpH = nestedRowH + npDescLines.Count * nestedDescRowH;
+                        var npLabelLines = WrapText(gfx!, np.Label, nestedFont, npLabelWidth);
+                        var npDescLines = hasNpDesc ? WrapText(gfx!, np.Description!, nestedDescFont, npLabelWidth) : new List<string>();
+                        double npRowH = Math.Max(nestedRowH, npLabelLines.Count * nestedDescRowH);
+                        double neededNpH = npRowH + npDescLines.Count * nestedDescRowH;
                         if (y + neededNpH > h - margin)
                             PageBreak();
 
-                        double npIconY = y + (nestedRowH - nestedIconSize * 0.85) / 2.0;
+                        double npIconY = y + (npRowH - nestedIconSize * 0.85) / 2.0;
                         gfx!.DrawImage(GetIcon(np.Icon, entry.ColorHex), nestedX, npIconY, nestedIconSize * 0.85, nestedIconSize * 0.85);
-                        double npLabelWidth = (margin + tableWidth) * 0.55 - nestedX;
-                        var (npLabelFont, npLabelText) = FitTextSingleLine(gfx, np.Label, nestedFont, npLabelWidth - 2, 6);
-                        gfx.DrawString(npLabelText, npLabelFont, XBrushes.Black,
-                            new XRect(nestedX + nestedIconSize + 4, y, npLabelWidth, nestedRowH), XStringFormats.CenterLeft);
-                        string npCoords = $"{np.Lon:F4}°E  {np.Lat:F4}°N";
-                        gfx.DrawString(npCoords, dateFont,
-                            XBrushes.Black, new XRect(margin + tableWidth * 0.62, y, tableWidth * 0.38 - 4, nestedRowH), XStringFormats.CenterLeft);
-                        y += nestedRowH;
+
+                        double nly = y + (npRowH - npLabelLines.Count * nestedDescRowH) / 2.0;
+                        foreach (var line in npLabelLines)
+                        {
+                            gfx.DrawString(line, nestedFont, XBrushes.Black,
+                                new XRect(npContentX, nly, npLabelWidth, nestedDescRowH), XStringFormats.CenterLeft);
+                            nly += nestedDescRowH;
+                        }
+                        y += npRowH;
 
                         foreach (var line in npDescLines)
                         {
                             gfx.DrawString(line, nestedDescFont, XBrushes.Black,
-                                new XRect(nestedX + nestedIconSize + 4, y, npDescWidth, nestedDescRowH), XStringFormats.TopLeft);
+                                new XRect(npContentX, y, npLabelWidth, nestedDescRowH), XStringFormats.TopLeft);
                             y += nestedDescRowH;
                         }
                     }
