@@ -23,7 +23,7 @@
          i suoi .cs (compreso il GlobalUsings.g.cs generato nel suo obj/,
          che con ImplicitUsings porta un "global using System.IO" e va in
          conflitto con Avalonia.Controls.Shapes.Path in UI/DialogUi.cs). -->
-    <DefaultItemExcludes>$(DefaultItemExcludes);osm/**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);osm/**;webapp/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
@@ -74,6 +74,17 @@
          che è troppo grande per essere bundlato. -->
     <EmbeddedResource Include="Resources/WorldBorders/world_borders.geojson.gz">
       <LogicalName>StradarioApp.WorldBorders.geojson.gz</LogicalName>
+    </EmbeddedResource>
+
+    <!-- Laghi principali + fiumi principali (Natural Earth 1:110m
+         "lakes"/"rivers_lake_centerlines", dominio pubblico), stesso
+         standard/precisione dei confini sopra, usati dalla mini-mappa
+         schematica per dare un riferimento geografico oltre al solo
+         contorno di terra (Services/WaterFeaturesService.cs). ~11 KB
+         gzippato: solo i laghi/fiumi rilevanti a scala globale (24 laghi,
+         13 fiumi), non un dataset idrografico completo. -->
+    <EmbeddedResource Include="Resources/WorldBorders/water_features.geojson.gz">
+      <LogicalName>StradarioApp.WorldBorders.water.geojson.gz</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
 

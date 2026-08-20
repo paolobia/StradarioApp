@@ -1,0 +1,178 @@
+@page "/"
+@using StradarioViewer.Services
+@inject TravelPlanService Plan
+@inject IJSRuntime JS
+
+<PageTitle>StradarioViewer</PageTitle>
+
+@if (!_initialized)
+{
+    <p><em>Caricamento...</em></p>
+}
+else if (Plan.Project == null)
+{
+    <div class="loader-panel">
+        <h3>Carica un piano di viaggio</h3>
+        <p>Seleziona il file <code>.stradario</code> esportato da StradarioApp.</p>
+        <InputFile OnChange="OnFileSelectedAsync" accept=".stradario,.json" />
+        @if (!string.IsNullOrEmpty(_loadError))
+        {
+            <p class="text-danger">@_loadError</p>
+        }
+    </div>
+}
+else
+{
+    <div class="day-toolbar">
+        <div class="day-toolbar-title">
+            <strong>@Plan.Project.ProjectName</strong>
+            @if (!string.IsNullOrEmpty(Plan.FileName))
+            {
+                <span class="file-name">(@Plan.FileName)</span>
+            }
+        </div>
+        <div class="day-nav">
+            @if (_availableDays.Count > 0)
+            {
+                <button class="btn btn-sm btn-outline-secondary" disabled="@(!CanGoPrev())" @onclick="GoPrevDay">◀</button>
+                <span class="current-day">@FormatDay(_currentDay)</span>
+                <button class="btn btn-sm btn-outline-secondary" disabled="@(!CanGoNext())" @onclick="GoNextDay">▶</button>
+            }
+            else
+            {
+                <span class="current-day"><em>Nessuna data nel progetto — mostro tutto</em></span>
+            }
+        </div>
+        <button class="btn btn-sm btn-outline-danger" @onclick="ReloadFileAsync">Carica un altro file</button>
+    </div>
+
+    <div class="day-body">
+        <div class="map-container">
+            <MapView Entries="_entries" CenterLat="Plan.Project.ViewCenterLat" CenterLon="Plan.Project.ViewCenterLon"
+                     Zoom="Plan.Project.ViewZoom" OnEntrySelected="OnEntrySelected" />
+        </div>
+        <div class="entry-list">
+            @if (_entries.Count == 0)
+            {
+                <p class="text-muted"><em>Nessun percorso o POI per questo giorno.</em></p>
+            }
+            else
+            {
+                @foreach (var (entry, index) in _entries.Select((e, i) => (e, i)))
+                {
+                    <div class="entry-row @(index == _selectedIndex ? "selected" : "")" @onclick="() => SelectEntry(index)">
+                        <span class="entry-dot" style="background:@entry.ColorHex;"></span>
+                        <span class="entry-label">@entry.Label</span>
+                    </div>
+                }
+            }
+        </div>
+    </div>
+
+    @if (_selectedIndex is int idx && idx >= 0 && idx < _entries.Count)
+    {
+        <RouteDetail Entry="_entries[idx]" OnClose="() => SelectEntry(-1)" />
+    }
+}
+
+@code {
+    private bool _initialized;
+    private string? _loadError;
+    private List<DateOnly> _availableDays = new();
+    private DateOnly _currentDay;
+    private List<DayEntry> _entries = new();
+    private int? _selectedIndex;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Plan.TryLoadFromStorageAsync();
+        if (Plan.Project != null)
+        {
+            RefreshDays();
+        }
+        _initialized = true;
+    }
+
+    private void RefreshDays()
+    {
+        _availableDays = Plan.GetAvailableDays();
+        _currentDay = _availableDays.Count > 0 ? _availableDays[0] : DateOnly.FromDateTime(DateTime.Today);
+        RefreshEntries();
+    }
+
+    private void RefreshEntries()
+    {
+        _entries = Plan.GetForDay(_currentDay);
+        _selectedIndex = null;
+    }
+
+    private async Task OnFileSelectedAsync(InputFileChangeEventArgs e)
+    {
+        _loadError = null;
+        try
+        {
+            var file = e.File;
+            using var stream = file.OpenReadStream(maxAllowedSize: 20 * 1024 * 1024);
+            using var reader = new StreamReader(stream);
+            var json = await reader.ReadToEndAsync();
+
+            var ok = await Plan.LoadFromJsonAsync(json, file.Name);
+            if (!ok)
+            {
+                _loadError = "Il file selezionato non sembra un progetto .stradario valido.";
+                return;
+            }
+
+            RefreshDays();
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"Errore durante il caricamento: {ex.Message}";
+        }
+    }
+
+    private async Task ReloadFileAsync()
+    {
+        await Plan.ClearAsync();
+        _availableDays = new();
+        _entries = new();
+        _selectedIndex = null;
+    }
+
+    private bool CanGoPrev() => _availableDays.Count > 0 && _currentDay > _availableDays[0];
+    private bool CanGoNext() => _availableDays.Count > 0 && _currentDay < _availableDays[^1];
+
+    private void GoPrevDay()
+    {
+        var idx = _availableDays.IndexOf(_currentDay);
+        if (idx > 0)
+        {
+            _currentDay = _availableDays[idx - 1];
+            RefreshEntries();
+        }
+    }
+
+    private void GoNextDay()
+    {
+        var idx = _availableDays.IndexOf(_currentDay);
+        if (idx >= 0 && idx < _availableDays.Count - 1)
+        {
+            _currentDay = _availableDays[idx + 1];
+            RefreshEntries();
+        }
+    }
+
+    private void SelectEntry(int index)
+    {
+        _selectedIndex = index >= 0 ? index : null;
+    }
+
+    private void OnEntrySelected(int index)
+    {
+        SelectEntry(index);
+        StateHasChanged();
+    }
+
+    private static string FormatDay(DateOnly day)
+        => day.ToString("dddd d MMMM yyyy", new System.Globalization.CultureInfo("it-IT"));
+}

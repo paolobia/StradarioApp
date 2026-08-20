@@ -87,6 +87,27 @@ namespace StradarioApp.Services
                 .ToList();
         }
 
+        // Trova le città con popolazione oltre una soglia nell'area geografica
+        // indicata, senza limite di conteggio (a differenza di FindTopCities,
+        // che prende le N più popolose qualunque sia la soglia). Usata dalla
+        // mini-mappa schematica in copertina, dove il criterio rilevante è
+        // "città sopra una certa soglia di rilevanza" — vedi
+        // PdfGenerator.DrawLocatorMap per la soglia adattiva (100k abitanti,
+        // alzata a 500k se altrimenti risulterebbero più di 20 città).
+        public static List<CityEntry> FindCitiesAbovePopulation(GeoRect bounds, long minPopulation)
+        {
+            EnsureLoaded();
+            if (_cities == null || _cities.Count == 0)
+                return new List<CityEntry>();
+
+            return _cities
+                .Where(c => c.Population >= minPopulation &&
+                            c.Lon >= bounds.MinLon && c.Lon <= bounds.MaxLon &&
+                            c.Lat >= bounds.MinLat && c.Lat <= bounds.MaxLat)
+                .OrderByDescending(c => c.Population)
+                .ToList();
+        }
+
         // Conta quante città del database cadono nell'area geografica
         // indicata (senza limite/ordinamento, a differenza di FindTopCities):
         // usato per dare un riferimento utile ("nella mappa visualizzata

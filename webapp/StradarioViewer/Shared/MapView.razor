@@ -1,0 +1,92 @@
+@using StradarioViewer.Services
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<div id="@_mapElementId" style="height: 100%; width: 100%;"></div>
+
+@code {
+    [Parameter, EditorRequired] public List<DayEntry> Entries { get; set; } = new();
+    [Parameter] public double CenterLat { get; set; } = 41.9028;
+    [Parameter] public double CenterLon { get; set; } = 12.4964;
+    [Parameter] public double Zoom { get; set; } = 10;
+    [Parameter] public EventCallback<int> OnEntrySelected { get; set; }
+
+    private readonly string _mapElementId = $"map-{Guid.NewGuid():N}";
+    private IJSObjectReference? _module;
+    private DotNetObjectReference<MapView>? _selfRef;
+    private bool _mapReady;
+    private List<DayEntry> _drawnEntries = new();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/leaflet-interop.js");
+        _selfRef = DotNetObjectReference.Create(this);
+        await _module.InvokeVoidAsync("initMap", _mapElementId, CenterLat, CenterLon, Zoom);
+        _mapReady = true;
+        await RedrawAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_mapReady && !ReferenceEquals(_drawnEntries, Entries))
+        {
+            await RedrawAsync();
+        }
+    }
+
+    private async Task RedrawAsync()
+    {
+        if (_module == null) return;
+
+        _drawnEntries = Entries;
+        await _module.InvokeVoidAsync("clearLayers");
+
+        var allPoints = new List<double[]>();
+
+        for (int i = 0; i < Entries.Count; i++)
+        {
+            var entry = Entries[i];
+            var latLon = entry.Points.Select(p => new[] { p.Lat, p.Lon }).ToArray();
+            allPoints.AddRange(latLon);
+
+            if (entry.Kind == "route" && entry.Points.Count >= 2)
+            {
+                await _module.InvokeVoidAsync("drawRoute", latLon, entry.ColorHex, 3.0, _selfRef, i);
+            }
+            else if (entry.Points.Count >= 1)
+            {
+                var p = entry.Points[0];
+                await _module.InvokeVoidAsync("drawMarker", p.Lat, p.Lon, entry.ColorHex, _selfRef, i);
+            }
+        }
+
+        if (allPoints.Count > 0)
+        {
+            // NB: passare direttamente un double[][] come UNICO argomento qui cadrebbe
+            // nella trappola della array-covariance di "params object?[] args" — il
+            // compilatore lo riconosce come già compatibile con object?[] e lo usa
+            // com'e' come lista di argomenti JS (un argomento per riga), invece che
+            // come singolo parametro. L'assegnazione a una variabile "object" forza il
+            // normale wrapping in un array di un elemento.
+            object boundsArg = allPoints.ToArray();
+            await _module.InvokeVoidAsync("fitToPoints", boundsArg);
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnEntryClicked(int index)
+    {
+        await OnEntrySelected.InvokeAsync(index);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _selfRef?.Dispose();
+        if (_module != null)
+        {
+            try { await _module.DisposeAsync(); } catch (JSDisconnectedException) { }
+        }
+    }
+}

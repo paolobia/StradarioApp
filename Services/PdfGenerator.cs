@@ -481,6 +481,69 @@ namespace StradarioApp.Services
                 if (any) gfx.DrawPath(landBrush, path);
             }
 
+            // --- Laghi (riempimento azzurro chiaro + contorno sottile) -------
+            // Stesso dataset/precisione dei confini (Natural Earth 1:110m,
+            // WaterFeaturesService) — solo i grandi laghi rilevanti a scala
+            // mondiale. Disegnati PRIMA dei confini così un confine che
+            // attraversa un lago resta visibile sopra il riempimento azzurro.
+            var lakeBrush = new XSolidBrush(XColor.FromArgb(255, 202, 222, 245));
+            var lakePen   = new XPen(XColor.FromArgb(255, 150, 185, 225), 0.4);
+            var visibleLakes = WaterFeaturesService.GetLakesInBounds(bounds).ToList();
+            foreach (var lake in visibleLakes)
+            {
+                var path = new XGraphicsPath();
+                bool any = false;
+                foreach (var ring in lake.Rings)
+                {
+                    if (ring.Count < 3 || !RingInBounds(ring, out _, out _, out _, out _)) continue;
+                    var pts = new XPoint[ring.Count];
+                    for (int i = 0; i < ring.Count; i++)
+                    {
+                        var (px, py) = Project(ring[i].Lon, ring[i].Lat);
+                        pts[i] = new XPoint(px, py);
+                    }
+                    path.AddPolygon(pts);
+                    any = true;
+                }
+                if (any) gfx.DrawPath(lakeBrush, path);
+            }
+            // Contorno sopra il riempimento (altrimenti resterebbe coperto,
+            // essendo il riempimento opaco) — stesso schema a due passate di
+            // terra/confini poco sotto.
+            foreach (var lake in visibleLakes)
+            {
+                foreach (var ring in lake.Rings)
+                {
+                    if (ring.Count < 2 || !RingInBounds(ring, out _, out _, out _, out _)) continue;
+                    var pts = new XPoint[ring.Count];
+                    for (int i = 0; i < ring.Count; i++)
+                    {
+                        var (px, py) = Project(ring[i].Lon, ring[i].Lat);
+                        pts[i] = new XPoint(px, py);
+                    }
+                    gfx.DrawLines(lakePen, pts);
+                    gfx.DrawLine(lakePen, pts[pts.Length - 1], pts[0]);
+                }
+            }
+
+            // --- Fiumi principali (linee azzurre) -----------------------------
+            var riverPen = new XPen(XColor.FromArgb(255, 130, 170, 220), 0.7);
+            var visibleRivers = WaterFeaturesService.GetRiversInBounds(bounds).ToList();
+            foreach (var river in visibleRivers)
+            {
+                foreach (var line in river.Lines)
+                {
+                    if (line.Count < 2 || !RingInBounds(line, out _, out _, out _, out _)) continue;
+                    var pts = new XPoint[line.Count];
+                    for (int i = 0; i < line.Count; i++)
+                    {
+                        var (px, py) = Project(line[i].Lon, line[i].Lat);
+                        pts[i] = new XPoint(px, py);
+                    }
+                    gfx.DrawLines(riverPen, pts);
+                }
+            }
+
             // --- Confini/coste -----------------------------------------------
             var borderPen = new XPen(XColor.FromArgb(255, 160, 160, 160), 0.5);
             foreach (var poly in visiblePolys)
@@ -568,8 +631,19 @@ namespace StradarioApp.Services
             }
 
             // --- Città maggiori (solo puntino: il nome si disegna per ultimo) -
+            // Soglia adattiva per popolazione, non un conteggio fisso: 100.000
+            // abitanti di default, ma se in questo scorcio di mondo risultassero
+            // più di 20 città (es. una vista molto ampia su un'area densamente
+            // urbanizzata) la soglia sale a 500.000 — altrimenti la mappa si
+            // riempirebbe di puntini/etichette illeggibili. Richiesta esplicita
+            // dell'utente.
+            const long CityPopulationThreshold      = 100_000;
+            const long CityPopulationThresholdDense  = 500_000;
+            const int  CityCountBeforeRaisingThreshold = 20;
             var cityDotBrush = new XSolidBrush(XColor.FromArgb(255, 80, 80, 80));
-            var cities = CityDatabase.FindTopCities(bounds, 5);
+            var cities = CityDatabase.FindCitiesAbovePopulation(bounds, CityPopulationThreshold);
+            if (cities.Count > CityCountBeforeRaisingThreshold)
+                cities = CityDatabase.FindCitiesAbovePopulation(bounds, CityPopulationThresholdDense);
             foreach (var city in cities)
             {
                 var (x, y) = Project(city.Lon, city.Lat);
@@ -625,6 +699,60 @@ namespace StradarioApp.Services
                 var labelRect = new XRect(x + 3, y - size.Height / 2, size.Width, size.Height);
                 if (TryReserve(labelRect))
                     DrawHaloString(city.Name, cityFont, XBrushes.Black, labelRect, XStringFormats.CenterLeft);
+            }
+
+            // --- Nomi di laghi/fiumi (priorità più bassa: solo dove c'è ancora
+            // spazio libero dopo percorsi/città, riservato per primi sopra) ---
+            var waterLabelFont  = new XFont("Arial", 6, XFontStyle.Italic);
+            var waterLabelBrush = new XSolidBrush(XColor.FromArgb(255, 95, 135, 180));
+
+            foreach (var lake in visibleLakes)
+            {
+                if (string.IsNullOrWhiteSpace(lake.Name)) continue;
+
+                double lMinLon = double.MaxValue, lMaxLon = double.MinValue;
+                double lMinLat = double.MaxValue, lMaxLat = double.MinValue;
+                bool anyRing = false;
+                foreach (var ring in lake.Rings)
+                {
+                    if (ring.Count < 2 || !RingInBounds(ring, out var rMinLon, out var rMaxLon, out var rMinLat, out var rMaxLat)) continue;
+                    lMinLon = Math.Min(lMinLon, rMinLon); lMaxLon = Math.Max(lMaxLon, rMaxLon);
+                    lMinLat = Math.Min(lMinLat, rMinLat); lMaxLat = Math.Max(lMaxLat, rMaxLat);
+                    anyRing = true;
+                }
+                if (!anyRing) continue;
+
+                double lcLon = (Math.Max(lMinLon, bounds.MinLon) + Math.Min(lMaxLon, bounds.MaxLon)) / 2.0;
+                double lcLat = (Math.Max(lMinLat, bounds.MinLat) + Math.Min(lMaxLat, bounds.MaxLat)) / 2.0;
+                var (lx, ly) = Project(lcLon, lcLat);
+                var size = gfx.MeasureString(lake.Name, waterLabelFont);
+                var labelRect = new XRect(lx - size.Width / 2, ly - size.Height / 2, size.Width, size.Height);
+                if (TryReserve(labelRect))
+                    DrawHaloString(lake.Name, waterLabelFont, waterLabelBrush, labelRect, XStringFormats.Center);
+            }
+
+            foreach (var river in visibleRivers)
+            {
+                if (string.IsNullOrWhiteSpace(river.Name)) continue;
+
+                // Etichetta sul punto medio del segmento visibile più lungo
+                // (un fiume può attraversare bounds solo in parte).
+                List<(double Lon, double Lat)>? bestVisible = null;
+                foreach (var line in river.Lines)
+                {
+                    var visible = line.Where(p => p.Lon >= bounds.MinLon && p.Lon <= bounds.MaxLon &&
+                                                   p.Lat >= bounds.MinLat && p.Lat <= bounds.MaxLat).ToList();
+                    if (visible.Count < 2) continue;
+                    if (bestVisible == null || visible.Count > bestVisible.Count) bestVisible = visible;
+                }
+                if (bestVisible == null) continue;
+
+                var mid = bestVisible[bestVisible.Count / 2];
+                var (rx, ry) = Project(mid.Lon, mid.Lat);
+                var size = gfx.MeasureString(river.Name, waterLabelFont);
+                var labelRect = new XRect(rx - size.Width / 2, ry - size.Height / 2, size.Width, size.Height);
+                if (TryReserve(labelRect))
+                    DrawHaloString(river.Name, waterLabelFont, waterLabelBrush, labelRect, XStringFormats.Center);
             }
 
             gfx.Restore();

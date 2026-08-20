@@ -1,0 +1,24 @@
+@using StradarioViewer.Services
+
+@if (Entry != null)
+{
+    <div class="detail-panel" style="border-left: 6px solid @Entry.ColorHex;">
+        <div class="detail-header">
+            <strong>@Entry.Label</strong>
+            <button class="btn-close-detail" @onclick="() => OnClose.InvokeAsync()">✕</button>
+        </div>
+        @if (!string.IsNullOrWhiteSpace(Entry.Description))
+        {
+            <p class="detail-description">@Entry.Description</p>
+        }
+        else
+        {
+            <p class="detail-description text-muted"><em>Nessuna descrizione.</em></p>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public DayEntry? Entry { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+}
