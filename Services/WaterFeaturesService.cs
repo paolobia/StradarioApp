@@ -1,16 +1,29 @@
 // =============================================================================
 // Services/WaterFeaturesService.cs
 //
-// SINOSSI: Laghi + fiumi principali (Natural Earth 1:110m "lakes" e
-//   "rivers_lake_centerlines", dominio pubblico), bundlati come
-//   EmbeddedResource compresso (Resources/WorldBorders/water_features.geojson.gz,
-//   ~11 KB), usati dalla mini-mappa schematica nella copertina del PDF
-//   (PdfGenerator.DrawLocatorMap) per dare un riferimento geografico oltre
-//   al solo contorno di terra (vedi WorldBordersService, stesso standard/
-//   precisione, stesso schema di caricamento). Alla scala 1:110m sono
-//   presenti solo i grandi laghi/fiumi rilevanti a livello mondiale (24
-//   laghi, 13 fiumi) — non un dataset idrografico completo, coerente con
-//   la risoluzione già scelta per i confini.
+// SINOSSI: Laghi + fiumi (Natural Earth 1:10m "lakes" e
+//   "rivers_lake_centerlines", dominio pubblico — la risoluzione PIÙ
+//   dettagliata offerta da Natural Earth, non la stessa scala 1:110m usata
+//   da WorldBordersService per i confini: alla scala dei confini mondiali
+//   non compariva NESSUN lago/fiume italiano, nemmeno il Garda o il Po),
+//   filtrati per "min_zoom" (<= 6.0, lo stesso criterio di visibilità
+//   incrementale usato da Natural Earth per le proprie mappe web) per
+//   restare a un livello "regionale" senza portarsi dietro l'intero
+//   dataset (586 laghi + 800 fiumi selezionati, non i ~1300+1400 totali).
+//   Bundlato come EmbeddedResource compresso
+//   (Resources/WorldBorders/water_features.geojson.gz, ~1.4 MB — più
+//   pesante del dataset 1:110m usato in precedenza, necessario per la
+//   copertura regionale). Usato dalla mini-mappa schematica nella
+//   copertina del PDF (PdfGenerator.DrawLocatorMap) per dare un
+//   riferimento geografico oltre al solo contorno di terra.
+//
+//   Nota: anche a questa risoluzione un piccolo bacino artificiale come il
+//   lago di Brasimone (Appennino bolognese, ~3 km²) resta assente — è
+//   sotto la soglia di qualunque dataset cartografico generalista
+//   (verificato: assente anche nel dataset 1:10m completo, non solo nel
+//   sottoinsieme filtrato qui). Per un dettaglio di quel livello servirebbe
+//   un dataset idrografico nazionale/regionale dedicato, fuori scopo per
+//   una mini-mappa "colpo d'occhio" come questa.
 //
 //   Formato dati: JSON minimizzato ad-hoc (non il GeoJSON originale):
 //   { "lakes":  [ { "n": "Superiore", "b": [minLon,minLat,maxLon,maxLat],
