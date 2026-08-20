@@ -16,7 +16,7 @@ grazie ad Avalonia UI.
 - **Percorsi**: disegno punto-per-punto sulla mappa (Invio o shift+clic per confermare, senza aggiungere punti spuri se si pan durante il disegno), estendibili ed editabili in seguito, instradabili su strada reale via OSRM (auto/bici/piedi, fino a 10 punti, alternative multiple per tratta scelte da un pannello dedicato ridimensionabile); l'etichetta si sposta automaticamente se troppo vicina a un POI; **qualunque punto del percorso può diventare un POI inline** (icona, etichetta, descrizione) direttamente dalla maschera di modifica, sempre col colore del percorso — l'icona viene anche suggerita automaticamente da parole chiave nel testo (italiano/inglese), senza dover creare un gruppo POI a parte; la maschera di modifica è ora organizzata in due tab (Percorso / Punti), con navigazione punto-per-punto tramite frecce e campi descrizione a piena altezza
 - **Data/ora opzionali su POI e percorsi**: campo Da/A facoltativo su ogni POI e su ogni percorso — quando presente, l'albero di navigazione si riordina cronologicamente in automatico e il PDF genera una pagina "Piano di viaggio" dedicata (non datati in coda) subito dopo la copertina; senza alcuna data impostata il PDF resta identico a prima (nessuna pagina in più); nel PDF la data è preceduta dalla sigla del giorno della settimana (**Domenica in grassetto**), l'orario di inizio/fine viene omesso quando è 00:00/23:59, un evento che copre l'intera giornata (00:00 → 23:59 stesso giorno) non genera una riga "Fine" separata, e una sottile riga verticale continua separa la colonna data/ora dall'icona lungo tutta la tabella
 - **Import/export universale**: un solo comando importa KMZ/KML/GPX (POI e percorsi insieme, con colori distinti per i gruppi POI importati, anche più file in un colpo solo); esportazione separata, combinata o di un singolo gruppo/percorso; anche in **CSV** (due file tabellari, uno per POI e uno per percorsi, apribili in Excel/LibreOffice); le date di POI/percorsi viaggiano nel KML/KMZ (ExtendedData) e si ritrovano intatte al reimport; un POI che coincide con un vertice di uno o più percorsi (es. un itinerario di viaggio con una base ripetuta ogni giorno) viene riconciliato come POI inline su quel/quei punto/i invece di restare duplicato — un gruppo POI rimasto vuoto dopo la riconciliazione non è né importato né esportato; nomi in script non latino ripuliti automaticamente (anche nel tooltip "Cosa c'è qui"); punti in Cina (possibile GCJ-02 anziché WGS84) gestiti con correzione automatica o manuale
-- **Generazione PDF**: si apre subito nel visualizzatore di sistema (nessuna domanda di salvataggio — si salva da lì, se serve), **pagina di copertina con titolo** (più una mini-mappa schematica — confini/coste, percorsi, città maggiori — quando il progetto ha percorsi), indice (omesso se non ci sono pagine mappa), mappa riassuntiva che inquadra e disegna anche POI e percorsi liberi, pagine con riferimenti alle adiacenti e scala grafica, descrizioni lunghe con word-wrap reale, gruppo POI mai separato dal proprio elenco da un'interruzione di pagina; un percorso ad anello (ultimo punto coincidente col primo) non ripete la descrizione già stampata all'inizio; **generabile anche con zero pagine mappa** (solo copertina, elenchi POI/percorsi, riassuntiva); 5 modalità di contrasto per la mappa stampata (nessuno, colore, bianco/nero, enfatizza strade, **adattivo/locale**), più **rinforzo contorni** e **retinatura per stampa B/N** (dithering) come opzioni indipendenti
+- **Generazione PDF**: si apre subito nel visualizzatore di sistema (nessuna domanda di salvataggio — si salva da lì, se serve), **pagina di copertina con titolo** (più una mini-mappa schematica — confini/coste, laghi e fiumi principali, percorsi, città maggiori sopra una soglia di popolazione adattiva — quando il progetto ha percorsi), indice (omesso se non ci sono pagine mappa), mappa riassuntiva che inquadra e disegna anche POI e percorsi liberi, pagine con riferimenti alle adiacenti e scala grafica, descrizioni lunghe con word-wrap reale, gruppo POI mai separato dal proprio elenco da un'interruzione di pagina; un percorso ad anello (ultimo punto coincidente col primo) non ripete la descrizione già stampata all'inizio; **generabile anche con zero pagine mappa** (solo copertina, elenchi POI/percorsi, riassuntiva); 5 modalità di contrasto per la mappa stampata (nessuno, colore, bianco/nero, enfatizza strade, **adattivo/locale**), più **rinforzo contorni** e **retinatura per stampa B/N** (dithering) come opzioni indipendenti
 - **Etichette leggibili e senza sovrapposizioni**: sia in stampa (pagine mappa e mappa riassuntiva) sia sulla mappa interattiva, ogni etichetta prova automaticamente più posizioni (destra/sinistra/sopra/sotto) scegliendo quella che si sovrappone meno alle altre — in stampa un'etichetta può restare nascosta se non c'è proprio spazio (priorità ai POI singoli sui POI dei percorsi), sulla mappa interattiva viene invece sempre mostrata comunque, nella posizione migliore disponibile; alone bianco pieno intorno al testo per restare leggibile su qualunque sfondo; POI diversi che coincidono nello stesso punto con la stessa etichetta la stampano una sola volta invece di sovrapporla; l'etichetta col nome di un percorso è ancorata al suo baricentro invece che al primo punto
 - **Salvataggio progetto**: file `.stradario` (JSON) leggibile e modificabile a mano; le chiavi API restano solo nelle preferenze locali, mai nel progetto
 - **Cancellazioni protette**: eliminare una pagina, un gruppo POI, un singolo POI, un percorso o un punto di un percorso chiede sempre conferma esplicita prima di procedere
@@ -102,7 +102,7 @@ finale, che è il vero prodotto dell'app.
 <tr>
 <td width="50%">
 <img src="docs/screenshots/09-pdf-copertina.png" width="100%" alt="PDF cover page" />
-<sub>Cover page: project name, scale, page size and generation date, plus a schematic locator map (country borders/coastlines, routes and major cities) when the project has routes.</sub>
+<sub>Cover page: project name, scale, page size and generation date, plus a schematic locator map (country borders/coastlines, lakes and major rivers, routes and major cities) when the project has routes.</sub>
 </td>
 <td width="50%">
 <img src="docs/screenshots/12-pdf-indice.png" width="100%" alt="PDF index page" />
@@ -279,6 +279,18 @@ StradarioApp/
     ├── PoiSearchLogWindow.cs        # Log passo-passo di ogni ricerca POI, con Annulla/OK
     └── ProgressWindow.cs            # Dialog avanzamento generazione PDF
 ```
+
+---
+
+## App accessorie
+
+- **`webapp/StradarioViewer/`** — app da tenere in tasca: Blazor WebAssembly
+  (.NET 8), 100% client-side (nessun backend/database), installabile come PWA.
+  Carica un file `.stradario` (rimane salvato nel `localStorage` del browser
+  per le visite successive) e permette di consultare percorsi e POI datati
+  giorno per giorno su una mappa, con etichetta e descrizione di ogni
+  elemento. Progetto .NET indipendente in una sottocartella del repo, non
+  referenziato dal progetto desktop — vedi `webapp/CLAUDE.md`.
 
 ---
 
