@@ -6,7 +6,7 @@ Applicazione desktop C# per la creazione di stradari cartografici (atlanti
 stradali a pagine) a partire da OpenStreetMap. Portabile su Linux e Windows
 grazie ad Avalonia UI.
 
-🗺️ C'è anche **[StradarioViewer](webapp/StradarioViewer/)**, l'app compagna
+🗺️ C'è anche **[StradarioViewer](https://paolobia.github.io/StradarioApp/)**, l'app compagna
 da tenere in tasca per consultare i percorsi del progetto sul telefono.
 
 ---
@@ -25,7 +25,7 @@ da tenere in tasca per consultare i percorsi del progetto sul telefono.
 - **Cancellazioni protette**: eliminare una pagina, un gruppo POI, un singolo POI, un percorso o un punto di un percorso chiede sempre conferma esplicita prima di procedere
 - **Selezione dalla mappa**: cliccare un POI o un percorso bloccato sulla mappa (anche sulla linea o su un punto-POI inline, non solo su un vertice) lo rende corrente nell'albero di navigazione, espandendo il gruppo/ramo che lo contiene e scorrendo automaticamente fino a renderlo visibile
 - **Impostazioni**: tre tab — Generale (formato pagina, DPI, scala di stampa da 1:1.000 a 1:1.000.000, tile server, contrasto mappa nel PDF), Categorie POI (aggiunta di categorie personalizzate), Database POI offline (download facoltativo per continente)
-- **[StradarioViewer](webapp/StradarioViewer/)**, l'app compagna: StradarioApp è pensato per creare/modificare progetti su desktop, non per essere consultato in mobilità — da qui **StradarioViewer**, una app separata (Blazor WebAssembly, installabile come PWA sul telefono) che carica lo stesso file `.stradario` e mostra solo i percorsi/POI datati del giorno corrente (con navigazione al giorno prima/dopo) su una mappa, per avere l'itinerario di viaggio sotto mano senza portarsi dietro il progetto completo o un PC; funziona offline dopo il primo caricamento, i dati restano nel browser (`localStorage`), nessun server coinvolto
+- **[StradarioViewer](https://paolobia.github.io/StradarioApp/)**, l'app compagna: StradarioApp è pensato per creare/modificare progetti su desktop, non per essere consultato in mobilità — da qui **StradarioViewer**, una app separata (Blazor WebAssembly, installabile come PWA sul telefono) che carica lo stesso file `.stradario` e mostra solo i percorsi/POI datati del giorno corrente (con navigazione al giorno prima/dopo) su una mappa, per avere l'itinerario di viaggio sotto mano senza portarsi dietro il progetto completo o un PC; funziona offline dopo il primo caricamento, i dati restano nel browser (`localStorage`), nessun server coinvolto
 
 ---
 

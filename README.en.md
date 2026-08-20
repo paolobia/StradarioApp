@@ -6,7 +6,7 @@ C# desktop application to create cartographic *stradari* (page-based street
 atlases) from OpenStreetMap. Portable on Linux and Windows thanks to
 Avalonia UI.
 
-🗺️ There's also **[StradarioViewer](webapp/StradarioViewer/)**, the pocket
+🗺️ There's also **[StradarioViewer](https://paolobia.github.io/StradarioApp/)**, the pocket
 companion app to check the project's routes on your phone.
 
 ---
@@ -25,7 +25,7 @@ companion app to check the project's routes on your phone.
 - **Protected deletions**: deleting a page, a POI group, a single POI, a route, or a route point always asks for explicit confirmation before proceeding
 - **Selection from the map**: clicking a locked POI or route on the map (even on its line or on an inline POI point, not just a vertex) makes it current in the navigation tree, expanding the group/branch that contains it and auto-scrolling it into view
 - **Settings**: three tabs — General (page format, DPI, print scale from 1:1,000 to 1:1,000,000, tile server, PDF map contrast), POI categories (add custom categories), Offline POI database (optional per-continent download)
-- **[StradarioViewer](webapp/StradarioViewer/)**, the companion app: StradarioApp is built for creating/editing projects on desktop, not for on-the-go browsing — hence **StradarioViewer**, a separate app (Blazor WebAssembly, installable as a PWA on your phone) that loads the same `.stradario` file and shows only the current day's dated routes/POI (with prev/next-day navigation) on a map, so the travel itinerary is at hand without carrying the full project or a PC; works offline after the first load, data stays in the browser (`localStorage`), no server involved
+- **[StradarioViewer](https://paolobia.github.io/StradarioApp/)**, the companion app: StradarioApp is built for creating/editing projects on desktop, not for on-the-go browsing — hence **StradarioViewer**, a separate app (Blazor WebAssembly, installable as a PWA on your phone) that loads the same `.stradario` file and shows only the current day's dated routes/POI (with prev/next-day navigation) on a map, so the travel itinerary is at hand without carrying the full project or a PC; works offline after the first load, data stays in the browser (`localStorage`), no server involved
 
 ---
 

@@ -563,6 +563,7 @@ namespace StradarioApp.Resources
             ["AboutWindow_ControlloFallito"] = "Check failed (verify your Internet connection).",
             ["AboutWindow_ApriPagina"] = "Open release page",
             ["AboutWindow_RepositoryGitHub"] = "GitHub repository",
+            ["AboutWindow_StradarioViewer"] = "🗺️ StradarioViewer — the pocket companion app",
             ["AboutWindow_Licenza"] = "GNU GPL v3.0 license",
             ["AboutWindow_DatiMappe"] = "Map data © OpenStreetMap contributors",
             ["AboutWindow_Chiudi"] = "Close",

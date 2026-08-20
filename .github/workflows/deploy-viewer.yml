@@ -1,0 +1,67 @@
+name: Deploy StradarioViewer
+
+# Pubblica automaticamente webapp/StradarioViewer (Blazor WebAssembly) su
+# GitHub Pages ad ogni push su main che tocca quella sottocartella — nessun
+# passo manuale dopo il push. Richiede che GitHub Pages sia configurato su
+# questo repo con "Source: GitHub Actions" (Settings → Pages), un
+# passaggio una tantum non ripetibile da un workflow.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'webapp/StradarioViewer/**'
+      - '.github/workflows/deploy-viewer.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Un solo deploy alla volta; un push durante un deploy in corso aspetta
+# invece di essere scartato (cancel-in-progress: false), altrimenti un push
+# rapido potrebbe far vincere una versione più vecchia.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish StradarioViewer
+        run: dotnet publish webapp/StradarioViewer/StradarioViewer.csproj -c Release -o publish_output
+
+      # Progetto GitHub Pages (non un sito utente/organizzazione): l'app
+      # viene servita sotto /StradarioApp/, non alla radice del dominio —
+      # il base href di sviluppo ("/") va corretto solo in questa build.
+      - name: Set base href for the GitHub Pages sub-path
+        run: sed -i 's|<base href="/" />|<base href="/StradarioApp/" />|' publish_output/wwwroot/index.html
+
+      # Senza questo file GitHub Pages tratta il sito come un sito Jekyll e
+      # ignora silenziosamente le cartelle che iniziano con "_" (es.
+      # _framework, dove Blazor mette i file .wasm/.dll).
+      - name: Add .nojekyll
+        run: touch publish_output/wwwroot/.nojekyll
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: publish_output/wwwroot
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

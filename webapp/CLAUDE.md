@@ -7,6 +7,12 @@ come PWA. Serve a consultare "in tasca" (telefono/tablet) il piano di viaggio
 di un progetto StradarioApp: percorsi e POI datati, navigabili giorno per
 giorno, su una mappa OSM.
 
+**Pubblicata su https://paolobia.github.io/StradarioApp/** — deploy
+automatico via GitHub Actions (`.github/workflows/deploy-viewer.yml`), ogni
+push su `main` che tocca questa cartella pubblica una nuova versione, nessun
+passo manuale. Vedi anche `webapp/StradarioViewer/README.md` (istruzioni
+d'uso rivolte all'utente finale, non a chi sviluppa).
+
 ## Cosa fa
 
 - L'utente carica un file `.stradario` (lo stesso JSON prodotto da

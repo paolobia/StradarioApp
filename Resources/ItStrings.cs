@@ -570,6 +570,7 @@ namespace StradarioApp.Resources
             ["AboutWindow_ControlloFallito"] = "Controllo non riuscito (verifica la connessione a Internet).",
             ["AboutWindow_ApriPagina"] = "Apri pagina della release",
             ["AboutWindow_RepositoryGitHub"] = "Repository su GitHub",
+            ["AboutWindow_StradarioViewer"] = "🗺️ StradarioViewer — l'app compagna per il telefono",
             ["AboutWindow_Licenza"] = "Licenza GNU GPL v3.0",
             ["AboutWindow_DatiMappe"] = "Dati cartografici © contributori OpenStreetMap",
             ["AboutWindow_Chiudi"] = "Chiudi",

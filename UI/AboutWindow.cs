@@ -92,6 +92,7 @@ namespace StradarioApp.UI
             });
 
             root.Children.Add(MakeLink(Strings.Get("AboutWindow_RepositoryGitHub"), "https://github.com/paolobia/StradarioApp"));
+            root.Children.Add(MakeLink(Strings.Get("AboutWindow_StradarioViewer"), "https://paolobia.github.io/StradarioApp/"));
             root.Children.Add(new TextBlock
             {
                 Text       = Strings.Get("AboutWindow_Licenza"),
