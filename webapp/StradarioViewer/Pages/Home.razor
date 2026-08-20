@@ -48,7 +48,7 @@ else
 
     <div class="day-body">
         <div class="map-container">
-            <MapView Entries="_entries" CenterLat="Plan.Project.ViewCenterLat" CenterLon="Plan.Project.ViewCenterLon"
+            <MapView @ref="_mapView" Entries="_entries" CenterLat="Plan.Project.ViewCenterLat" CenterLon="Plan.Project.ViewCenterLon"
                      Zoom="Plan.Project.ViewZoom" OnEntrySelected="OnEntrySelected" />
         </div>
         <div class="entry-list">
@@ -60,7 +60,7 @@ else
             {
                 @foreach (var (entry, index) in _entries.Select((e, i) => (e, i)))
                 {
-                    <div class="entry-row @(index == _selectedIndex ? "selected" : "")" @onclick="() => SelectEntry(index)">
+                    <div class="entry-row @(index == _selectedIndex ? "selected" : "")" @onclick="() => SelectEntryAsync(index)">
                         <span class="entry-dot" style="background:@entry.ColorHex;"></span>
                         <span class="entry-label">@entry.Label</span>
                     </div>
@@ -71,7 +71,7 @@ else
 
     @if (_selectedIndex is int idx && idx >= 0 && idx < _entries.Count)
     {
-        <RouteDetail Entry="_entries[idx]" OnClose="() => SelectEntry(-1)" />
+        <RouteDetail Entry="_entries[idx]" OnClose="() => SelectEntryAsync(-1)" />
     }
 }
 
@@ -82,6 +82,7 @@ else
     private DateOnly _currentDay;
     private List<DayEntry> _entries = new();
     private int? _selectedIndex;
+    private MapView? _mapView;
 
     protected override async Task OnInitializedAsync()
     {
@@ -162,14 +163,18 @@ else
         }
     }
 
-    private void SelectEntry(int index)
+    private async Task SelectEntryAsync(int index)
     {
         _selectedIndex = index >= 0 ? index : null;
+        if (index >= 0 && _mapView != null)
+        {
+            await _mapView.FocusOnEntryAsync(index);
+        }
     }
 
-    private void OnEntrySelected(int index)
+    private async void OnEntrySelected(int index)
     {
-        SelectEntry(index);
+        await SelectEntryAsync(index);
         StateHasChanged();
     }
 

@@ -51,3 +51,16 @@ export function fitToPoints(pointsLatLon) {
     }
     map.fitBounds(pointsLatLon, { padding: [24, 24], maxZoom: 16 });
 }
+
+// Centra/inquadra la mappa su un singolo elemento selezionato (dalla lista o
+// da un marker/linea cliccati) — a differenza di fitToPoints (chiamata solo
+// al cambio giorno, su TUTTI i punti), qui i punti sono quelli del solo
+// elemento selezionato.
+export function focusOnPoints(pointsLatLon) {
+    if (!map || !pointsLatLon || pointsLatLon.length === 0) return;
+    if (pointsLatLon.length === 1) {
+        map.setView(pointsLatLon[0], Math.max(map.getZoom(), 16));
+        return;
+    }
+    map.fitBounds(pointsLatLon, { padding: [40, 40], maxZoom: 17 });
+}

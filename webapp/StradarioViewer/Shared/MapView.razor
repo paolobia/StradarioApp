@@ -81,6 +81,21 @@
         await OnEntrySelected.InvokeAsync(index);
     }
 
+    // Centra/inquadra la mappa sui punti dell'elemento indicato — chiamato
+    // dal parent quando l'utente seleziona un elemento dalla lista (il click
+    // diretto su un marker/linea della mappa è già "centrato" di suo, ma un
+    // click dalla lista no).
+    public async Task FocusOnEntryAsync(int index)
+    {
+        if (_module == null || index < 0 || index >= Entries.Count) return;
+
+        var latLon = Entries[index].Points.Select(p => new[] { p.Lat, p.Lon }).ToArray();
+        if (latLon.Length == 0) return;
+
+        object pointsArg = latLon; // vedi nota array-covariance in RedrawAsync
+        await _module.InvokeVoidAsync("focusOnPoints", pointsArg);
+    }
+
     public async ValueTask DisposeAsync()
     {
         _selfRef?.Dispose();
