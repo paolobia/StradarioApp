@@ -9,7 +9,7 @@
         </div>
         @if (!string.IsNullOrWhiteSpace(Entry.Description))
         {
-            <p class="detail-description">@Entry.Description</p>
+            <div class="detail-description">@((MarkupString)MarkdownRenderer.ToHtml(Entry.Description))</div>
         }
         else
         {

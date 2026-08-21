@@ -760,6 +760,19 @@ namespace StradarioApp.Services
                 gfx.DrawRectangle(XPens.Gray, targetRect);
         }
 
+        // Registra un link cliccabile per un rettangolo espresso in
+        // coordinate XGraphics (Y dall'alto, come tutto il resto del
+        // disegno) — page.AddWebLink/PdfRectangle si aspettano invece lo
+        // spazio PDF nativo (Y dal basso): senza il ribaltamento qui sotto
+        // l'area cliccabile finiva spostata di parecchi centimetri rispetto
+        // al testo del link effettivamente disegnato (bug reale, verificato
+        // ispezionando il /Rect di un'annotazione generata a mano).
+        private static void AddWebLinkFlipped(PdfPage page, double pageHeight, XRect rect, string url)
+        {
+            var flipped = new XRect(rect.X, pageHeight - rect.Y - rect.Height, rect.Width, rect.Height);
+            page.AddWebLink(new PdfRectangle(flipped), url);
+        }
+
         // Spezza un testo in più righe che entrano in maxWidth (word-wrap
         // greedy: aggiunge parole finché stanno nella larghezza, altrimenti
         // va a capo). Usata per le descrizioni di gruppi POI/percorsi/singoli
@@ -801,7 +814,13 @@ namespace StradarioApp.Services
         private static void DrawWrappedTwoLines(XGraphics gfx, string text, XFont font, double x, double y, double maxWidth)
         {
             if (string.IsNullOrWhiteSpace(text)) return;
-            var lines = WrapText(gfx, text, font, maxWidth);
+            // Cella di appena 2 righe con troncamento: non lo spazio per un
+            // vero rendering Markdown a più stili (link/liste/titoli) come
+            // nelle pagine elenco — qui basta appiattire i marcatori (stesso
+            // trattamento "povero" dei tooltip, MarkdownPlainText) così
+            // almeno non compaiono asterischi/simboli grezzi in vista.
+            string flat = string.Join(" ", MarkdownPlainText.Flatten(text));
+            var lines = WrapText(gfx, flat, font, maxWidth);
             for (int i = 0; i < Math.Min(2, lines.Count); i++)
             {
                 string line = lines[i];
@@ -881,10 +900,13 @@ namespace StradarioApp.Services
             var titleFont     = new XFont("Arial", 16, XFontStyle.Bold);
             var descFont      = new XFont("Arial", 6.5, XFontStyle.Regular);
             var dateFont      = descFont;
-            var dateFontSunday = new XFont("Arial", 6.5, XFontStyle.Bold);
             var labelFont     = descFont;
             var nestedFont    = new XFont("Arial", 6.5, XFontStyle.Regular);
             var nestedDescFont = new XFont("Arial", 6, XFontStyle.Italic);
+            var dayHeaderFont      = new XFont("Arial", 11, XFontStyle.Bold);
+            var headerUnderlinePen = new XPen(XColor.FromArgb(160, 160, 160), 0.75);
+            const double headerRowH    = 16;
+            const double groupGapAbove = 10;
 
             var iconCache = new Dictionary<string, XImage>();
             XImage GetIcon(PoiIconType icon, string colorHex)
@@ -905,11 +927,13 @@ namespace StradarioApp.Services
 
             int pageCount = 0;
             XGraphics? gfx = null;
+            PdfPage? currentPage = null;
             double w = 0, h = 0, tableWidth = 0, y = 0;
 
             void NewPage()
             {
                 var page = pdfDoc.AddPage();
+                currentPage = page;
                 SetPageSize(page, pageWidthMm, pageHeightMm);
                 gfx = XGraphics.FromPdfPage(page);
                 w   = page.Width.Point;
@@ -922,57 +946,105 @@ namespace StradarioApp.Services
                 gfx.DrawString(title, titleFont, XBrushes.Black,
                     new XRect(0, 18, w, 26), XStringFormats.TopCenter);
 
-                y = 18 + 40;
+                y = 18 + 20;
+
+                // Numero di pagina in fondo, MAI sulla prima (è la copertina
+                // della sezione) — riparte da 1 dalla seconda.
+                if (pageCount > 1)
+                    gfx.DrawString((pageCount - 1).ToString(), descFont, XBrushes.Black,
+                        new XRect(0, h - 20, w, 14), XStringFormats.BottomCenter);
             }
 
             NewPage();
 
-            // Colonna data larga solo quanto serve al testo più lungo
-            // effettivamente presente (misurato, non un valore fisso a
-            // occhio) più un piccolo margine — prima era un fisso 110pt che
-            // lasciava un vuoto vistoso tra la fine dell'orario e l'icona;
-            // il resto (18pt fissi già sottratti sotto, invariati) va tutto
-            // alla colonna di descrizione a destra.
-            const double dateColPadding = 4;
-            const double dateColMinWidth = 30;
-            double dateColWidth = dateColMinWidth;
-            foreach (var entry in entries)
-            {
-                string dt = entry.Date.HasValue ? ItineraryOrdering.FormatSingleDate(entry.Date.Value, includeDayAbbrev: true, hideBoundaryTimes: true) : "—";
-                double dtWidth = gfx!.MeasureString(dt, dateFontSunday).Width; // font Bold (Domenica) è il più largo dei due
-                if (dtWidth > dateColWidth) dateColWidth = dtWidth;
-            }
-            dateColWidth += dateColPadding;
+            // Colonna ora larga solo quanto serve a "HH:mm" — la data vive
+            // ora nell'intestazione di giornata (sotto), non più per-riga.
+            const double timeColPadding  = 4;
+            const double timeColMinWidth = 24;
+            double timeColWidth = Math.Max(timeColMinWidth, gfx!.MeasureString("00:00", dateFont).Width + timeColPadding);
 
-            // Riga sottile che separa la colonna data dall'icona/etichetta,
-            // continua per tutta l'altezza della tabella (non spezzata voce
-            // per voce) — stesso grigio chiaro usato altrove per i
-            // separatori di colonna (v. DrawPercorsiListPages). Ricomincia
-            // da capo a ogni cambio pagina (PageBreak sotto).
-            var dateColSepPen = new XPen(XColor.FromArgb(200, 200, 200), 0.5);
-            double dateColLineX = margin + dateColWidth - 2;
+            // Riga sottile che separa la colonna ora dall'icona/etichetta —
+            // stesso grigio chiaro usato altrove per i separatori di colonna
+            // (v. DrawPercorsiListPages). Interrotta durante le intestazioni
+            // di giornata (FlushColumnLine) così non attraversa il testo, e
+            // ricomincia da capo a ogni cambio pagina.
+            var timeColSepPen = new XPen(XColor.FromArgb(200, 200, 200), 0.5);
+            double timeColLineX = margin + timeColWidth - 2;
             double lineTopY = y;
+
+            void FlushColumnLine()
+            {
+                if (gfx != null && y > lineTopY)
+                    gfx.DrawLine(timeColSepPen, timeColLineX, lineTopY, timeColLineX, y);
+            }
+
+            DateTime? currentGroupDay = null;
 
             void PageBreak()
             {
-                if (gfx != null)
-                    gfx.DrawLine(dateColSepPen, dateColLineX, lineTopY, dateColLineX, y);
+                FlushColumnLine();
                 NewPage();
+                lineTopY = y;
+                if (currentGroupDay.HasValue)
+                    DrawGroupHeader(currentGroupDay.Value, continued: true);
+            }
+
+            void DrawGroupHeader(DateTime day, bool continued)
+            {
+                FlushColumnLine();
+                // Riserva spazio anche per almeno una riga di contenuto sotto
+                // l'intestazione (rowH), non solo per l'intestazione stessa:
+                // altrimenti l'intestazione veniva disegnata orfana in fondo
+                // pagina (nessuna voce ci stava sotto), la prima voce andava
+                // comunque a capo pagina, e lì l'intestazione veniva
+                // ridisegnata come "(segue)" pur non essendo mai davvero
+                // "cominciata" — bug reale segnalato dall'utente. Quando
+                // scatta qui, si passa pagina PRIMA di scrivere qualunque
+                // cosa: niente PageBreak() (che disegnerebbe sempre
+                // "(segue)"), la nuova pagina ha la prima vera apparizione.
+                if (!continued && y + groupGapAbove + headerRowH + rowH > h - margin)
+                {
+                    NewPage();
+                    lineTopY = y;
+                }
+                if (!continued) y += groupGapAbove;
+
+                bool isSunday = day.DayOfWeek == DayOfWeek.Sunday;
+                string headerText = continued
+                    ? $"{ItineraryOrdering.FormatDayHeader(day)} (segue)"
+                    : ItineraryOrdering.FormatDayHeader(day);
+                gfx!.DrawString(headerText, dayHeaderFont, isSunday ? XBrushes.DarkRed : XBrushes.Black,
+                    new XRect(margin, y, tableWidth, headerRowH), XStringFormats.TopLeft);
+                y += headerRowH;
+                gfx.DrawLine(headerUnderlinePen, margin, y - 3, margin + tableWidth, y - 3);
                 lineTopY = y;
             }
 
+            DateTime? lastDay = null;
             foreach (var entry in entries)
             {
-                bool hasDesc = !string.IsNullOrWhiteSpace(entry.Description);
-                double descWidth = tableWidth - iconSize - dateColWidth - 18;
-                var descLines = hasDesc ? WrapText(gfx!, entry.Description!, descFont, descWidth) : new List<string>();
+                var day = entry.Date!.Value.Date; // sempre valorizzato: BuildItineraryEntries scarta gli item senza alcuna data
+                if (lastDay != day)
+                {
+                    lastDay = day;
+                    currentGroupDay = day;
+                    DrawGroupHeader(day, continued: false);
+                }
+
+                // Margine di sicurezza a destra ridotto a 4pt (era 18, un
+                // residuo di prima del rendering Markdown): con le tabelle
+                // — bordate, quindi il limite destro è ben visibile — un
+                // margine troppo largo si vedeva come spazio sprecato
+                // rispetto al margine pagina, segnalato dall'utente.
+                double descWidth = tableWidth - iconSize - timeColWidth - 8;
+                var descLines = MarkdownPdfRenderer.Layout(gfx!, entry.Description, descFont, descWidth);
 
                 // L'etichetta va sempre a capo su più righe se non entra,
                 // MAI troncata con l'ellissi (richiesta esplicita
                 // dell'utente) — a differenza di prima (FitTextSingleLine),
                 // che riduceva il font e poi tagliava. L'altezza della riga
                 // cresce di conseguenza quando serve più di una riga.
-                double iconX = margin + dateColWidth;
+                double iconX = margin + timeColWidth;
                 double contentX = iconX + iconSize + 4;
                 string labelText = entry.IsStart switch
                 {
@@ -984,14 +1056,20 @@ namespace StradarioApp.Services
                 var labelLines = WrapText(gfx!, labelText, labelFont, labelWidth);
                 double entryRowH = Math.Max(rowH, labelLines.Count * descRowH);
 
-                double neededH = entryRowH + descLines.Count * descRowH;
-                if (y + neededH > h - margin)
+                // Solo la riga stessa (ora/icona/etichetta) deve restare
+                // intatta sulla stessa pagina — la descrizione, per quanto
+                // lunga (un Markdown "cattivo" può superare abbondantemente
+                // una pagina intera), scorre su tutte le pagine che
+                // servono: paginata riga per riga più sotto, MAI un unico
+                // controllo su tutta la sua altezza (che altrimenti fa
+                // scattare un salto pagina anche subito dopo una pagina
+                // fresca, e poi la disegna comunque tutta fuori bordo).
+                if (y + entryRowH > h - margin)
                     PageBreak();
 
-                string dateText = entry.Date.HasValue ? ItineraryOrdering.FormatSingleDate(entry.Date.Value, includeDayAbbrev: true, hideBoundaryTimes: true) : "—";
-                bool isSunday = entry.Date.HasValue && entry.Date.Value.DayOfWeek == DayOfWeek.Sunday;
-                gfx!.DrawString(dateText, isSunday ? dateFontSunday : dateFont, XBrushes.Black,
-                    new XRect(margin, y, dateColWidth, entryRowH), XStringFormats.CenterLeft);
+                string timeText = ItineraryOrdering.FormatTimeOnly(entry.Date.Value);
+                gfx!.DrawString(timeText, dateFont, XBrushes.Black,
+                    new XRect(margin, y, timeColWidth, entryRowH), XStringFormats.CenterLeft);
 
                 double iconY = y + (entryRowH - iconSize * 0.85) / 2.0;
                 gfx.DrawImage(GetIcon(entry.Icon, entry.ColorHex), iconX, iconY, iconSize * 0.85, iconSize * 0.85);
@@ -1007,15 +1085,20 @@ namespace StradarioApp.Services
 
                 foreach (var line in descLines)
                 {
-                    gfx.DrawString(line, descFont, XBrushes.Black,
-                        new XRect(iconX + iconSize + 4, y, descWidth, descRowH), XStringFormats.TopLeft);
-                    y += descRowH;
+                    if (y + line.Height > h - margin)
+                        PageBreak();
+                    MarkdownPdfRenderer.DrawLine(gfx, line, iconX + iconSize + 4, y, XBrushes.Black,
+                        (rect, url) => AddWebLinkFlipped(currentPage!, h, rect, url));
+                    y += line.Height;
                 }
 
                 // Punti del percorso marcati POI, annidati sotto l'entry di
                 // Inizio (o di Fine, se manca l'Inizio) — stesso layout di
-                // DrawPercorsiListPages, ma senza colonna data (i punti non
-                // hanno una data propria).
+                // DrawPercorsiListPages. Di norma non hanno una data propria,
+                // TRANNE l'ultimo quando assorbe la data/ora di fine del
+                // percorso (v. ItineraryOrdering.BuildItineraryEntries): in
+                // quel caso mostra l'ora nella stessa colonna delle entry
+                // di primo livello.
                 if (entry.NestedPoints != null)
                 {
                     double nestedX = iconX + iconSize + 12;
@@ -1030,13 +1113,18 @@ namespace StradarioApp.Services
 
                     foreach (var np in entry.NestedPoints)
                     {
-                        bool hasNpDesc = !string.IsNullOrWhiteSpace(np.Description);
                         var npLabelLines = WrapText(gfx!, np.Label, nestedFont, npLabelWidth);
-                        var npDescLines = hasNpDesc ? WrapText(gfx!, np.Description!, nestedDescFont, npLabelWidth) : new List<string>();
+                        var npDescLines = MarkdownPdfRenderer.Layout(gfx!, np.Description, nestedDescFont, npLabelWidth);
                         double npRowH = Math.Max(nestedRowH, npLabelLines.Count * nestedDescRowH);
-                        double neededNpH = npRowH + npDescLines.Count * nestedDescRowH;
-                        if (y + neededNpH > h - margin)
+                        if (y + npRowH > h - margin)
                             PageBreak();
+
+                        if (np.Date.HasValue)
+                        {
+                            string npTimeText = ItineraryOrdering.FormatTimeOnly(np.Date.Value);
+                            gfx!.DrawString(npTimeText, dateFont, XBrushes.Black,
+                                new XRect(margin, y, timeColWidth, npRowH), XStringFormats.CenterLeft);
+                        }
 
                         double npIconY = y + (npRowH - nestedIconSize * 0.85) / 2.0;
                         gfx!.DrawImage(GetIcon(np.Icon, entry.ColorHex), nestedX, npIconY, nestedIconSize * 0.85, nestedIconSize * 0.85);
@@ -1052,9 +1140,11 @@ namespace StradarioApp.Services
 
                         foreach (var line in npDescLines)
                         {
-                            gfx.DrawString(line, nestedDescFont, XBrushes.Black,
-                                new XRect(npContentX, y, npLabelWidth, nestedDescRowH), XStringFormats.TopLeft);
-                            y += nestedDescRowH;
+                            if (y + line.Height > h - margin)
+                                PageBreak();
+                            MarkdownPdfRenderer.DrawLine(gfx, line, npContentX, y, XBrushes.Black,
+                                (rect, url) => AddWebLinkFlipped(currentPage!, h, rect, url));
+                            y += line.Height;
                         }
                     }
                 }
@@ -1062,8 +1152,7 @@ namespace StradarioApp.Services
 
             // Tratto finale della riga, per l'ultima pagina (le pagine
             // precedenti sono già state chiuse da PageBreak sopra).
-            if (gfx != null)
-                gfx.DrawLine(dateColSepPen, dateColLineX, lineTopY, dateColLineX, y);
+            FlushColumnLine();
 
             return pageCount;
         }
@@ -1081,9 +1170,7 @@ namespace StradarioApp.Services
         {
             const double margin      = 24;
             const double groupRowH    = 20;
-            const double descRowH     = 12;
             const double itemRowH     = 16;
-            const double itemDescRowH = 10;
             const double iconSize     = 14;
 
             var titleFont    = new XFont("Arial", 16, XFontStyle.Bold);
@@ -1113,11 +1200,13 @@ namespace StradarioApp.Services
 
             int pageCount = 0;
             XGraphics? gfx = null;
+            PdfPage? currentPage = null;
             double w = 0, h = 0, tableWidth = 0, y = 0;
 
             void NewPage()
             {
                 var page = pdfDoc.AddPage();
+                currentPage = page;
                 SetPageSize(page, pageWidthMm, pageHeightMm);
                 gfx = XGraphics.FromPdfPage(page);
                 w   = page.Width.Point;
@@ -1140,20 +1229,18 @@ namespace StradarioApp.Services
                 var items = itemFilter == null ? group.Items : group.Items.Where(itemFilter).ToList();
                 if (items.Count == 0) continue;
 
-                double groupDescWidth = tableWidth - iconSize - 16;
-                bool hasGroupDesc = !string.IsNullOrWhiteSpace(group.Description);
-                var groupDescLines = hasGroupDesc ? WrapText(gfx!, group.Description, descFont, groupDescWidth) : new List<string>();
+                double groupDescWidth = tableWidth - iconSize - 12; // stesso margine di 4pt a destra, v. commento sopra in DrawItineraryPages
+                var groupDescLines = MarkdownPdfRenderer.Layout(gfx!, group.Description, descFont, groupDescWidth);
 
-                // Il primo POI del gruppo deve stare sulla stessa pagina
-                // dell'intestazione (mai un'intestazione "orfana" a fondo
-                // pagina con i suoi POI rimandati alla pagina successiva).
-                bool firstItemHasDesc = !string.IsNullOrWhiteSpace(items[0].Description);
-                double firstItemDescWidth = tableWidth - iconSize - 18;
-                int firstItemDescLines = firstItemHasDesc
-                    ? WrapText(gfx!, items[0].Description, itemDescFont, firstItemDescWidth).Count : 0;
-                double neededFirstItemH = itemRowH + firstItemDescLines * itemDescRowH;
-
-                double neededGroupStartH = groupRowH + groupDescLines.Count * descRowH + neededFirstItemH;
+                // Solo le RIGHE (intestazione gruppo + riga del primo POI)
+                // devono stare sulla stessa pagina (mai un'intestazione
+                // "orfana" col suo primo POI rimandato alla pagina dopo) —
+                // le descrizioni, per quanto lunghe, scorrono su tutte le
+                // pagine che servono, paginate riga per riga più sotto: MAI
+                // un controllo su tutta la loro altezza, altrimenti un
+                // Markdown più lungo di una pagina fa scattare un salto
+                // pagina anche subito dopo una pagina fresca.
+                double neededGroupStartH = groupRowH + itemRowH;
                 if (y + neededGroupStartH > h - margin)
                     NewPage();
 
@@ -1175,18 +1262,18 @@ namespace StradarioApp.Services
 
                 foreach (var line in groupDescLines)
                 {
-                    gfx.DrawString(line, descFont, XBrushes.Black,
-                        new XRect(margin + iconSize + 8, y, groupDescWidth, descRowH), XStringFormats.TopLeft);
-                    y += descRowH;
+                    if (y + line.Height > h - margin)
+                        NewPage();
+                    MarkdownPdfRenderer.DrawLine(gfx, line, margin + iconSize + 8, y, XBrushes.Black,
+                        (rect, url) => AddWebLinkFlipped(currentPage!, h, rect, url));
+                    y += line.Height;
                 }
 
                 foreach (var item in items)
                 {
-                    bool hasItemDesc = !string.IsNullOrWhiteSpace(item.Description);
                     double descWidth = tableWidth - iconSize - 18;
-                    var descLines = hasItemDesc ? WrapText(gfx!, item.Description, itemDescFont, descWidth) : new List<string>();
-                    double neededItemH = itemRowH + descLines.Count * itemDescRowH;
-                    if (y + neededItemH > h - margin)
+                    var descLines = MarkdownPdfRenderer.Layout(gfx!, item.Description, itemDescFont, descWidth);
+                    if (y + itemRowH > h - margin)
                         NewPage();
 
                     double iconY = y + (itemRowH - iconSize * 0.85) / 2.0;
@@ -1202,9 +1289,11 @@ namespace StradarioApp.Services
 
                     foreach (var line in descLines)
                     {
-                        gfx.DrawString(line, itemDescFont, XBrushes.Black,
-                            new XRect(margin + iconSize + 14, y, descWidth, itemDescRowH), XStringFormats.TopLeft);
-                        y += itemDescRowH;
+                        if (y + line.Height > h - margin)
+                            NewPage();
+                        MarkdownPdfRenderer.DrawLine(gfx, line, margin + iconSize + 14, y, XBrushes.Black,
+                            (rect, url) => AddWebLinkFlipped(currentPage!, h, rect, url));
+                        y += line.Height;
                     }
                 }
 
@@ -1224,7 +1313,7 @@ namespace StradarioApp.Services
         // impostata (o sono uguali), altrimenti "Da - A" — delega alla stessa
         // versione condivisa usata dal Piano di viaggio.
         private static string FormatRouteDateRange(DateTime? start, DateTime? end) =>
-            ItineraryOrdering.FormatDateRange(start, end, includeDayAbbrev: true, hideBoundaryTimes: true);
+            ItineraryOrdering.FormatDateRange(start, end, includeDayAbbrev: true);
 
         // Disegna l'elenco dei percorsi (swatch colore + nome + descrizione,
         // lunghezza e numero di punti), in testa al documento, dopo l'elenco
@@ -1237,10 +1326,8 @@ namespace StradarioApp.Services
         {
             const double margin       = 24;
             const double rowH         = 20;
-            const double descRowH     = 12;
             const double swatchSz     = 12;
             const double poiItemRowH  = 16;
-            const double poiDescRowH  = 10;
             const double poiIconSize  = 14;
 
             var titleFont    = new XFont("Arial", 16, XFontStyle.Bold);
@@ -1271,11 +1358,13 @@ namespace StradarioApp.Services
 
             int pageCount = 0;
             XGraphics? gfx = null;
+            PdfPage? currentPage = null;
             double w = 0, h = 0, tableWidth = 0, y = 0;
 
             void NewPage()
             {
                 var page = pdfDoc.AddPage();
+                currentPage = page;
                 SetPageSize(page, pageWidthMm, pageHeightMm);
                 gfx = XGraphics.FromPdfPage(page);
                 w   = page.Width.Point;
@@ -1297,11 +1386,11 @@ namespace StradarioApp.Services
             {
                 if (routeFilter != null && !routeFilter(r)) continue;
 
-                bool hasDesc = !string.IsNullOrWhiteSpace(r.Description);
                 double descWidth = tableWidth - swatchSz - 18;
-                var descLines = hasDesc ? WrapText(gfx!, r.Description, descFont, descWidth) : new List<string>();
-                double neededH = rowH + descLines.Count * descRowH;
-                if (y + neededH > h - margin)
+                var descLines = MarkdownPdfRenderer.Layout(gfx!, r.Description, descFont, descWidth);
+                // Solo la riga stessa deve restare intatta — la descrizione
+                // scorre su più pagine se serve, paginata riga per riga.
+                if (y + rowH > h - margin)
                     NewPage();
 
                 gfx!.DrawRectangle(new XSolidBrush(XColor.FromArgb(230, 238, 250)), margin, y, tableWidth, rowH);
@@ -1331,9 +1420,11 @@ namespace StradarioApp.Services
 
                 foreach (var line in descLines)
                 {
-                    gfx.DrawString(line, descFont, XBrushes.Black,
-                        new XRect(margin + swatchSz + 14, y, descWidth, descRowH), XStringFormats.TopLeft);
-                    y += descRowH;
+                    if (y + line.Height > h - margin)
+                        NewPage();
+                    MarkdownPdfRenderer.DrawLine(gfx, line, margin + swatchSz + 14, y, XBrushes.Black,
+                        (rect, url) => AddWebLinkFlipped(currentPage!, h, rect, url));
+                    y += line.Height;
                 }
 
                 // Punti del percorso marcati come POI: elencati annidati sotto
@@ -1355,11 +1446,16 @@ namespace StradarioApp.Services
                         && Math.Abs(point.Lat - firstRoutePoint.Lat) < 1e-7
                         && string.Equals(point.PoiDescription, firstRoutePoint.PoiDescription, StringComparison.Ordinal);
 
-                    bool hasPointDesc = !isClosingLoopDuplicate && !string.IsNullOrWhiteSpace(point.PoiDescription);
-                    double pointDescWidth = tableWidth - poiIconSize - 20;
-                    var pointDescLines = hasPointDesc ? WrapText(gfx!, point.PoiDescription, poiDescFont, pointDescWidth) : new List<string>();
-                    double neededPointH = poiItemRowH + pointDescLines.Count * poiDescRowH;
-                    if (y + neededPointH > h - margin)
+                    // Mancava la sottrazione di swatchSz (lo spessore dello
+                    // swatch colore a inizio riga, incluso nell'offset X di
+                    // disegno più sotto): il testo poteva sconfinare di
+                    // swatchSz oltre il margine destro pagina — bug trovato
+                    // sistemando il margine (v. DrawItineraryPages sopra).
+                    double pointDescWidth = tableWidth - swatchSz - poiIconSize - 24;
+                    var pointDescLines = isClosingLoopDuplicate
+                        ? new List<MarkdownPdfLine>()
+                        : MarkdownPdfRenderer.Layout(gfx!, point.PoiDescription, poiDescFont, pointDescWidth);
+                    if (y + poiItemRowH > h - margin)
                         NewPage();
 
                     double iconY = y + (poiItemRowH - poiIconSize * 0.85) / 2.0;
@@ -1375,9 +1471,11 @@ namespace StradarioApp.Services
 
                     foreach (var line in pointDescLines)
                     {
-                        gfx.DrawString(line, poiDescFont, XBrushes.Black,
-                            new XRect(margin + swatchSz + poiIconSize + 20, y, pointDescWidth, poiDescRowH), XStringFormats.TopLeft);
-                        y += poiDescRowH;
+                        if (y + line.Height > h - margin)
+                            NewPage();
+                        MarkdownPdfRenderer.DrawLine(gfx, line, margin + swatchSz + poiIconSize + 20, y, XBrushes.Black,
+                            (rect, url) => AddWebLinkFlipped(currentPage!, h, rect, url));
+                        y += line.Height;
                     }
                 }
 

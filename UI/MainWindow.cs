@@ -238,6 +238,27 @@ namespace StradarioApp.UI
         // DrawRouteHoveredPointTooltip. I punti "semplici" (senza IsPoi) non
         // hanno contenuto da mostrare, restano senza tooltip come prima.
         private (Percorso route, int index)? _hoveredRoutePoint;
+        // Linea/etichetta di un percorso (non un punto specifico) attualmente
+        // sotto il cursore, con la posizione geo del punto più vicino sulla
+        // linea (per ancorare il tooltip) — solo percorsi con una
+        // descrizione (v. FindAnyRouteAtPoint), stesso tooltip dei POI
+        // piazzati (DrawRouteTooltip). Ceduto il passo a _hoveredPoi/
+        // _hoveredRoutePoint quando entrambi scatterebbero nello stesso punto.
+        private (Percorso route, double lon, double lat)? _hoveredRoute;
+        // Pannello di dettaglio corrente (UI/PoiDetailWindow), aperto con un
+        // CLIC su un POI/punto di percorso/linea di percorso — un nuovo clic
+        // chiude quello precedente (se ancora aperto) invece di accumulare
+        // finestre. A differenza del tooltip hover sopra, resta aperto finché
+        // l'utente non lo chiude esplicitamente ed è ridimensionabile a mano.
+        private PoiDetailWindow? _openDetailWindow;
+        // Candidato per il pannello di dettaglio a clic su un elemento
+        // BLOCCATO (catturato in OnMapPointerPressed, blocco "elementi
+        // bloccati" — gli elementi SBLOCCATI usano invece _draggingPoiItem/
+        // _draggingRoute+_draggingPointIndex già esistenti, controllati
+        // direttamente in OnMapPointerReleased). Aperto al rilascio solo se
+        // il movimento resta sotto ClickVsPanThresholdPx, altrimenti era un
+        // pan e viene scartato.
+        private (string title, string? description, string colorHex, string? coordsText)? _detailClickCandidate;
         // Testo con cui è stata avviata la ricerca in corso (o "Ricerca GPS"
         // per la ricerca inversa): usato per intitolare un gruppo POI creato
         // automaticamente se il progetto non ne ha ancora nessuno
@@ -330,6 +351,7 @@ namespace StradarioApp.UI
             _hoveredPoiSearchResult = null;
             _hoveredPoi = null;
             _hoveredRoutePoint = null;
+            _hoveredRoute = null;
             HidePoiSearchBox();
         }
 
@@ -1933,6 +1955,23 @@ namespace StradarioApp.UI
             return border;
         }
 
+        // Icona POI renderizzata come piccola Image per l'albero di
+        // navigazione — stesso bitmap (forma+colore) mostrato su mappa/PDF,
+        // non un glifo generico. Usata da BuildPoiItemLeaf/BuildRoutePointLeaf.
+        private static Image BuildPoiIconImage(PoiIconType icon, string colorHex, double size = 16)
+        {
+            using var bmp = PoiIconRenderer.RenderToBitmap(icon, PoiIconRenderer.ParseColor(colorHex), 32);
+            using var cropped = SkiaImageHelper.CropToContent(bmp);
+            return new Image
+            {
+                Source = SkiaImageHelper.ToAvaloniaBitmap(cropped),
+                Width  = size,
+                Height = size,
+                Stretch = Avalonia.Media.Stretch.Uniform,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center
+            };
+        }
+
         private Control BuildPoiItemLeaf(PoiGroup group, PoiItem item)
         {
             bool isMultiSelected = _multiSelectedPoiKeys.Contains((group.Id, item.Id));
@@ -1971,7 +2010,10 @@ namespace StradarioApp.UI
                     Foreground      = Brushes.DarkSlateBlue,
                     TextTrimming    = TextTrimming.CharacterEllipsis
                 });
-            info.Children.Add(new TextBlock { Text = item.Label, FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis });
+            var labelRow = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 4 };
+            labelRow.Children.Add(BuildPoiIconImage(item.Icon ?? PoiIconType.Pin, group.ColorHex));
+            labelRow.Children.Add(new TextBlock { Text = item.Label, FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis });
+            info.Children.Add(labelRow);
             info.Children.Add(new TextBlock
             {
                 Text       = $"{item.Lon:F4}°E, {item.Lat:F4}°N",
@@ -2406,7 +2448,17 @@ namespace StradarioApp.UI
                 : string.Format(Strings.Get("MainWindow_PuntoPercorsoNumero"), pointIndex + 1);
 
             var info = new StackPanel { Spacing = 1 };
-            info.Children.Add(new TextBlock { Text = leafLabel, FontSize = 12 });
+            if (p.IsPoi)
+            {
+                var labelRow = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 4 };
+                labelRow.Children.Add(BuildPoiIconImage(p.PoiIcon, route.ColorHex));
+                labelRow.Children.Add(new TextBlock { Text = leafLabel, FontSize = 12 });
+                info.Children.Add(labelRow);
+            }
+            else
+            {
+                info.Children.Add(new TextBlock { Text = leafLabel, FontSize = 12 });
+            }
             info.Children.Add(new TextBlock
             {
                 Text       = $"{p.Lon:F4}°E, {p.Lat:F4}°N",
@@ -2837,6 +2889,16 @@ namespace StradarioApp.UI
                 DrawRouteHoveredPointTooltip(e.Canvas, hRoute, hPoint, (float)hx, (float)hy, w, h);
             }
 
+            // Tooltip sulla linea/etichetta di un percorso (non su un punto
+            // specifico) — ceduto il passo se un tooltip più specifico
+            // (POI o punto di percorso) è già mostrato nello stesso punto.
+            if (_hoveredPoi == null && _hoveredRoutePoint == null && _hoveredRoute != null)
+            {
+                var (hRoute2, hLon, hLat) = _hoveredRoute.Value;
+                var (hx2, hy2) = GeoUtils.GeoToPixel(hLon, hLat, _viewCenterLon, _viewCenterLat, _viewZoom, w, h);
+                DrawRouteTooltip(e.Canvas, hRoute2, (float)hx2, (float)hy2, w, h);
+            }
+
             // Marker "dove sono": pallino blu con alone bianco, stile mappa
             // classico, più un cerchio tratteggiato per l'accuratezza (se nota)
             if (_myLocationActive && _myLocation != null)
@@ -2912,6 +2974,15 @@ namespace StradarioApp.UI
             DrawTooltipBox(canvas, lines, markerX, markerY, canvasW, canvasH, new SKColor(255, 140, 0));
         }
 
+        // Larghezza di wrap (in caratteri) delle righe di descrizione nei
+        // tooltip mappa — 40 (valore originale, pre-Markdown) rendeva il
+        // riquadro visibilmente stretto/a colonna ora che MarkdownPlainText
+        // produce più righe corte (titoli/voci di lista su riga propria)
+        // invece di un unico paragrafo lungo: DrawTooltipBox dimensiona il
+        // box sulla riga più larga, quindi un wrap più stretto restringe
+        // tutto il riquadro anche quando la mappa ha spazio di sovra.
+        private const int TooltipDescWrapChars = 100;
+
         // Tooltip sul marker di un POI già presente in un gruppo del progetto
         // (a differenza di DrawPoiSearchTooltip, non un risultato di ricerca
         // transitorio): nome, descrizione (multi-riga, spezzata su "\n" — sia
@@ -2921,9 +2992,8 @@ namespace StradarioApp.UI
         private void DrawPlacedPoiTooltip(SKCanvas canvas, PoiGroup group, PoiItem item, float markerX, float markerY, float canvasW, float canvasH)
         {
             var lines = new List<string> { item.Label };
-            if (!string.IsNullOrWhiteSpace(item.Description))
-                foreach (string descLine in item.Description.Split('\n'))
-                    lines.AddRange(WrapText(descLine.Trim(), 40));
+            foreach (string descLine in MarkdownPlainText.Flatten(item.Description))
+                lines.AddRange(WrapText(descLine.Trim(), TooltipDescWrapChars));
             lines.Add($"{item.Lat:F5}°N, {item.Lon:F5}°E");
 
             SKColor borderColor = SKColor.TryParse(group.ColorHex, out var c) ? c : new SKColor(30, 136, 229);
@@ -2936,13 +3006,39 @@ namespace StradarioApp.UI
         private void DrawRouteHoveredPointTooltip(SKCanvas canvas, Percorso route, GeoPoint point, float markerX, float markerY, float canvasW, float canvasH)
         {
             var lines = new List<string> { point.PoiLabel };
-            if (!string.IsNullOrWhiteSpace(point.PoiDescription))
-                foreach (string descLine in point.PoiDescription.Split('\n'))
-                    lines.AddRange(WrapText(descLine.Trim(), 40));
+            foreach (string descLine in MarkdownPlainText.Flatten(point.PoiDescription))
+                lines.AddRange(WrapText(descLine.Trim(), TooltipDescWrapChars));
             lines.Add($"{point.Lat:F5}°N, {point.Lon:F5}°E");
 
             SKColor borderColor = SKColor.TryParse(route.ColorHex, out var c) ? c : new SKColor(30, 136, 229);
             DrawTooltipBox(canvas, lines, markerX, markerY, canvasW, canvasH, borderColor);
+        }
+
+        // Tooltip sulla linea/etichetta di un percorso (non su un punto
+        // specifico): nome + descrizione, stesso schema di
+        // DrawPlacedPoiTooltip — niente coordinate (è un tracciato, non un
+        // punto). Mostrato solo per percorsi con una descrizione, v.
+        // FindAnyRouteAtPoint.
+        private void DrawRouteTooltip(SKCanvas canvas, Percorso route, float markerX, float markerY, float canvasW, float canvasH)
+        {
+            var lines = new List<string> { route.Label };
+            foreach (string descLine in MarkdownPlainText.Flatten(route.Description))
+                lines.AddRange(WrapText(descLine.Trim(), TooltipDescWrapChars));
+
+            SKColor borderColor = SKColor.TryParse(route.ColorHex, out var c) ? c : new SKColor(30, 136, 229);
+            DrawTooltipBox(canvas, lines, markerX, markerY, canvasW, canvasH, borderColor);
+        }
+
+        // Apre (o riusa/sostituisce) il pannello di dettaglio a clic — v.
+        // UI/PoiDetailWindow e il campo _openDetailWindow. Chiude
+        // esplicitamente l'eventuale pannello già aperto prima di crearne
+        // uno nuovo, per non accumulare finestre a ogni clic.
+        private void OpenDetailWindow(string title, string? description, string colorHex, string? coordsText)
+        {
+            _openDetailWindow?.Close();
+            _openDetailWindow = new PoiDetailWindow(title, description, colorHex, coordsText);
+            _openDetailWindow.Closed += (_, _) => _openDetailWindow = null;
+            _openDetailWindow.Show(this);
         }
 
         // Gradazione rosso (0, poco affidabile) → verde (100, molto
@@ -3220,6 +3316,10 @@ namespace StradarioApp.UI
                     _draggingRoute        = hitRoutePoint.Value.route;
                     _draggingPointIndex   = hitRoutePoint.Value.index;
                     _routePointDragOrigSnapshot = RouteEditWindow.ClonePoint(hitRoutePoint.Value.route.Points[hitRoutePoint.Value.index]);
+                    // Posizione di partenza, per distinguere al rilascio un
+                    // vero trascinamento da un semplice clic (v.
+                    // OnMapPointerReleased, apertura pannello dettaglio).
+                    _dragStart = pos;
                     e.Pointer.Capture(_mapCanvas);
                     return;
                 }
@@ -3233,6 +3333,7 @@ namespace StradarioApp.UI
                     _draggingPoiGroupId = hitPoi.Value.group.Id;
                     _poiDragOrigLon     = hitPoi.Value.item.Lon;
                     _poiDragOrigLat     = hitPoi.Value.item.Lat;
+                    _dragStart          = pos;
                     e.Pointer.Capture(_mapCanvas);
                     return;
                 }
@@ -3260,6 +3361,15 @@ namespace StradarioApp.UI
                 // gestito sopra come drag): un click su un oggetto BLOCCATO
                 // non può avviare il drag, ma va comunque reso "corrente"
                 // nell'albero, invece di non fare nulla.
+                //
+                // Azzerato PRIMA di ogni nuova valutazione (non solo quando
+                // consumato al rilascio): se una pressione precedente aveva
+                // impostato un candidato ma poi era finita nel ramo drag
+                // pagina (_isDraggingPage, che non passa mai dal rilascio
+                // generico _isDragging che lo consuma/azzera), altrimenti
+                // resterebbe "appeso" e potrebbe riaprire il pannello sbagliato
+                // a un clic futuro scorrelato.
+                _detailClickCandidate = null;
                 var hitAnyPoi = FindAnyPoiAtPoint(pos, cw, ch);
                 if (hitAnyPoi != null)
                 {
@@ -3272,6 +3382,13 @@ namespace StradarioApp.UI
                     _navCollapsedGroupIds.Remove(hitAnyPoi.Value.group.Id);
                     _scrollSelectionIntoView = true;
                     RefreshNavigationTree();
+
+                    // Candidato per il pannello di dettaglio a clic — aperto
+                    // al rilascio solo se il movimento resta sotto soglia
+                    // (altrimenti era un pan), v. OnMapPointerReleased.
+                    var poiItem = hitAnyPoi.Value.item;
+                    _detailClickCandidate = (poiItem.Label, poiItem.Description, hitAnyPoi.Value.group.ColorHex,
+                        $"{poiItem.Lat:F5}°N, {poiItem.Lon:F5}°E");
                 }
                 else
                 {
@@ -3289,6 +3406,20 @@ namespace StradarioApp.UI
                         _navPercorsiExpanded = true;
                         _scrollSelectionIntoView = true;
                         RefreshNavigationTree();
+
+                        if (hitAnyRoutePoint != null)
+                        {
+                            var routePoint = hitAnyRoutePoint.Value.route.Points[hitAnyRoutePoint.Value.index];
+                            _detailClickCandidate = (routePoint.PoiLabel, routePoint.PoiDescription, hitRoute.ColorHex,
+                                $"{routePoint.Lat:F5}°N, {routePoint.Lon:F5}°E");
+                        }
+                        else
+                        {
+                            // Click sulla linea, non su un vertice: come
+                            // DrawRouteTooltip, niente coordinate (è un
+                            // tracciato, non un punto).
+                            _detailClickCandidate = (hitRoute.Label, hitRoute.Description, hitRoute.ColorHex, null);
+                        }
                     }
                 }
 
@@ -3512,6 +3643,10 @@ namespace StradarioApp.UI
 
             route.Id    = _percorsoSvc.GetNextId(_project.Percorsi);
             route.Label = $"PATH{GetNextPercorsoLabelNumber()}";
+            // Colore distinto dai percorsi/gruppi già presenti, non sempre lo
+            // stesso PercorsoRenderer.DefaultColorHex assegnato in OnNewPercorso
+            // — stessa logica già usata per i percorsi importati.
+            AssignDistinctColors(Array.Empty<PoiGroup>(), new[] { route });
             _project.Percorsi.Add(route);
             TouchPercorso(route.Id);
             _isDirty = true;
@@ -3607,6 +3742,22 @@ namespace StradarioApp.UI
             else if (_hoveredRoutePoint != null)
             {
                 _hoveredRoutePoint = null;
+            }
+
+            // Tooltip con la descrizione passando sopra la linea/etichetta
+            // di un percorso (non un punto specifico) — stesso schema.
+            if (!_poiSearchMode && !_isDraggingPoi && !_isDraggingRoutePoint)
+            {
+                var hoveredRoute = FindAnyRouteAtPoint(pos, cw, ch);
+                if (!Equals(hoveredRoute, _hoveredRoute))
+                {
+                    _hoveredRoute = hoveredRoute;
+                    _mapCanvas?.InvalidateVisual();
+                }
+            }
+            else if (_hoveredRoute != null)
+            {
+                _hoveredRoute = null;
             }
 
             if (_isDraggingRoutePoint && _draggingRoute != null)
@@ -3738,6 +3889,15 @@ namespace StradarioApp.UI
                             undo: () => ApplyPointSnapshot(point, orig),
                             redo: () => ApplyPointSnapshot(point, final));
                     }
+
+                    // Movimento sotto soglia = era un clic, non un vero
+                    // trascinamento: apre il pannello di dettaglio invece di
+                    // non fare nulla (stesso schema soglia già usato altrove
+                    // per distinguere clic da pan, v. ClickVsPanThresholdPx).
+                    double movedPxRp = Math.Sqrt(Math.Pow(releasePos.X - _dragStart.X, 2) + Math.Pow(releasePos.Y - _dragStart.Y, 2));
+                    if (movedPxRp < ClickVsPanThresholdPx && point.IsPoi)
+                        OpenDetailWindow(point.PoiLabel, point.PoiDescription, route.ColorHex,
+                            $"{point.Lat:F5}°N, {point.Lon:F5}°E");
                 }
                 _isDraggingRoutePoint = false;
                 _draggingRoute        = null;
@@ -3806,6 +3966,18 @@ namespace StradarioApp.UI
                                 item.Lon = newLon; item.Lat = newLat;
                                 if (point != null && after != null) ApplyPointSnapshot(point, after);
                             });
+                    }
+
+                    // Movimento sotto soglia = era un clic, non un vero
+                    // trascinamento: apre il pannello di dettaglio (stesso
+                    // schema del blocco gemello _isDraggingRoutePoint sopra).
+                    double movedPxPoi = Math.Sqrt(Math.Pow(releasePos.X - _dragStart.X, 2) + Math.Pow(releasePos.Y - _dragStart.Y, 2));
+                    if (movedPxPoi < ClickVsPanThresholdPx)
+                    {
+                        var group = _project.PoiGroups.Find(g => g.Id == groupId);
+                        if (group != null)
+                            OpenDetailWindow(item.Label, item.Description, group.ColorHex,
+                                $"{item.Lat:F5}°N, {item.Lon:F5}°E");
                     }
                 }
                 _isDraggingPoi      = false;
@@ -3888,7 +4060,15 @@ namespace StradarioApp.UI
                 {
                     InsertPointOnRouteSegment(_segmentInsertCandidateRoute, _segmentInsertCandidateIndex, pos);
                 }
+                else if (movedPx < ClickVsPanThresholdPx && _detailClickCandidate != null)
+                {
+                    // Clic (non pan) su un elemento BLOCCATO — v. candidato
+                    // catturato in OnMapPointerPressed.
+                    var c = _detailClickCandidate.Value;
+                    OpenDetailWindow(c.title, c.description, c.colorHex, c.coordsText);
+                }
                 _segmentInsertCandidateRoute = null;
+                _detailClickCandidate        = null;
             }
         }
 
@@ -4092,6 +4272,47 @@ namespace StradarioApp.UI
                 }
             }
             return null;
+        }
+
+        // Come FindRouteSegmentAtPoint, ma per il tooltip al passaggio del
+        // mouse (non per l'inserimento di un punto): include anche i
+        // percorsi bloccati, e solo quelli con una descrizione — altrimenti
+        // non ci sarebbe nulla da mostrare e il tooltip scatterebbe "a
+        // vuoto" lungo ogni linea disegnata. Ritorna anche la posizione geo
+        // del punto più vicino sulla linea, per ancorare il tooltip.
+        private (Percorso route, double lon, double lat)? FindAnyRouteAtPoint(Point pt, float cw, float ch)
+        {
+            Percorso? bestRoute = null;
+            double bestLon = 0, bestLat = 0;
+            double bestDist2 = SegmentHitRadiusPx * SegmentHitRadiusPx;
+
+            foreach (var route in _project.Percorsi)
+            {
+                if (_hiddenPercorsoIds.Contains(route.Id)) continue;
+                if (string.IsNullOrWhiteSpace(route.Description)) continue;
+                for (int i = 0; i < route.Points.Count - 1; i++)
+                {
+                    var a = route.Points[i];
+                    var b = route.Points[i + 1];
+                    var (ax, ay) = GeoUtils.GeoToPixel(a.Lon, a.Lat, _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
+                    var (bx, by) = GeoUtils.GeoToPixel(b.Lon, b.Lat, _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
+                    double dx = bx - ax, dy = by - ay;
+                    double len2 = dx * dx + dy * dy;
+                    double t = len2 <= 1e-9 ? 0 : ((pt.X - ax) * dx + (pt.Y - ay) * dy) / len2;
+                    t = Math.Clamp(t, 0, 1);
+                    double px = ax + t * dx, py = ay + t * dy;
+                    double ddx = pt.X - px, ddy = pt.Y - py;
+                    double dist2 = ddx * ddx + ddy * ddy;
+                    if (dist2 < bestDist2)
+                    {
+                        bestDist2 = dist2;
+                        bestRoute = route;
+                        (bestLon, bestLat) = GeoUtils.PixelToGeo(px, py, _viewCenterLon, _viewCenterLat, _viewZoom, cw, ch);
+                    }
+                }
+            }
+
+            return bestRoute != null ? (bestRoute, bestLon, bestLat) : null;
         }
 
         // Come FindRoutePointAtPoint, ma include i percorsi BLOCCATI e

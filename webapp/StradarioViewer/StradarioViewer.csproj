@@ -10,6 +10,12 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="8.0.30" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="8.0.30" PrivateAssets="all" />
+
+    <!-- Rendering Markdown delle descrizioni (Services/MarkdownRenderer.cs)
+         — stessa libreria usata dal progetto desktop (StradarioApp.csproj)
+         per coerenza, anche se qui i due progetti non si referenziano a
+         vicenda (vedi CLAUDE.md di questa cartella). -->
+    <PackageReference Include="Markdig" Version="0.37.0" />
   </ItemGroup>
 
   <ItemGroup>

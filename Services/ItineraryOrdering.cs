@@ -21,14 +21,19 @@ using StradarioApp.Models;
 namespace StradarioApp.Services
 {
     // Un punto annidato mostrato sotto una entry di percorso nel piano di
-    // viaggio (i punti del percorso marcati IsPoi) — non ha una propria
-    // data (solo il percorso nel suo complesso ha inizio/fine).
+    // viaggio (i punti del percorso marcati IsPoi) — di norma non ha una
+    // propria data (solo il percorso nel suo complesso ha inizio/fine).
+    // ECCEZIONE: se inizio e fine del percorso hanno data/ora diverse E il
+    // percorso ha almeno un punto POI, l'ULTIMO di questi punti assorbe la
+    // data di fine (v. BuildItineraryEntries) — niente riga "(Fine)"
+    // generica separata, l'arrivo è quel punto reale.
     public record ItineraryNestedPoint(
         string    Label,
         double    Lon,
         double    Lat,
         PoiIconType Icon,
-        string?   Description);
+        string?   Description,
+        DateTime? Date = null);
 
     // Una riga del "piano di viaggio" unificato stampato in PDF: un POI (o
     // un suo estremo inizio/fine, se ha date diverse) oppure un estremo
@@ -57,39 +62,56 @@ namespace StradarioApp.Services
 
         public static string GetDayAbbreviation(DateTime d) => DayAbbreviations[(int)d.DayOfWeek];
 
-        // Orario "di chiusura giornata" (23:59): nel PDF, un evento che
-        // finisce a quest'ora è trattato come "nessun orario specificato",
-        // simmetrico alla convenzione già esistente per le 00:00 di inizio —
-        // solo lato PDF (`hideBoundaryTimes`), l'albero di navigazione
-        // continua a mostrare sempre l'orario esatto.
+        // Nomi completi italiani del giorno della settimana, stesso indice di
+        // DayAbbreviations — usati per l'intestazione di giornata del "Piano
+        // di viaggio" PDF (raggruppato per giorno), a differenza della sigla
+        // breve usata altrove.
+        private static readonly string[] DayNames =
+            { "Domenica", "Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato" };
+
+        public static string GetDayName(DateTime d) => DayNames[(int)d.DayOfWeek];
+
+        // Intestazione di una giornata nel "Piano di viaggio": "Martedì 01/09/2026".
+        public static string FormatDayHeader(DateTime d) => $"{GetDayName(d)} {d:dd/MM/yyyy}";
+
+        // Orario "di chiusura giornata" (23:59), usato SOLO da IsFullDaySpan
+        // per riconoscere un range 00:00→23:59 come "tutto il giorno" (una
+        // sola voce nel piano di viaggio, non due). Non nasconde più alcun
+        // orario in fase di formattazione: un DateTime? è null oppure ha un
+        // valore, e quel valore — orario incluso, anche 00:00 — va sempre
+        // mostrato (richiesta esplicita dell'utente: niente ambiguità
+        // "nessun orario vs. mezzanotte scelta apposta" nel testo mostrato,
+        // solo nel dato — che non può comunque distinguerle, v. CLAUDE.md).
         private static readonly TimeSpan EndOfDayTime = new TimeSpan(23, 59, 0);
 
-        // Formatta una singola data: solo il giorno se l'orario è mezzanotte
-        // esatta ("nessun orario impostato", sempre) oppure — solo se
-        // `hideBoundaryTimes` è true — le 23:59 ("fine giornata", solo PDF),
-        // altrimenti data+ora — usata sia dall'albero (MainWindow) sia dal
-        // PDF (PdfGenerator).
+        // Formatta una singola data, SEMPRE con l'orario incluso (anche
+        // 00:00) — usata da albero, tooltip, dialog e PDF, ovunque si mostri
+        // un DateTime già impostato.
         // `includeDayAbbrev` antepone la sigla del giorno della settimana
-        // (es. "Lun 10/03/2026") — usato solo dal PDF, l'albero di
+        // (es. "Lun 10/03/2026 00:00") — usato solo dal PDF, l'albero di
         // navigazione resta invariato.
-        public static string FormatSingleDate(DateTime d, bool includeDayAbbrev = false, bool hideBoundaryTimes = false)
+        public static string FormatSingleDate(DateTime d, bool includeDayAbbrev = false)
         {
-            bool noTime = d.TimeOfDay == TimeSpan.Zero || (hideBoundaryTimes && d.TimeOfDay == EndOfDayTime);
-            string date = noTime ? d.ToString("dd/MM/yyyy") : d.ToString("dd/MM/yyyy HH:mm");
+            string date = d.ToString("dd/MM/yyyy HH:mm");
             return includeDayAbbrev ? $"{GetDayAbbreviation(d)} {date}" : date;
         }
+
+        // Solo l'orario "HH:mm", SEMPRE (anche 00:00 esatta) — usato dalla
+        // colonna ora del "Piano di viaggio" PDF, dove la data vive
+        // nell'intestazione di giornata e non più per-riga.
+        public static string FormatTimeOnly(DateTime d) => d.ToString("HH:mm");
 
         // Formatta un intervallo inizio/fine (POI: DateStart/DateEnd, percorso:
         // StartDateTime/EndDateTime): "" se nessuno dei due è impostato, la sola
         // data se solo uno dei due lo è o se sono uguali (non ripetere due volte
         // la stessa data), altrimenti "inizio - fine". Condivisa da albero e PDF
         // così le due viste restano sempre coerenti.
-        public static string FormatDateRange(DateTime? start, DateTime? end, bool includeDayAbbrev = false, bool hideBoundaryTimes = false)
+        public static string FormatDateRange(DateTime? start, DateTime? end, bool includeDayAbbrev = false)
         {
             if (!start.HasValue && !end.HasValue) return "";
             if (start.HasValue && end.HasValue && start.Value != end.Value)
-                return $"{FormatSingleDate(start.Value, includeDayAbbrev, hideBoundaryTimes)} - {FormatSingleDate(end.Value, includeDayAbbrev, hideBoundaryTimes)}";
-            return FormatSingleDate((start ?? end)!.Value, includeDayAbbrev, hideBoundaryTimes);
+                return $"{FormatSingleDate(start.Value, includeDayAbbrev)} - {FormatSingleDate(end.Value, includeDayAbbrev)}";
+            return FormatSingleDate((start ?? end)!.Value, includeDayAbbrev);
         }
 
         // Un intervallo inizio/fine copre "l'intera giornata" (stesso giorno,
@@ -222,14 +244,65 @@ namespace StradarioApp.Services
                 if (distinctBoth)
                 {
                     var pStart = route.Points[0];
-                    entries.Add(new ItineraryEntry(
-                        route.StartDateTime, route.Label, true, pStart.Lon, pStart.Lat,
-                        route.ColorHex, PoiIconType.Pin, route.Description, nestedPoints));
 
-                    var pEnd = route.Points[^1];
-                    entries.Add(new ItineraryEntry(
-                        route.EndDateTime, route.Label, false, pEnd.Lon, pEnd.Lat,
-                        route.ColorHex, PoiIconType.Pin, null, null));
+                    // Il merge "ultimo POI assorbe la fine" vale SOLO se
+                    // inizio e fine cadono nello stesso giorno: su giorni
+                    // diversi la fine deve comunque comparire sotto
+                    // l'intestazione del proprio giorno nel "Piano di
+                    // viaggio" (raggruppato per giorno) — impossibile se
+                    // resta annidata sotto l'entry di Inizio, che appartiene
+                    // al giorno di partenza. In quel caso si ripristina la
+                    // riga "(Fine)" separata, esattamente come quando il
+                    // percorso non ha nessun punto marcato.
+                    bool sameDay = nestedPoints != null
+                        && route.StartDateTime!.Value.Date == route.EndDateTime!.Value.Date;
+
+                    if (sameDay)
+                    {
+                        // Il percorso ha già un punto reale (l'ultimo POI
+                        // incontrato): l'arrivo è quello, non serve una riga
+                        // "(Fine)" generica separata — gli si assegna la
+                        // data/ora di fine del percorso.
+                        int lastIdx = nestedPoints!.Count - 1;
+                        nestedPoints[lastIdx] = nestedPoints[lastIdx] with { Date = route.EndDateTime };
+
+                        entries.Add(new ItineraryEntry(
+                            route.StartDateTime, route.Label, true, pStart.Lon, pStart.Lat,
+                            route.ColorHex, PoiIconType.Pin, route.Description, nestedPoints));
+                    }
+                    else if (nestedPoints != null)
+                    {
+                        // Giorni diversi: l'ultimo POI marcato non può
+                        // restare annidato sotto Inizio (finirebbe sotto
+                        // l'intestazione del giorno sbagliato) — diventa
+                        // lui stesso un'entry di primo livello, col proprio
+                        // nome/icona/posizione, datata alla fine del
+                        // percorso: compare così sotto l'intestazione del
+                        // proprio giorno, restando comunque "l'ultimo POI"
+                        // e non una riga generica "(Fine) NomePercorso".
+                        int lastIdx = nestedPoints.Count - 1;
+                        var lastPoint = nestedPoints[lastIdx];
+                        var remainingNested = lastIdx > 0 ? nestedPoints.GetRange(0, lastIdx) : null;
+
+                        entries.Add(new ItineraryEntry(
+                            route.StartDateTime, route.Label, true, pStart.Lon, pStart.Lat,
+                            route.ColorHex, PoiIconType.Pin, route.Description, remainingNested));
+
+                        entries.Add(new ItineraryEntry(
+                            route.EndDateTime, lastPoint.Label, null, lastPoint.Lon, lastPoint.Lat,
+                            route.ColorHex, lastPoint.Icon, lastPoint.Description));
+                    }
+                    else
+                    {
+                        entries.Add(new ItineraryEntry(
+                            route.StartDateTime, route.Label, true, pStart.Lon, pStart.Lat,
+                            route.ColorHex, PoiIconType.Pin, route.Description, null));
+
+                        var pEnd = route.Points[^1];
+                        entries.Add(new ItineraryEntry(
+                            route.EndDateTime, route.Label, false, pEnd.Lon, pEnd.Lat,
+                            route.ColorHex, PoiIconType.Pin, null, null));
+                    }
                 }
                 else
                 {

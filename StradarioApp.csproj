@@ -17,7 +17,7 @@
          l'ultimo tag delle GitHub Release da Services/UpdateChecker per
          segnalare aggiornamenti disponibili. Va allineata manualmente al tag
          creato per ogni release (vedi CLAUDE.md). -->
-    <Version>1.3.8</Version>
+    <Version>1.4.0</Version>
     <!-- osm/ è un progetto .NET separato (OsmExtractor, vedi osm/CLAUDE.md):
          senza questa esclusione il glob di default dell'SDK inglobava anche
          i suoi .cs (compreso il GlobalUsings.g.cs generato nel suo obj/,
@@ -48,6 +48,15 @@
 
     <!-- Serializzazione progetto JSON -->
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+
+    <!-- Parser Markdown (CommonMark) per le descrizioni di POI/percorsi/pagine,
+         renderizzate ricche nel PDF (Services/MarkdownPdfRenderer.cs) e in
+         forma semplificata nei tooltip mappa (Services/MarkdownPlainText.cs).
+         Unica eccezione voluta alla convenzione "zero dipendenze extra"
+         seguita altrove (KML/GPX/CSV fatti a mano): un parser CommonMark
+         completo scritto a mano sarebbe enorme e fragile, Markdig è lo
+         standard di fatto in .NET, maturo e MIT. -->
+    <PackageReference Include="Markdig" Version="0.37.0" />
 
     <!-- Implementazione TLS interamente gestita (C# puro, nessuna dipendenza
          nativa), usata SOLO da Services/BouncyCastleHttpClient.cs come
