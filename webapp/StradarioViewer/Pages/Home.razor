@@ -95,8 +95,20 @@ else
     private void RefreshDays()
     {
         _availableDays = Plan.GetAvailableDays();
-        _currentDay = _availableDays.Count > 0 ? _availableDays[0] : DateOnly.FromDateTime(DateTime.Today);
+        _currentDay = PickInitialDay();
         RefreshEntries();
+    }
+
+    // Oggi se il progetto lo copre; altrimenti il primo giorno successivo a oggi
+    // (oggi cade prima del primo giorno o in un "buco"), e se oggi è dopo
+    // l'ultimo giorno, l'ultimo.
+    private DateOnly PickInitialDay()
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        if (_availableDays.Count == 0) return today;
+        foreach (var d in _availableDays)
+            if (d >= today) return d;
+        return _availableDays[^1];
     }
 
     private void RefreshEntries()

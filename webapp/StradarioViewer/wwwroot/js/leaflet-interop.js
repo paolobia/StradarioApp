@@ -1,10 +1,12 @@
-// Wrapper JS minimale attorno a Leaflet (caricato via CDN in index.html), invocato
+// Wrapper JS minimale attorno a Leaflet (servito localmente da lib/leaflet, così
+// il service worker lo mette in cache e l'app parte anche offline), invocato
 // da Shared/MapView.razor tramite IJSRuntime. Un solo Map/LayerGroup alla volta,
 // tenuti in variabili di modulo — coerente con l'uso (un'unica mappa nella pagina).
 let map = null;
 let layerGroup = null;
 
 export function initMap(elementId, centerLat, centerLon, zoom) {
+    if (typeof L === 'undefined') return;
     if (map) {
         map.remove();
         map = null;
@@ -13,6 +15,10 @@ export function initMap(elementId, centerLat, centerLon, zoom) {
     map = L.map(elementId).setView([centerLat, centerLon], zoom);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
+        // Richiesta CORS (OSM manda Access-Control-Allow-Origin: *): serve perché il
+        // service worker possa mettere in cache i tile con la loro dimensione reale
+        // (una risposta "opaque" pesa ~7 MB di quota ciascuna).
+        crossOrigin: true,
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     }).addTo(map);
 

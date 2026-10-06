@@ -44,6 +44,10 @@ jobs:
       - name: Set base href for the GitHub Pages sub-path
         run: sed -i 's|<base href="/" />|<base href="/StradarioApp/" />|' publish_output/wwwroot/index.html
 
+      # Stesso sotto-percorso anche per il service worker (offline).
+      - name: Set base path in the service worker
+        run: sed -i 's|^const base = "/";|const base = "/StradarioApp/";|' publish_output/wwwroot/service-worker.js
+
       # Senza questo file GitHub Pages tratta il sito come un sito Jekyll e
       # ignora silenziosamente le cartelle che iniziano con "_" (es.
       # _framework, dove Blazor mette i file .wasm/.dll).
