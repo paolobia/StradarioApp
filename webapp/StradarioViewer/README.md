@@ -29,7 +29,8 @@ schermata Home"/icona di installazione nella barra indirizzi).
    descrizione.
 5. *(Facoltativo)* Installa l'app: dal browser, "Installa app" / "Aggiungi a
    schermata Home" — da quel momento si apre come un'app a sé, anche senza
-   connessione (i tile della mappa restano da rete).
+   connessione. Offline la mappa di sfondo mostra le zone già viste
+   nell'ultima sessione online (cache fino a 3000 tile).
 
 Per caricare un progetto diverso in seguito: pulsante "Carica un altro
 file" in alto a destra.

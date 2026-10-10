@@ -19,6 +19,10 @@ d'uso rivolte all'utente finale, non a chi sviluppa).
   StradarioApp) tramite file picker.
 - Il JSON viene salvato per intero nel `localStorage` del browser — resta
   disponibile alle visite successive senza dover ricaricare il file.
+- **Giorno iniziale** (`Home.PickInitialDay`): oggi se il progetto lo copre,
+  altrimenti il primo giorno successivo a oggi (oggi prima del primo giorno
+  o in un "buco"), e l'ultimo se oggi è dopo la fine — non più sempre il
+  primo.
 - I percorsi (`Percorso.StartDateTime`/`EndDateTime`) e i POI datati
   (`PoiItem.DateStart`/`DateEnd`) vengono raggruppati per giorno; frecce
   ◀/▶ navigano tra i giorni che hanno almeno un percorso/POI (i giorni vuoti
@@ -73,9 +77,34 @@ webapp/StradarioViewer/
   Pages/Home.razor              # pagina unica: import file, toolbar giorno, mappa+lista
   wwwroot/
     js/leaflet-interop.js       # init/draw/clear/fit sulla mappa Leaflet
+    lib/leaflet/                # Leaflet 1.9.4 SERVITO IN LOCALE (non più da unpkg)
     manifest.webmanifest        # manifest PWA (icone riprese da Resources/AppIcon/)
-    service-worker*.js          # cache-first per l'app shell (i tile OSM restano da rete)
+    service-worker*.js          # cache-first per l'app shell + cache tile OSM
 ```
+
+## Offline (service worker) — tre trappole già incontrate
+
+- **Leaflet NON va caricato da CDN**: il service worker mette in cache solo
+  gli asset del proprio manifest, quindi con Leaflet su `unpkg.com` offline
+  `L` non esisteva e `initMap` falliva (app "non parte"). Sta in
+  `wwwroot/lib/leaflet/` (hash identico a quello ufficiale 1.9.4);
+  `initMap` esce in silenzio se `L` manca.
+- **`index.html` è escluso dal controllo di integrità** in
+  `service-worker.published.js`: il workflow di deploy ne modifica il
+  `<base href>` DOPO il publish, quindi l'hash nel manifest non coincide
+  più e `cache.addAll` faceva fallire l'intera installazione del service
+  worker (nessuna cache → nessun offline). Il workflow imposta anche
+  `const base = "/StradarioApp/"` nel service worker pubblicato.
+- **Cache tile OSM** (`stradario-tiles-v1`): cache SEPARATA da quella degli
+  asset (nome senza prefisso `offline-cache-`, quindi `onActivate` non la
+  cancella ai deploy). Network-first con ripiego sulla cache, chiave
+  normalizzata (`a/b/c.tile` = stesso tile), tetto `tileCacheMax` = 3000
+  (scarta i più vecchi). `L.tileLayer` usa `crossOrigin: true` così le
+  risposte sono CORS e pesano la dimensione reale (le "opaque" ~7 MB di
+  quota ciascuna). Offline si vedono solo i tile già visitati; nessun
+  precaricamento dell'area dei percorsi (non fatto, possibile).
+- Dopo un deploy il nuovo service worker prende il controllo al secondo
+  caricamento online; i tile si cachano solo dopo.
 
 ## Nota tecnica: JSInterop e array covariance
 
