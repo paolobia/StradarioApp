@@ -22,14 +22,14 @@ dotnet publish -c Release -r linux-x64 --self-contained true -o ./publish/linux
 dotnet publish -c Release -r win-x64   --self-contained true -o ./publish/win
 
 # Single-file framework-dependent publish (smaller, ~10-11 MB; target machine
-# needs the .NET 8 Runtime installed) — used for the GitHub Release assets
+# needs the .NET 10 Runtime installed) — used for the GitHub Release assets
 dotnet publish -c Release -r linux-x64 --self-contained false \
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish/linux
 dotnet publish -c Release -r win-x64   --self-contained false \
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish/win
 ```
 
-- Requires the **.NET 8 SDK**.
+- Requires the **.NET 10 SDK**.
 - There is **no test suite** and no linter configured — verification is by
   running the app.
 - `cities500.csv` (GeoNames, ~24 MB) is looked for at repo root/executable
@@ -1079,6 +1079,29 @@ The app has no MVVM/binding framework — it's a code-behind Avalonia app where
   fail hostname validation; caught by testing end-to-end against the real
   server (plus `badssl.com`'s expired/self-signed/wrong-host test
   endpoints, verified they're correctly *rejected*) before trusting it.
+
+- **Modalità batch da riga di comando** (`Services/BatchRunner`, agganciata
+  all'inizio di `Program.Main` dopo `FontResolver.Register()`): se gli
+  argomenti contengono `--pdf`/`--kml`/`--csv`/`--help`, niente Avalonia —
+  carica il `.stradario` posizionale, applica le chiavi API globali (come
+  `ApplyGlobalPreferences`) ed esporta. `--kml` è ripetibile e sceglie il
+  formato dall'estensione (`.kmz`/`.kml`/`.gpx`, POI+percorsi combinati via
+  `Services/CombinedExportService`, estratto da `MainWindow.OnExportAll` per
+  essere condiviso); `--csv x.csv` scrive `x_poi.csv` e `x_percorsi.csv`.
+  Nessun override delle impostazioni da CLI, esporta sempre tutto (i toggle
+  di visibilità sono stato di sessione), mai correzione GCJ-02. Uscita 0 ok /
+  1 errore / 2 uso errato. `Main` ora ritorna `int`; su Windows (exe
+  `WinExe`) `AttachConsole(-1)` aggancia la console del padre per l'output
+  — **non verificato su Windows**, provato solo su Linux.
+
+- **Apertura file da riga di comando / associazione `.stradario`**:
+  `Program.App.OnFrameworkInitializationCompleted` cerca tra `desktop.Args`
+  il primo argomento non-opzione che termina in `.stradario` ed esiste, e
+  all'evento `Opened` della finestra chiama `MainWindow.OpenProjectOnStartup`
+  (wrapper pubblico di `OpenProjectFromPath`). Non interferisce con la
+  modalità batch (scatta solo con `--pdf`/`--kml`/`--csv`/`--help`).
+  L'associazione col SO è manuale (`StradarioApp %f` / `StradarioApp.exe "%1"`);
+  ogni doppio clic avvia una nuova istanza (nessuna istanza unica).
 
 ## Interaction model (MainWindow)
 

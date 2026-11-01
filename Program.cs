@@ -16,10 +16,14 @@ namespace StradarioApp
 {
     class Program
     {
-        public static void Main(string[] args)
+        public static int Main(string[] args)
         {
             // Registra il font resolver per PdfSharpCore prima di qualsiasi altra cosa.
             FontResolver.Register();
+
+            // Modalita' batch (--pdf/--kml/--csv): niente UI, vedi BatchRunner.
+            if (BatchRunner.IsBatch(args))
+                return BatchRunner.Run(args);
 
             // Lingua UI: preferenza salvata, o al primo avvio dedotta dalla
             // lingua di sistema (vedi AppPreferencesService.LoadLanguage).
@@ -31,7 +35,7 @@ namespace StradarioApp
             // così è pronto quando l'utente apre il dialog di modifica pagina
             System.Threading.Tasks.Task.Run(() => CityDatabase.EnsureLoaded());
 
-            BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+            return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
         }
 
         public static AppBuilder BuildAvaloniaApp()
@@ -62,6 +66,14 @@ namespace StradarioApp
                 var window = new MainWindow();
                 window.Icon = LoadAppIcon();
                 desktop.MainWindow = window;
+
+                // Associazione file: "StradarioApp file.stradario" apre quel progetto
+                var startupFile = System.Linq.Enumerable.FirstOrDefault(desktop.Args ?? System.Array.Empty<string>(), a =>
+                    !a.StartsWith("-") &&
+                    a.EndsWith(".stradario", System.StringComparison.OrdinalIgnoreCase) &&
+                    System.IO.File.Exists(a));
+                if (startupFile != null)
+                    window.Opened += async (_, _) => await window.OpenProjectOnStartup(System.IO.Path.GetFullPath(startupFile));
             }
 
             base.OnFrameworkInitializationCompleted();

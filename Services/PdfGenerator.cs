@@ -942,7 +942,7 @@ namespace StradarioApp.Services
                 tableWidth = w - 2 * margin;
                 pageCount++;
 
-                string title = pageCount == 1 ? "Piano di viaggio" : "Piano di viaggio (segue)";
+                string title = pageCount == 1 ? "Piano di viaggio" : "Piano di viaggio - segue";
                 gfx.DrawString(title, titleFont, XBrushes.Black,
                     new XRect(0, 18, w, 26), XStringFormats.TopCenter);
 
@@ -1011,7 +1011,7 @@ namespace StradarioApp.Services
 
                 bool isSunday = day.DayOfWeek == DayOfWeek.Sunday;
                 string headerText = continued
-                    ? $"{ItineraryOrdering.FormatDayHeader(day)} (segue)"
+                    ? $"{ItineraryOrdering.FormatDayHeader(day)} - segue"
                     : ItineraryOrdering.FormatDayHeader(day);
                 gfx!.DrawString(headerText, dayHeaderFont, isSunday ? XBrushes.DarkRed : XBrushes.Black,
                     new XRect(margin, y, tableWidth, headerRowH), XStringFormats.TopLeft);
@@ -1048,8 +1048,8 @@ namespace StradarioApp.Services
                 double contentX = iconX + iconSize + 4;
                 string labelText = entry.IsStart switch
                 {
-                    true  => $"(Inizio) {entry.Label}",
-                    false => $"(Fine) {entry.Label}",
+                    true  => $"Inizio: {entry.Label}",
+                    false => $"Fine: {entry.Label}",
                     null  => entry.Label
                 };
                 double labelWidth = margin + tableWidth - contentX - 2;
@@ -1215,7 +1215,7 @@ namespace StradarioApp.Services
                 tableWidth = w - 2 * margin;
                 pageCount++;
 
-                string title = pageCount == 1 ? "Punti di interesse" : "Punti di interesse (segue)";
+                string title = pageCount == 1 ? "Punti di interesse" : "Punti di interesse - segue";
                 gfx.DrawString(title, titleFont, XBrushes.Black,
                     new XRect(0, 18, w, 26), XStringFormats.TopCenter);
 
@@ -1373,7 +1373,7 @@ namespace StradarioApp.Services
                 tableWidth = w - 2 * margin;
                 pageCount++;
 
-                string title = pageCount == 1 ? "Percorsi" : "Percorsi (segue)";
+                string title = pageCount == 1 ? "Percorsi" : "Percorsi - segue";
                 gfx.DrawString(title, titleFont, XBrushes.Black,
                     new XRect(0, 18, w, 26), XStringFormats.TopCenter);
 
