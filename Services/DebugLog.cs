@@ -26,7 +26,7 @@ namespace StradarioApp.Services
     {
         private static readonly object Lock = new();
 
-        // Risale dalla cartella di esecuzione (bin/Debug/net8.0/...) alla
+        // Risale dalla cartella di esecuzione (bin/Debug/net10.0/...) alla
         // radice del repo/pubblicazione, così il log finisce sempre accanto
         // al .csproj in sviluppo e accanto all'eseguibile in un publish.
         public static string LogFilePath =>

@@ -19,7 +19,7 @@ for f in "${FILES[@]}"; do
   echo "=============================================="
   echo "=== $(date '+%Y-%m-%d %H:%M:%S') INIZIO: $f"
   echo "=============================================="
-  dotnet bin/Debug/net8.0/OsmExtractor.dll "$f"
+  dotnet bin/Debug/net10.0/OsmExtractor.dll "$f"
   echo "=== $(date '+%Y-%m-%d %H:%M:%S') FINE: $f"
   echo
 done

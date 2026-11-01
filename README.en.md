@@ -59,7 +59,7 @@ approximation tied to OSM tile zoom).
 ## Build and run
 
 ### Prerequisites
-- [.NET 8 SDK](https://dotnet.microsoft.com/download)
+- [.NET 10 SDK](https://dotnet.microsoft.com/download)
 - `cities500.csv` (GeoNames, ~24 MB) for city search: **no need to fetch it
   by hand**, the app downloads it on its own on first run if not found —
   see below
@@ -77,7 +77,7 @@ dotnet build         # compile only
 dotnet publish -c Release -r linux-x64 --self-contained true -o ./publish/linux
 dotnet publish -c Release -r win-x64   --self-contained true -o ./publish/win
 
-# Single-file framework-dependent executable (lighter, requires the .NET 8
+# Single-file framework-dependent executable (lighter, requires the .NET 10
 # Runtime installed on the target machine)
 dotnet publish -c Release -r linux-x64 --self-contained false \
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish/linux
@@ -89,7 +89,7 @@ dotnet publish -c Release -r win-x64   --self-contained false \
 
 The [Releases](https://github.com/paolobia/StradarioApp/releases) of the
 GitHub repo contain ready-to-use single-file, framework-dependent
-executables for Linux and Windows (require the [.NET 8 Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)
+executables for Linux and Windows (require the [.NET 10 Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
 installed). `cities500.csv` isn't included for size reasons, but the app
 downloads it on its own on first run (see below) — no need to fetch it
 separately.

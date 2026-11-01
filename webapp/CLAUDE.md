@@ -2,7 +2,7 @@
 
 App accessoria, **progetto .NET indipendente** (nessuna project reference verso
 `StradarioApp.csproj` — stesso pattern isolato di `osm/OsmExtractor`, vedi
-`osm/CLAUDE.md`): Blazor WebAssembly (.NET 8), 100% client-side, installabile
+`osm/CLAUDE.md`): Blazor WebAssembly (.NET 10), 100% client-side, installabile
 come PWA. Serve a consultare "in tasca" (telefono/tablet) il piano di viaggio
 di un progetto StradarioApp: percorsi e POI datati, navigabili giorno per
 giorno, su una mappa OSM.

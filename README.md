@@ -226,7 +226,7 @@ La scala della mappa stampata è calcolata esattamente per il DPI scelto
 ## Build e avvio
 
 ### Prerequisiti
-- [.NET 8 SDK](https://dotnet.microsoft.com/download)
+- [.NET 10 SDK](https://dotnet.microsoft.com/download)
 - `cities500.csv` (GeoNames, ~24 MB) per la ricerca città: **non serve
   procurarselo manualmente**, l'app lo scarica da sola al primo avvio se
   non lo trova — vedi sotto
@@ -244,7 +244,7 @@ dotnet build        # solo compilazione
 dotnet publish -c Release -r linux-x64 --self-contained true -o ./publish/linux
 dotnet publish -c Release -r win-x64   --self-contained true -o ./publish/win
 
-# Eseguibile singolo framework-dependent (più leggero, richiede .NET 8
+# Eseguibile singolo framework-dependent (più leggero, richiede .NET 10
 # Runtime installato sulla macchina di destinazione)
 dotnet publish -c Release -r linux-x64 --self-contained false \
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish/linux
@@ -256,7 +256,7 @@ dotnet publish -c Release -r win-x64   --self-contained false \
 
 Le [Release](https://github.com/paolobia/StradarioApp/releases) del repo
 GitHub contengono eseguibili singoli framework-dependent già pronti per
-Linux e Windows (richiedono il [.NET 8 Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)
+Linux e Windows (richiedono il [.NET 10 Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
 installato). `cities500.csv` non è incluso per motivi di dimensione, ma
 l'app lo scarica da sola al primo avvio (vedi sotto) — non va procurato a parte.
 

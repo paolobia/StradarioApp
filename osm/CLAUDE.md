@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Cos'è questo progetto
 
-`OsmExtractor` è un tool console .NET 8 che estrae Point of Interest (POI) da estratti planetari OpenStreetMap in formato `.osm.pbf` (scaricati da Geofabrik) e li converte in file CSV, uno per ogni categoria di tag OSM definita in `OsmExtractor/CategoriePOI.txt`.
+`OsmExtractor` è un tool console .NET 10 che estrae Point of Interest (POI) da estratti planetari OpenStreetMap in formato `.osm.pbf` (scaricati da Geofabrik) e li converte in file CSV, uno per ogni categoria di tag OSM definita in `OsmExtractor/CategoriePOI.txt`.
 
 Il flusso completo è: `download_continenti.bat` scarica gli `.osm.pbf` per continente in `osm_data/continents/`, poi `OsmExtractor` (vedi `estrattore.txt` per i comandi di riferimento) processa ciascun file e scrive i risultati in `osm_data/csv/`.
 

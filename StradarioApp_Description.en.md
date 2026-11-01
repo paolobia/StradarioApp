@@ -3,7 +3,7 @@
 # StradarioApp — Project description
 
 ## What it is
-A portable Linux/Windows C# (.NET 8) desktop application for creating
+A portable Linux/Windows C# (.NET 10) desktop application for creating
 cartographic street atlases (*stradari*) in PDF from OpenStreetMap data. The
 user draws the quadrants to print on the map; the app generates a PDF with
 an index, an overview map, and one page per quadrant.
@@ -43,7 +43,7 @@ Smooth/Stamen Toner Lite (the last four require an API key).
 ---
 
 ## Requirements and build
-Requires the [.NET 8 SDK](https://dotnet.microsoft.com/download). The city
+Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download). The city
 database (`cities500.csv`, GeoNames) downloads itself on first use if not
 present — no manual step needed.
 

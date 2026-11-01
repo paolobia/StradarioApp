@@ -3,7 +3,7 @@
 # StradarioApp — Descrizione del progetto
 
 ## Cos'è
-Applicazione desktop C# (.NET 8) portabile Linux/Windows per creare stradari
+Applicazione desktop C# (.NET 10) portabile Linux/Windows per creare stradari
 cartografici in PDF a partire da OpenStreetMap. L'utente disegna sulla mappa
 i quadranti da stampare; l'app genera un PDF con indice, mappa riassuntiva e
 una pagina per quadrante.
@@ -45,7 +45,7 @@ Smooth/Stamen Toner Lite (gli ultimi quattro richiedono una API key).
 ---
 
 ## Requisiti e build
-Richiede il [.NET 8 SDK](https://dotnet.microsoft.com/download). Il database
+Richiede il [.NET 10 SDK](https://dotnet.microsoft.com/download). Il database
 città (`cities500.csv`, GeoNames) si scarica da solo al primo utilizzo se
 non presente — nessun intervento manuale necessario.
 

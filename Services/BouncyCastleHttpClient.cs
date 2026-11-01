@@ -214,9 +214,9 @@ namespace StradarioApp.Services
                 using var x509Chain = new X509Chain();
                 x509Chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck; // niente controllo revoca: eviterebbe un'altra chiamata di rete che potrebbe fallire allo stesso modo
                 for (int i = 1; i < chain.Length; i++)
-                    x509Chain.ChainPolicy.ExtraStore.Add(new X509Certificate2(chain[i].GetEncoded()));
+                    x509Chain.ChainPolicy.ExtraStore.Add(X509CertificateLoader.LoadCertificate(chain[i].GetEncoded()));
 
-                using var leaf = new X509Certificate2(chain[0].GetEncoded());
+                using var leaf = X509CertificateLoader.LoadCertificate(chain[0].GetEncoded());
                 bool chainOk = x509Chain.Build(leaf) &&
                                x509Chain.ChainStatus.All(s => s.Status == X509ChainStatusFlags.NoError);
                 if (!chainOk)
