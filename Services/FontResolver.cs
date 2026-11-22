@@ -97,6 +97,21 @@ namespace StradarioApp.Services
             bool bold   = name.Contains("bold");
             bool italic = name.Contains("italic") || name.Contains("oblique");
 
+            // Windows: i font core usano suffissi brevi nel nome file senza la
+            // parola "bold"/"italic" (arial.ttf, arialbd.ttf, ariali.ttf,
+            // arialbi.ttf; calibrib/calibrii/calibriz; verdanab/i/z...). Senza
+            // questo riconoscimento "arialbd" diventava una famiglia a sé e
+            // ogni Arial Bold richiesto usciva in Regular.
+            var winMatch = System.Text.RegularExpressions.Regex.Match(name,
+                @"^(arial|verdana|tahoma|calibri|segoeui|georgia|trebuc|times|cour|consola)(bd|bi|b|i|z)$");
+            if (winMatch.Success)
+            {
+                string suf = winMatch.Groups[2].Value;
+                bold   = suf is "bd" or "bi" or "b" or "z";
+                italic = suf is "bi" or "i" or "z";
+                name   = winMatch.Groups[1].Value;
+            }
+
             // Estrai la famiglia rimuovendo i suffissi comuni
             string family = name
                 .Replace("-bolditalic", "").Replace("-boldoblique", "")
@@ -197,13 +212,23 @@ namespace StradarioApp.Services
             // viaggio, che doveva risultare in grassetto, appariva identica
             // a "Sab"). Ora cerca prima la variante bold/italic esatta fra le
             // chiavi del fallback, e solo se assente ripiega su una qualunque.
-            foreach (var fallback in new[] { "dejavusans", "liberationsans", "freesans", "noto" })
+            // BUG REALE (PDF con testo troppo sottile): senza Arial installato
+            // il fallback sceglieva "dejavusans-extralight|False|False" (il
+            // suffisso "-extralight" non viene tolto dalla famiglia in
+            // RegisterFont, quindi la chiave contiene comunque "dejavusans")
+            // al posto del Regular. Ora: Liberation Sans per primo (metriche
+            // identiche ad Arial), solo famiglie "pure" (chiave che inizia
+            // esattamente con "<fallback>|") e mai varianti light/thin/ecc.
+            foreach (var fallback in new[] { "liberationsans", "dejavusans", "freesans", "noto" })
             {
                 string? exactMatch = null;
                 string? anyMatch   = null;
                 foreach (var k in _map.Keys)
                 {
                     if (!k.Contains(fallback)) continue;
+                    if (k.Contains("light") || k.Contains("thin") || k.Contains("narrow") ||
+                        k.Contains("condensed") || k.Contains("mono") || k.Contains("black"))
+                        continue;
                     anyMatch ??= k;
                     if (k.EndsWith($"|{isBold}|{isItalic}", StringComparison.OrdinalIgnoreCase))
                     {
