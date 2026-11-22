@@ -29,6 +29,10 @@ dotnet publish -c Release -r win-x64   --self-contained false \
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ./publish/win
 ```
 
+- **REGOLA release**: ad ogni release (o beta) rigenerare SEMPRE anche
+  `publish/linux/StradarioApp` (comando single-file framework-dependent
+  sopra, `-o ./publish/linux`), oltre agli zip per GitHub — è l'eseguibile
+  che l'utente usa in locale e non deve restare indietro di versione.
 - Requires the **.NET 10 SDK**.
 - There is **no test suite** and no linter configured — verification is by
   running the app.
